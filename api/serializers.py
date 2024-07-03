@@ -11,7 +11,7 @@ class QuestionSerializer(serializers.ModelSerializer):
         fields = ['id', 'question', 'choices', 'difficulty']
 
     def get_choices(self, obj):
-        return [obj.choice_a, obj.choice_b, obj.choice_c, obj.choice_c, obj.choice_d]
+        return [obj.choice_a, obj.choice_b, obj.choice_c, obj.choice_d]
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -27,6 +27,12 @@ class ProfileSerializer(serializers.ModelSerializer):
         model = Profile
         fields = ['user', 'biography', 'grade']
         depth = 1
+
+
+class ProfileBiographySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Profile
+        fields = ['biography']
 
 
 class RoomSerializer(serializers.ModelSerializer):

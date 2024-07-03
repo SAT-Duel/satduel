@@ -6,6 +6,7 @@ from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from rest_framework import status
 from rest_framework.response import Response
 from api.models import Question, Profile, Room, TrackedQuestion
 
@@ -15,7 +16,8 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from api.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer
+from api.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer, \
+    ProfileBiographySerializer
 
 
 @api_view(['GET'])
@@ -47,6 +49,16 @@ def check_answer(request):
     correct = (question.answer_text == selected_choice)
     return Response({'result': 'correct' if correct else 'incorrect'})
 
+@api_view(['POST'])
+def get_answer(request):
+    data = request.data
+    question_id = data.get('question_id')
+    try:
+        question = Question.objects.get(id=question_id)
+    except Question.DoesNotExist:
+        return Response({'error': 'Question does not exist'}, status=404)
+    return Response({'answer': question.answer_text, 'explanation': question.explanation, 'answer_choice': question.answer})
+
 
 @api_view(['GET', 'POST'])
 @authentication_classes([JWTAuthentication])
@@ -69,7 +81,8 @@ def profile_view(request):
 @permission_classes([IsAuthenticated])
 def match(request):
     room = Room.objects.filter(user2__isnull=True).first()
-
+    if room and room.user1 == request.user:
+        return Response({'error': 'You are already in the room'}, status=400)
     if room:
         room.user2 = request.user
         room.save()
@@ -157,3 +170,19 @@ def get_opponent_progres(request):
     opponent_tracked_questions = TrackedQuestion.objects.filter(user=opponent, room=room)
     serializer = TrackedQuestionSerializer(opponent_tracked_questions, many=True)
     return Response(serializer.data)
+
+
+@api_view(['PATCH'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def update_biography(request):
+    try:
+        profile = Profile.objects.get(user=request.user)
+    except Profile.DoesNotExist:
+        return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = ProfileBiographySerializer(profile, data=request.data, partial=True)
+    if serializer.is_valid():
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
