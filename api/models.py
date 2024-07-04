@@ -42,6 +42,7 @@ class Profile(models.Model):
     grade = models.CharField(max_length=3,
                              choices=[(str(i), str(i)) for i in range(1, 12)] + [('<1', '<1'), ('>12', '>12')],
                              default='11')
+    friends = models.ManyToManyField(User, related_name='friends', blank=True)
 
     # Add more fields as necessary
 
@@ -93,3 +94,21 @@ class TrackedQuestion(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.question.question} - {self.status}"
 
+class FriendRequest(models.Model):
+    from_user = models.ForeignKey(User, related_name='sent_friend_requests', on_delete=models.CASCADE)
+    to_user = models.ForeignKey(User, related_name='received_friend_requests', on_delete=models.CASCADE)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=10, choices=[('pending', 'Pending'), ('accepted', 'Accepted'), ('rejected', 'Rejected')], default='pending')
+
+    def __str__(self):
+        return f"Friend request from {self.from_user} to {self.to_user}"
+
+    def accept(self):
+        self.status = 'accepted'
+        self.save()
+        self.from_user.profile.friends.add(self.to_user)
+        self.to_user.profile.friends.add(self.from_user)
+
+    def reject(self):
+        self.status = 'rejected'
+        self.save()
