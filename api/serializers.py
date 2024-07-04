@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from api.models import Question, Profile, Room, TrackedQuestion
+from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -17,7 +17,7 @@ class QuestionSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['username', 'email']
+        fields = ['id', 'username', 'email']
 
 
 class ProfileSerializer(serializers.ModelSerializer):
@@ -25,14 +25,14 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Profile
-        fields = ['user', 'biography', 'grade']
+        fields = ['id', 'user', 'biography', 'grade']
         depth = 1
 
 
 class ProfileBiographySerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
-        fields = ['biography']
+        fields = ['id', 'biography']
 
 
 class RoomSerializer(serializers.ModelSerializer):
@@ -45,3 +45,11 @@ class TrackedQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = TrackedQuestion
         fields = '__all__'
+
+class FriendRequestSerializer(serializers.ModelSerializer):
+    from_user = UserSerializer()
+    to_user = UserSerializer()
+
+    class Meta:
+        model = FriendRequest
+        fields = ['id', 'from_user', 'to_user', 'timestamp', 'status']

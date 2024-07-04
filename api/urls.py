@@ -12,6 +12,12 @@ urlpatterns = [
 
     path('profile/', views.profile_view, name='profile'),
     path('profile/update_biography/', views.update_biography, name='update_biography'),
+    path('profile/search/', views.search_users, name='search_users'),
+    path('profile/send_friend_request/', views.send_friend_request, name='send_friend_request'),
+    path('profile/respond_friend_request/<int:request_id>/', views.respond_friend_request, name='respond_friend_request'),
+    path('profile/friend_requests/', views.list_friend_requests, name='list_friend_requests'),
+    path('profile/friends/', views.list_friends, name='list_friends'),
+    path('profile/view_profile/<int:user_id>/', views.view_profile, name='view_profile'),
 
     path('login/', user_views.login_view, name='login'),
     path('logout/', user_views.logout_view, name='logout'),
