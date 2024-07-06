@@ -276,3 +276,5 @@ def view_profile(request, user_id):
         return Response({'error': 'User not found'}, status=404)
     serializer = ProfileSerializer(user.profile)
     return Response(serializer.data)
+
+
