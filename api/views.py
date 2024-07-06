@@ -5,6 +5,7 @@ from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.db.models import Q
 
 from api.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer, \
     ProfileBiographySerializer, UserSerializer, FriendRequestSerializer
@@ -39,6 +40,7 @@ def check_answer(request):
     correct = (question.answer_text == selected_choice)
     return Response({'result': 'correct' if correct else 'incorrect'})
 
+
 @api_view(['POST'])
 def get_answer(request):
     data = request.data
@@ -47,7 +49,8 @@ def get_answer(request):
         question = Question.objects.get(id=question_id)
     except Question.DoesNotExist:
         return Response({'error': 'Question does not exist'}, status=404)
-    return Response({'answer': question.answer_text, 'explanation': question.explanation, 'answer_choice': question.answer})
+    return Response(
+        {'answer': question.answer_text, 'explanation': question.explanation, 'answer_choice': question.answer})
 
 
 @api_view(['GET', 'POST'])
@@ -70,14 +73,19 @@ def profile_view(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def match(request):
-    room = Room.objects.filter(user2__isnull=True).first()
-    if room and room.user1 == request.user:
-        return Response({'error': 'You are already in the room'}, status=400)
+    user_in_room = Room.objects.filter(user1=request.user, status__in=['Searching', 'Battling']).first()
+
+    if user_in_room:
+        return Response({'error': 'You are already matching or in a room'}, status=400)
+
+    room = Room.objects.filter(user2__isnull=True, status='Searching').first()
+
     if room:
         room.user2 = request.user
+        room.status = 'Battling'
         room.save()
     else:
-        room = Room.objects.create(user1=request.user)
+        room = Room.objects.create(user1=request.user, status='Searching')
 
     serializer = RoomSerializer(room)
     return Response(serializer.data, status=200)
@@ -101,6 +109,17 @@ def get_match_questions(request):
     serializer = TrackedQuestionSerializer(tracked_questions, many=True)
     return Response(serializer.data)
 
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def rejoin_match(request):
+    room = Room.objects.filter(
+        Q(user1=request.user, status='Battling') | Q(user2=request.user, status='Battling'),
+    ).first()
+    print(room)
+    if room:
+        return Response({'room_id': room.id})
+    return Response({'error': 'No room found'}, status=404)
 
 @api_view(['POST'])
 def get_question(request):
@@ -177,6 +196,7 @@ def update_biography(request):
         return Response(serializer.data, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -185,6 +205,7 @@ def search_users(request):
     users = User.objects.filter(username__icontains=query)
     serializer = UserSerializer(users, many=True)
     return Response(serializer.data)
+
 
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
@@ -197,13 +218,15 @@ def send_friend_request(request):
         if FriendRequest.objects.filter(from_user=from_user, to_user=to_user, status='pending').exists():
             return Response({'detail': 'Friend request already sent.'}, status=status.HTTP_400_BAD_REQUEST)
         if from_user == to_user:
-            return Response({'detail': 'You cannot send friend request to yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'You cannot send friend request to yourself.'},
+                            status=status.HTTP_400_BAD_REQUEST)
         if from_user.profile.friends.filter(id=to_user_id).exists():
             return Response({'detail': 'You are already friends.'}, status=status.HTTP_400_BAD_REQUEST)
         FriendRequest.objects.create(from_user=from_user, to_user=to_user)
         return Response({'detail': 'Friend request sent.'}, status=status.HTTP_201_CREATED)
     except User.DoesNotExist:
         return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
 
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
@@ -222,6 +245,7 @@ def respond_friend_request(request, request_id):
     except FriendRequest.DoesNotExist:
         return Response({'detail': 'Friend request not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -229,6 +253,7 @@ def list_friend_requests(request):
     friend_requests = FriendRequest.objects.filter(to_user=request.user, status='pending')
     serializer = FriendRequestSerializer(friend_requests, many=True)
     return Response(serializer.data)
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
@@ -239,6 +264,7 @@ def list_friends(request):
     profiles = Profile.objects.filter(user__in=friends)
     serializer = ProfileSerializer(profiles, many=True)
     return Response(serializer.data)
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
