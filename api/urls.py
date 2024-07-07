@@ -28,6 +28,7 @@ urlpatterns = [
     path('match/update/', views.update_match_question, name='update_match_question'),
     path('match/status/', views.get_room_status, name='get_room_status'),
     path('match/get_opponent_progress/', views.get_opponent_progres, name='get_opponent_progress'),
+    path('match/rejoin/', views.rejoin_match, name='rejoin_match'),
 
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

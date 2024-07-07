@@ -56,6 +56,8 @@ class Room(models.Model):
     user2 = models.ForeignKey(User, related_name='room_user2', on_delete=models.CASCADE, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     questions = models.ManyToManyField(Question, blank=True)
+    status = models.CharField(max_length=10,
+                              choices=[('Searching','Searching'), ('Battling', 'Battling'), ('Ended', 'Ended')])
 
     def is_full(self):
         return self.user2 is not None
