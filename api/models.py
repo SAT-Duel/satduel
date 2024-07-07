@@ -43,7 +43,8 @@ class Profile(models.Model):
                              choices=[(str(i), str(i)) for i in range(1, 12)] + [('<1', '<1'), ('>12', '>12')],
                              default='11')
     friends = models.ManyToManyField(User, related_name='friends', blank=True)
-
+    def ProfilePhoto(self):
+        pass
     # Add more fields as necessary
 
     def __str__(self):
