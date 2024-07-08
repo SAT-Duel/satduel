@@ -46,6 +46,12 @@ class TrackedQuestionSerializer(serializers.ModelSerializer):
         model = TrackedQuestion
         fields = '__all__'
 
+class TrackedQuestionResultSerializer(serializers.ModelSerializer):
+    user = UserSerializer()
+    class Meta:
+        model = TrackedQuestion
+        fields = ['id', 'user', 'question', 'status']
+
 class FriendRequestSerializer(serializers.ModelSerializer):
     from_user = UserSerializer()
     to_user = UserSerializer()

@@ -26,7 +26,9 @@ SECRET_KEY = 'django-insecure-dgr1ce)$3vwmmfp1qnjh1a0kxr2te60*t&f+nx$&$#8sjt3lkn
 DEBUG = True
 
 ALLOWED_HOSTS = ['localhost', '127.0.0.1']
-
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+]
 
 # Application definition
 
@@ -54,7 +56,6 @@ MIDDLEWARE = [
 ]
 
 CORS_ORIGIN_ALLOW_ALL = True
-
 
 ROOT_URLCONF = 'satduel.urls'
 
