@@ -6,9 +6,9 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db.models import Q
-
+from django.utils import timezone
 from api.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer, \
-    ProfileBiographySerializer, UserSerializer, FriendRequestSerializer
+    ProfileBiographySerializer, UserSerializer, FriendRequestSerializer, TrackedQuestionResultSerializer
 
 
 @api_view(['GET'])
@@ -73,7 +73,10 @@ def profile_view(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def match(request):
-    user_in_room = Room.objects.filter(user1=request.user, status__in=['Searching', 'Battling']).first()
+    user_in_room = Room.objects.filter(
+        Q(user1=request.user, status__in=['Searching', 'Battling']) |
+        Q(user2=request.user, status__in=['Searching', 'Battling'])
+    ).first()
 
     if user_in_room:
         return Response({'error': 'You are already matching or in a room'}, status=400)
@@ -83,6 +86,7 @@ def match(request):
     if room:
         room.user2 = request.user
         room.status = 'Battling'
+        room.battle_start_time = timezone.now()
         room.save()
     else:
         room = Room.objects.create(user1=request.user, status='Searching')
@@ -109,17 +113,73 @@ def get_match_questions(request):
     serializer = TrackedQuestionSerializer(tracked_questions, many=True)
     return Response(serializer.data)
 
+
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def rejoin_match(request):
-    room = Room.objects.filter(
+    battling_room = Room.objects.filter(
         Q(user1=request.user, status='Battling') | Q(user2=request.user, status='Battling'),
     ).first()
-    print(room)
-    if room:
-        return Response({'room_id': room.id})
+    searching_room = Room.objects.filter(
+        Q(user1=request.user, status='Searching'),
+    ).first()
+    if battling_room:
+        return Response({'battle_room_id': battling_room.id, 'searching_room_id': None})
+    if searching_room:
+        return Response({'battle_room_id': None, 'searching_room_id': searching_room.id})
     return Response({'error': 'No room found'}, status=404)
+
+
+@api_view(['POST'])
+def get_end_time(request):
+    data = request.data
+    room_id = data.get('room_id')
+    room = Room.objects.get(id=room_id)
+
+    if not room:
+        return Response({'error': 'No active battle found'}, status=404)
+
+    end_time = room.battle_start_time + timezone.timedelta(seconds=room.battle_duration)
+
+    return Response({
+        'end_time': end_time.isoformat(),
+        'battle_duration': room.battle_duration})
+
+
+@api_view(['POST'])
+def end_match(request):
+    data = request.data
+    room_id = data.get('room_id')
+    room = Room.objects.get(id=room_id)
+
+    if not room:
+        return Response({'error': 'No active battle found'}, status=404)
+
+    room.status = 'Ended'
+    room.save()
+
+    return Response({'status': 'success'})
+
+
+@api_view(['POST'])
+def cancel_match(request):
+    data = request.data
+    room_id = data.get('room_id')
+    room = Room.objects.get(id=room_id)
+    if not room:
+        return Response({'error': 'No active battle found'}, status=404)
+    room.delete()
+    return Response({'status': 'success'})
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def get_match_history(request):
+    user = request.user
+    rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended')
+    serializer = RoomSerializer(rooms, many=True)
+    return Response(serializer.data)
 
 @api_view(['POST'])
 def get_question(request):
@@ -179,6 +239,23 @@ def get_opponent_progres(request):
     opponent_tracked_questions = TrackedQuestion.objects.filter(user=opponent, room=room)
     serializer = TrackedQuestionSerializer(opponent_tracked_questions, many=True)
     return Response(serializer.data)
+
+@api_view(['POST'])
+def get_results(request):
+    data = request.data
+    room_id = data.get('room_id')
+    room = Room.objects.get(id=room_id)
+    tracked_questions_user1 = TrackedQuestion.objects.filter(user=room.user1, room=room)
+    tracked_questions_user2 = TrackedQuestion.objects.filter(user=room.user2, room=room)
+    serializer_user1 = TrackedQuestionResultSerializer(tracked_questions_user1, many=True)
+    serializer_user2 = TrackedQuestionResultSerializer(tracked_questions_user2, many=True)
+
+    combined_data = {
+        'user1_results': serializer_user1.data,
+        'user2_results': serializer_user2.data
+    }
+
+    return Response(combined_data)
 
 
 @api_view(['PATCH'])
@@ -276,5 +353,3 @@ def view_profile(request, user_id):
         return Response({'error': 'User not found'}, status=404)
     serializer = ProfileSerializer(user.profile)
     return Response(serializer.data)
-
-
