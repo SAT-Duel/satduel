@@ -22,6 +22,7 @@ def login_view(request):
                 'message': 'Logged In Successfully',
                 'username': user.username,
                 'email': user.email,
+                'id': user.id,
             }, status=200)
         else:
             return JsonResponse({'error': 'Invalid credentials'}, status=401)

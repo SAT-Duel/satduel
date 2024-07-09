@@ -86,7 +86,6 @@ def match(request):
     if room:
         room.user2 = request.user
         room.status = 'Battling'
-        room.battle_start_time = timezone.now()
         room.save()
     else:
         room = Room.objects.create(user1=request.user, status='Searching')
@@ -109,7 +108,7 @@ def get_match_questions(request):
     except Room.DoesNotExist:
         return Response({'error': 'Room does not exist'}, status=404)
 
-    tracked_questions = TrackedQuestion.objects.filter(user=user, room=room)
+    tracked_questions = TrackedQuestion.objects.filter(user=user, room=room).order_by('id')
     serializer = TrackedQuestionSerializer(tracked_questions, many=True)
     return Response(serializer.data)
 
@@ -139,7 +138,9 @@ def get_end_time(request):
 
     if not room:
         return Response({'error': 'No active battle found'}, status=404)
-
+    if room.battle_start_time == None:
+        room.battle_start_time = timezone.now()
+        room.save()
     end_time = room.battle_start_time + timezone.timedelta(seconds=room.battle_duration)
 
     return Response({
@@ -177,9 +178,28 @@ def cancel_match(request):
 @permission_classes([IsAuthenticated])
 def get_match_history(request):
     user = request.user
-    rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended')
+    rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
     serializer = RoomSerializer(rooms, many=True)
     return Response(serializer.data)
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def get_match_info(request):
+    data = request.data
+    room_id = data.get('room_id')
+    room = Room.objects.get(id=room_id)
+    if not room:
+        return Response({'error': 'No active battle found'}, status=404)
+    if room.user1 == request.user:
+        opponent = room.user2
+        user = room.user1
+    else:
+        opponent = room.user1
+        user = room.user2
+    opponent_data = UserSerializer(opponent)
+    user_data = UserSerializer(user)
+    return Response({'opponent': opponent_data.data, 'currentUser': user_data.data})
 
 @api_view(['POST'])
 def get_question(request):
@@ -236,7 +256,7 @@ def get_opponent_progres(request):
     room = Room.objects.get(id=room_id)
     user = request.user
     opponent = room.user1 if user != room.user1 else room.user2
-    opponent_tracked_questions = TrackedQuestion.objects.filter(user=opponent, room=room)
+    opponent_tracked_questions = TrackedQuestion.objects.filter(user=opponent, room=room).order_by('id')
     serializer = TrackedQuestionSerializer(opponent_tracked_questions, many=True)
     return Response(serializer.data)
 
@@ -245,8 +265,8 @@ def get_results(request):
     data = request.data
     room_id = data.get('room_id')
     room = Room.objects.get(id=room_id)
-    tracked_questions_user1 = TrackedQuestion.objects.filter(user=room.user1, room=room)
-    tracked_questions_user2 = TrackedQuestion.objects.filter(user=room.user2, room=room)
+    tracked_questions_user1 = TrackedQuestion.objects.filter(user=room.user1, room=room).order_by('id')
+    tracked_questions_user2 = TrackedQuestion.objects.filter(user=room.user2, room=room).order_by('id')
     serializer_user1 = TrackedQuestionResultSerializer(tracked_questions_user1, many=True)
     serializer_user2 = TrackedQuestionResultSerializer(tracked_questions_user2, many=True)
 
@@ -256,6 +276,22 @@ def get_results(request):
     }
 
     return Response(combined_data)
+
+@api_view(['POST'])
+def set_winner(request):
+    data = request.data
+    room_id = data.get('room_id')
+    winner = data.get('winner')
+    if winner == 'Tie':
+        return Response({'status': 'success'})
+    room = Room.objects.get(id=room_id)
+    if room.user1.username == winner:
+        room.winner = room.user1
+    else:
+        room.winner = room.user2
+    room.status = 'Ended'
+    room.save()
+    return Response({'status': 'success'})
 
 
 @api_view(['PATCH'])

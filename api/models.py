@@ -63,6 +63,8 @@ class Room(models.Model):
                               choices=[('Searching', 'Searching'), ('Battling', 'Battling'), ('Ended', 'Ended')])
     battle_start_time = models.DateTimeField(null=True, blank=True)
     battle_duration = models.IntegerField(default=20)  # Duration in seconds, default 5 minutes
+    winner = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+
 
     def is_full(self):
         return self.user2 is not None
