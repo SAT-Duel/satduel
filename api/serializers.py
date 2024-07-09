@@ -36,9 +36,11 @@ class ProfileBiographySerializer(serializers.ModelSerializer):
 
 
 class RoomSerializer(serializers.ModelSerializer):
+    user1 = UserSerializer()
+    user2 = UserSerializer()
     class Meta:
         model = Room
-        fields = '__all__'
+        fields = ['id', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time']
 
 
 class TrackedQuestionSerializer(serializers.ModelSerializer):

@@ -34,6 +34,8 @@ urlpatterns = [
     path('match/get_results/', views.get_results, name='get_results'),
     path('match/cancel_match/', views.cancel_match, name='cancel_match'),
     path('match/get_match_history/', views.get_match_history, name='get_match_history'),
+    path('match/info/', views.get_match_info, name='get_match_info'),
+    path('match/set_winner/', views.set_winner, name='set_winner'),
 
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
