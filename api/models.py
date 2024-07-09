@@ -6,10 +6,10 @@ from django.db import models
 
 class Question(models.Model):
     question = models.TextField(null=False, blank=False)
-    choice_a = models.CharField(max_length=200)
-    choice_b = models.CharField(max_length=200)
-    choice_c = models.CharField(max_length=200)
-    choice_d = models.CharField(max_length=200)
+    choice_a = models.CharField(max_length=1000)
+    choice_b = models.CharField(max_length=1000)
+    choice_c = models.CharField(max_length=1000)
+    choice_d = models.CharField(max_length=1000)
     answer = models.CharField(max_length=1, choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')])
     difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)])
     question_type = models.CharField(max_length=1000, null=True, blank=True)
