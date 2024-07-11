@@ -40,7 +40,7 @@ class RoomSerializer(serializers.ModelSerializer):
     user2 = UserSerializer()
     class Meta:
         model = Room
-        fields = ['id', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time']
+        fields = ['id', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time', 'user1_score', 'user2_score']
 
 
 class TrackedQuestionSerializer(serializers.ModelSerializer):

@@ -87,6 +87,7 @@ def match(request):
         room.user2 = request.user
         room.status = 'Battling'
         room.save()
+        return Response({'id': room.id, 'full': 'true'}, status=200)
     else:
         room = Room.objects.create(user1=request.user, status='Searching')
 
@@ -173,12 +174,21 @@ def cancel_match(request):
     room.delete()
     return Response({'status': 'success'})
 
+
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
-def get_match_history(request):
-    user = request.user
-    rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
+def get_match_history(request, user_id=None):
+    if user_id:
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
+    else:
+        user = request.user
+        rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
+
     serializer = RoomSerializer(rooms, many=True)
     return Response(serializer.data)
 
@@ -290,6 +300,18 @@ def set_winner(request):
     else:
         room.winner = room.user2
     room.status = 'Ended'
+    room.save()
+    return Response({'status': 'success'})
+
+@api_view(['POST'])
+def set_score(request):
+    data = request.data
+    room_id = data.get('room_id')
+    user1_score = data.get('user1_score')
+    user2_score = data.get('user2_score')
+    room = Room.objects.get(id=room_id)
+    room.user1_score = user1_score
+    room.user2_score = user2_score
     room.save()
     return Response({'status': 'success'})
 
