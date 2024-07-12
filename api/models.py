@@ -1,14 +1,15 @@
 import random
+from django.utils import timezone
 from django.contrib.auth.models import User
 from django.db import models
 
 
 class Question(models.Model):
     question = models.TextField(null=False, blank=False)
-    choice_a = models.CharField(max_length=200)
-    choice_b = models.CharField(max_length=200)
-    choice_c = models.CharField(max_length=200)
-    choice_d = models.CharField(max_length=200)
+    choice_a = models.CharField(max_length=1000)
+    choice_b = models.CharField(max_length=1000)
+    choice_c = models.CharField(max_length=1000)
+    choice_d = models.CharField(max_length=1000)
     answer = models.CharField(max_length=1, choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')])
     difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)])
     question_type = models.CharField(max_length=1000, null=True, blank=True)
@@ -43,8 +44,10 @@ class Profile(models.Model):
                              choices=[(str(i), str(i)) for i in range(1, 12)] + [('<1', '<1'), ('>12', '>12')],
                              default='11')
     friends = models.ManyToManyField(User, related_name='friends', blank=True)
+
     def ProfilePhoto(self):
         pass
+
     # Add more fields as necessary
 
     def __str__(self):
@@ -57,19 +60,29 @@ class Room(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     questions = models.ManyToManyField(Question, blank=True)
     status = models.CharField(max_length=10,
-                              choices=[('Searching','Searching'), ('Battling', 'Battling'), ('Ended', 'Ended')])
+                              choices=[('Searching', 'Searching'), ('Battling', 'Battling'), ('Ended', 'Ended')])
+    battle_start_time = models.DateTimeField(null=True, blank=True)
+    battle_duration = models.IntegerField(default=20)  # Duration in seconds, default 5 minutes
+    winner = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
+    user1_score = models.IntegerField(default=0)
+    user2_score = models.IntegerField(default=0)
+
 
     def is_full(self):
         return self.user2 is not None
+
+    def is_battle_ended(self):
+        if self.battle_start_time and self.status == 'Battling':
+            return timezone.now() > self.battle_start_time + timezone.timedelta(seconds=self.battle_duration)
+        return False
 
     def __str__(self):
         return f"Room {self.id} by {self.user1.username} and {self.user2.username if self.user2 else 'empty'}"
 
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
-        if not self.questions.exists():
+        if not self.questions.exists() and self.user1 and self.user2:
             self.questions.set(Question.get_random_questions(10))
-        if self.user1 and self.user2:
             for question in self.questions.all():
                 TrackedQuestion.objects.create(
                     user=self.user1,
@@ -85,7 +98,6 @@ class Room(models.Model):
                 )
 
 
-
 class TrackedQuestion(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     room = models.ForeignKey(Room, on_delete=models.CASCADE)
@@ -97,11 +109,14 @@ class TrackedQuestion(models.Model):
     def __str__(self):
         return f"{self.user.username} - {self.question.question} - {self.status}"
 
+
 class FriendRequest(models.Model):
     from_user = models.ForeignKey(User, related_name='sent_friend_requests', on_delete=models.CASCADE)
     to_user = models.ForeignKey(User, related_name='received_friend_requests', on_delete=models.CASCADE)
     timestamp = models.DateTimeField(auto_now_add=True)
-    status = models.CharField(max_length=10, choices=[('pending', 'Pending'), ('accepted', 'Accepted'), ('rejected', 'Rejected')], default='pending')
+    status = models.CharField(max_length=10,
+                              choices=[('pending', 'Pending'), ('accepted', 'Accepted'), ('rejected', 'Rejected')],
+                              default='pending')
 
     def __str__(self):
         return f"Friend request from {self.from_user} to {self.to_user}"

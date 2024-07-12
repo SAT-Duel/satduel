@@ -1,0 +1,1 @@
+web: gunicorn satduel.wsgi --log-file -
