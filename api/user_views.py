@@ -93,27 +93,31 @@ def register(request):
 
 
 
+# @method_decorator(csrf_exempt, name='dispatch')
+# class CustomRegisterView(RegisterView):
+#     serializer_class = CustomRegisterSerializer
+#
+#     def create(self, request, *args, **kwargs):
+#         serializer = self.get_serializer(data=request.data)
+#         if serializer.is_valid():
+#             user = serializer.save(request)
+#             email_address = EmailAddress.objects.filter(user=user).first()
+#             response_data = {
+#                 'id': user.id,
+#                 'username': user.username,
+#                 'email': user.email,
+#                 'first_name': user.first_name,
+#                 'last_name': user.last_name,
+#                 'is_active': user.is_active,
+#                 'email_verified': email_address.verified if email_address else False
+#             }
+#             return Response(response_data, status=status.HTTP_201_CREATED)
+#         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+#
+#     def perform_create(self, serializer):
+#         user = serializer.save(self.request)
+#         return user
+
 @method_decorator(csrf_exempt, name='dispatch')
 class CustomRegisterView(RegisterView):
     serializer_class = CustomRegisterSerializer
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save(request)
-            email_address = EmailAddress.objects.filter(user=user).first()
-            response_data = {
-                'id': user.id,
-                'username': user.username,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-                'is_active': user.is_active,
-                'email_verified': email_address.verified if email_address else False
-            }
-            return Response(response_data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def perform_create(self, serializer):
-        user = serializer.save(self.request)
-        return user
