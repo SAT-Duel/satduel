@@ -74,7 +74,6 @@ class CustomRegisterSerializer(RegisterSerializer):
         data_dict['first_name'] = self.validated_data.get('first_name', '')
         data_dict['last_name'] = self.validated_data.get('last_name', '')
         data_dict['grade'] = self.validated_data.get('grade')
-        print("Cleaned data:", data_dict)
         return data_dict
 
     def save(self, request):
@@ -84,12 +83,11 @@ class CustomRegisterSerializer(RegisterSerializer):
         adapter.save_user(request, user, self)
         setup_user_email(request, user, [])
         user.save()
-        profile = Profile.objects.create(
+        Profile.objects.create(
             user=user,
             biography='This user is lazy, he did not write anything yet',
             grade=self.cleaned_data.get('grade')
         )
-        print("Created profile:", profile)
         return user
 
     def validate(self, data):
