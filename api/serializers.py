@@ -1,9 +1,11 @@
 from django.contrib.auth.models import User
-from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest
+from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, InfiniteQuestionStatistics, \
+    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentAnswer
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
 from allauth.account.utils import setup_user_email
 from dj_rest_auth.registration.serializers import RegisterSerializer
+
 
 class QuestionSerializer(serializers.ModelSerializer):
     choices = serializers.SerializerMethodField()
@@ -40,9 +42,11 @@ class ProfileBiographySerializer(serializers.ModelSerializer):
 class RoomSerializer(serializers.ModelSerializer):
     user1 = UserSerializer()
     user2 = UserSerializer()
+
     class Meta:
         model = Room
-        fields = ['id', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time', 'user1_score', 'user2_score']
+        fields = ['id', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time',
+                  'user1_score', 'user2_score']
 
 
 class TrackedQuestionSerializer(serializers.ModelSerializer):
@@ -50,11 +54,14 @@ class TrackedQuestionSerializer(serializers.ModelSerializer):
         model = TrackedQuestion
         fields = '__all__'
 
+
 class TrackedQuestionResultSerializer(serializers.ModelSerializer):
     user = UserSerializer()
+
     class Meta:
         model = TrackedQuestion
         fields = ['id', 'user', 'question', 'status']
+
 
 class FriendRequestSerializer(serializers.ModelSerializer):
     from_user = UserSerializer()
@@ -63,6 +70,25 @@ class FriendRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = FriendRequest
         fields = ['id', 'from_user', 'to_user', 'timestamp', 'status']
+
+
+class InfiniteQuestionStatisticsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InfiniteQuestionStatistics
+        fields = '__all__'
+
+
+class PowerSprintStatisticsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PowerSprintStatistics
+        fields = '__all__'
+
+
+class SurvivalStatisticsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SurvivalStatistics
+        fields = '__all__'
+
 
 class CustomRegisterSerializer(RegisterSerializer):
     first_name = serializers.CharField(required=True, write_only=True)
@@ -93,3 +119,25 @@ class CustomRegisterSerializer(RegisterSerializer):
     def validate(self, data):
         print("Received data in validate:", data)
         return super().validate(data)
+
+
+class TournamentSerializer(serializers.ModelSerializer):
+    participantNumber = serializers.IntegerField(read_only=True)
+    questionNumber = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Tournament
+        fields = ['id', 'name', 'start_time', 'end_time', 'participantNumber', 'questionNumber']
+
+
+
+class TournamentParticipationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TournamentParticipation
+        fields = ['id', 'user', 'tournament', 'start_time', 'end_time', 'score']
+
+
+class TournamentAnswerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TournamentAnswer
+        fields = ['id', 'participation', 'question', 'answer', 'is_correct', 'time_taken']

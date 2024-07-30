@@ -4,7 +4,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from . import views
 from . import user_views
 from .user_views import CustomRegisterView
-
+from . import trainer_views as trainer_view
+from . import tournaments_views
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
     path('get_question/', views.get_question, name='get_question'),
@@ -19,6 +20,7 @@ urlpatterns = [
     path('profile/friend_requests/', views.list_friend_requests, name='list_friend_requests'),
     path('profile/friends/', views.list_friends, name='list_friends'),
     path('profile/view_profile/<int:user_id>/', views.view_profile, name='view_profile'),
+    path('profile/update-rating/', tournaments_views.update_rating, name='update-rating'),
 
     path('login/', user_views.login_view, name='login'),
     path('logout/', user_views.logout_view, name='logout'),
@@ -40,6 +42,19 @@ urlpatterns = [
     path('match/set_winner/', views.set_winner, name='set_winner'),
     path('match/set_score/', views.set_score, name='set_score'),
 
+    path('trainer/infinite_question_stats/', trainer_view.get_infinite_question_stats, name='get_infinite_question_stats'),
+    path('trainer/set_infinite_question_stats/', trainer_view.set_infinite_question_stats, name='set_infinite_question_stats'),
+    path('trainer/power_sprint_stats/', trainer_view.get_power_sprint_stats, name='get_power_sprint_stats'),
+    path('trainer/set_power_sprint_stats/', trainer_view.set_power_sprint_stats, name='set_power_sprint_stats'),
+    path('trainer/survival_stats/', trainer_view.get_survival_stats, name='get_survival_stats'),
+    path('trainer/set_survival_stats/', trainer_view.set_survival_stats, name='set_survival_stats'),
+
+    path('tournaments/', tournaments_views.tournament_list, name='tournament-list'),
+    path('tournaments/<int:pk>/', tournaments_views.tournament_detail, name='tournament-detail'),
+    path('tournaments/<int:pk>/join/', tournaments_views.join_tournament, name='join-tournament'),
+    path('tournaments/<int:pk>/leaderboard/', tournaments_views.tournament_leaderboard, name='tournament-leaderboard'),
+    path('participations/<int:pk>/submit-answer/', tournaments_views.submit_answer, name='submit-answer'),
+    path('participations/<int:pk>/finish/', tournaments_views.finish_participation, name='finish-participation'),
 
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
