@@ -67,7 +67,6 @@ class Room(models.Model):
     user1_score = models.IntegerField(default=0)
     user2_score = models.IntegerField(default=0)
 
-
     def is_full(self):
         return self.user2 is not None
 
@@ -130,3 +129,79 @@ class FriendRequest(models.Model):
     def reject(self):
         self.status = 'rejected'
         self.save()
+
+
+class InfiniteQuestionStatistics(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    correct_number = models.IntegerField(default=0)
+    incorrect_number = models.IntegerField(default=0)
+    current_streak = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.correct_number}/{self.correct_number + self.incorrect_number}"
+
+
+class PowerSprintStatistics(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    bullet_record = models.IntegerField(default=0)
+    blitz_record = models.IntegerField(default=0)
+    rapid_record = models.IntegerField(default=0)
+    marathon_record = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.bullet_record}/{self.blitz_record}/{self.rapid_record}/{self.marathon_record}"
+
+
+class SurvivalStatistics(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    record = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.record}"
+
+
+class Tournament(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField()
+    start_time = models.DateTimeField()
+    duration = models.DurationField(default=timezone.timedelta(hours=24))
+    end_time = models.DateTimeField(null=True)
+    questions = models.ManyToManyField(Question)
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def questionNumber(self):
+        return self.questions.count()
+
+    @property
+    def participantNumber(self):
+        return self.tournamentparticipation_set.count()
+
+    def save(self, *args, **kwargs):
+        if self.start_time and self.duration:
+            self.end_time = self.start_time + self.duration
+        super(Tournament, self).save(*args, **kwargs)
+
+
+class TournamentParticipation(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE)
+    start_time = models.DateTimeField(null=True, blank=True)
+    end_time = models.DateTimeField(null=True, blank=True)
+    score = models.IntegerField(default=0)
+
+    def __str__(self):
+        return f"{self.user.username} in {self.tournament.name}"
+
+
+class TournamentAnswer(models.Model):
+    participation = models.ForeignKey(TournamentParticipation, on_delete=models.CASCADE)
+    question = models.ForeignKey(Question, on_delete=models.CASCADE)
+    answer = models.CharField(max_length=1)
+    is_correct = models.BooleanField()
+    time_taken = models.DurationField()  # Time taken to answer from start of participation
+
+    def __str__(self):
+        return f"{self.participation.user.username} - Q{self.question.id} - {self.is_correct}"
