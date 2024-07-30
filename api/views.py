@@ -400,6 +400,56 @@ def list_friends(request):
     serializer = ProfileSerializer(profiles, many=True)
     return Response(serializer.data)
 
+@api_view(['PATCH'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def update_ranking(request, user_id):
+    try:
+        # Fetch the profile of the authenticated user
+        profile = Profile.objects.get(user=request.user)
+    except Profile.DoesNotExist:
+        return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get the new streak value from the request data
+    new_streak = request.data.get('max_streak')
+
+    if new_streak is None:
+        return Response({'error': 'max_streak is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Compare the new streak with the current max streak
+    if new_streak > profile.max_streak:
+        profile.max_streak = new_streak
+        profile.save()
+        return Response(ProfileSerializer(profile).data, status=status.HTTP_200_OK)
+
+    return Response({'max_streak': profile.max_streak}, status=status.HTTP_200_OK)
+
+@api_view(['PATCH'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def update_streak(request):
+    try:
+        # Fetch the profile of the authenticated user
+        profile = Profile.objects.get(user=request.user)
+    except Profile.DoesNotExist:
+        return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get the new streak value from the request data
+    new_streak = request.data.get('max_streak')
+
+    if new_streak is None:
+        return Response({'error': 'max_streak is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Compare the new streak with the current max streak
+    if new_streak > profile.max_streak:
+        profile.max_streak = new_streak
+        profile.save()
+        return Response(ProfileSerializer(profile).data, status=status.HTTP_200_OK)
+
+    return Response({'max_streak': profile.max_streak}, status=status.HTTP_200_OK)
+
+
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])

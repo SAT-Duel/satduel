@@ -14,6 +14,9 @@ urlpatterns = [
 
     path('profile/', views.profile_view, name='profile'),
     path('profile/update_biography/', views.update_biography, name='update_biography'),
+
+    path('profile/update_rankings/', views.update_ranking, name='update_ranking'),
+    path('profile/update_streak/', views.update_streak, name='update_streak'),
     path('profile/search/', views.search_users, name='search_users'),
     path('profile/send_friend_request/', views.send_friend_request, name='send_friend_request'),
     path('profile/respond_friend_request/<int:request_id>/', views.respond_friend_request, name='respond_friend_request'),
