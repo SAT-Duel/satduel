@@ -44,15 +44,42 @@ class Profile(models.Model):
                              choices=[(str(i), str(i)) for i in range(1, 12)] + [('<1', '<1'), ('>12', '>12')],
                              default='11')
     friends = models.ManyToManyField(User, related_name='friends', blank=True)
+    elo_rating = models.IntegerField(default=1500)  # Starting ELO rating
+    problems_solved = models.IntegerField(default=0)
+    country = models.CharField(max_length=2, default='US')
+    max_streak = models.IntegerField(default=0)
+    def update_elo(self, opponent_elo, result):
+        k = 32  # K-factor for ELO calculation
+        expected_score = 1 / (1 + 10 ** ((opponent_elo - self.elo_rating) / 400))
+        new_elo = self.elo_rating + k * (result - expected_score)
+        self.elo_rating = int(new_elo)
+        self.save()
+    def increment_problems_solved(self):
+        self.problems_solved += 1
+        self.save()
 
-    def ProfilePhoto(self):
-        pass
-
-    # Add more fields as necessary
 
     def __str__(self):
         return f"{self.user.username}'s Profile"
 
+class Ranking(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    rank = models.PositiveIntegerField(unique=True)
+    last_updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['rank']
+
+    def __str__(self):
+        return f"{self.user.username} - Rank {self.rank}"
+
+    @classmethod
+    def update_rankings(cls):
+        profiles = Profile.objects.all().order_by('-elo_rating', '-problems_solved')
+        for index, profile in enumerate(profiles, start=1):
+            ranking, created = cls.objects.get_or_create(user=profile.user)
+            ranking.rank = index
+            ranking.save()
 
 class Room(models.Model):
     user1 = models.ForeignKey(User, related_name='room_user1', on_delete=models.CASCADE)
@@ -79,8 +106,39 @@ class Room(models.Model):
     def __str__(self):
         return f"Room {self.id} by {self.user1.username} and {self.user2.username if self.user2 else 'empty'}"
 
+    def end_battle(self):
+        if self.user1_score > self.user2_score:
+            self.winner = self.user1
+            result_user1, result_user2 = 1, 0
+        elif self.user2_score > self.user1_score:
+            self.winner = self.user2
+            result_user1, result_user2 = 0, 1
+        else:
+            self.winner = None
+            result_user1 = result_user2 = 0.5
+
+        self.status = 'Ended'
+        self.save()
+
+        # Update ELO ratings
+        user1_profile = self.user1.profile
+        user2_profile = self.user2.profile
+        user1_profile.update_elo(user2_profile.elo_rating, result_user1)
+        user2_profile.update_elo(user1_profile.elo_rating, result_user2)
+
+        # Update problems solved
+        user1_profile.problems_solved += self.questions.count()
+        user2_profile.problems_solved += self.questions.count()
+        user1_profile.save()
+        user2_profile.save()
+
+        # Update global rankings
+        Ranking.update_rankings()
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
+        if self.status == 'Ended' and not hasattr(self, '_battle_ended'):
+            self._battle_ended = True
+            self.end_battle()
         if not self.questions.exists() and self.user1 and self.user2:
             self.questions.set(Question.get_random_questions(10))
             for question in self.questions.all():
