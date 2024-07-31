@@ -124,6 +124,12 @@ def submit_answer(request, pk):
     tournament_question.time_taken = time_taken
     tournament_question.save()
 
+    # Update the score of the user
+    if is_correct:
+        participation.score += 1
+        participation.last_correct_submission = timezone.now()
+        participation.save()
+
     serializer = TournamentQuestionSerializer(tournament_question)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
