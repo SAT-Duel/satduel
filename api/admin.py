@@ -1,7 +1,7 @@
 from django.contrib import admin
 
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, InfiniteQuestionStatistics, \
-    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentAnswer
+    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking
 
 # Register your models here.
 admin.site.register(Question)
@@ -14,4 +14,5 @@ admin.site.register(PowerSprintStatistics)
 admin.site.register(SurvivalStatistics)
 admin.site.register(Tournament)
 admin.site.register(TournamentParticipation)
-admin.site.register(TournamentAnswer)
+admin.site.register(TournamentQuestion)
+admin.site.register(Ranking)

@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, InfiniteQuestionStatistics, \
-    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentAnswer
+    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
 from allauth.account.utils import setup_user_email
@@ -134,10 +134,10 @@ class TournamentSerializer(serializers.ModelSerializer):
 class TournamentParticipationSerializer(serializers.ModelSerializer):
     class Meta:
         model = TournamentParticipation
-        fields = ['id', 'user', 'tournament', 'start_time', 'end_time', 'score']
+        fields = ['id', 'user', 'tournament', 'start_time', 'score']
 
 
-class TournamentAnswerSerializer(serializers.ModelSerializer):
+class TournamentQuestionSerializer(serializers.ModelSerializer):
     class Meta:
-        model = TournamentAnswer
-        fields = ['id', 'participation', 'question', 'answer', 'is_correct', 'time_taken']
+        model = TournamentQuestion
+        fields = ['id', 'participation', 'question', 'status', 'time_taken']

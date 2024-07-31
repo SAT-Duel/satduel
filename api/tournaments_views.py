@@ -5,8 +5,8 @@ from rest_framework import status
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
-from api.models import Tournament, TournamentParticipation, Question, TournamentAnswer, Profile
-from api.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentAnswerSerializer, \
+from api.models import Tournament, TournamentParticipation, Question, TournamentQuestion, Profile
+from api.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentQuestionSerializer, \
     ProfileSerializer
 
 
@@ -57,9 +57,20 @@ def join_tournament(request, pk):
         start_time=timezone.now()
     )
 
+    questions = Tournament.questions.all()
+
     serializer = TournamentParticipationSerializer(participation)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def get_tournament_questions(request, pk):
+    user = request.user
+    tournament = Tournament.objects.get(id=pk)
+
+    tournament_questions = TournamentQuestion.objects.filter(user=user, tournament=tournament).order_by(id)
+    serializer = TournamentQuestionSerializer(tournament_questions)
+    return Response(serializer.data)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -84,7 +95,7 @@ def submit_answer(request, pk):
     is_correct = question.answer == answer
     time_taken = timezone.now() - participation.start_time
 
-    tournament_answer = TournamentAnswer.objects.create(
+    tournament_answer = TournamentQuestion.objects.create(
         participation=participation,
         question=question,
         answer=answer,
@@ -96,7 +107,7 @@ def submit_answer(request, pk):
         participation.score += 1
         participation.save()
 
-    serializer = TournamentAnswerSerializer(tournament_answer)
+    serializer = TournamentQuestionSerializer(tournament_answer)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -108,22 +119,6 @@ def finish_participation(request, pk):
     participation.save()
     serializer = TournamentParticipationSerializer(participation)
     return Response(serializer.data)
-
-
-@api_view(['GET', 'PUT'])
-@permission_classes([IsAuthenticated])
-def user_profile(request):
-    profile, created = Profile.objects.get_or_create(user=request.user)
-
-    if request.method == 'GET':
-        serializer = ProfileSerializer(profile)
-        return Response(serializer.data)
-    elif request.method == 'PUT':
-        serializer = ProfileSerializer(profile, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['POST'])

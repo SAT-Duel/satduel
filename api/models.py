@@ -225,6 +225,7 @@ class Tournament(models.Model):
     duration = models.DurationField(default=timezone.timedelta(hours=24))
     end_time = models.DateTimeField(null=True)
     questions = models.ManyToManyField(Question)
+    private = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
@@ -247,19 +248,21 @@ class TournamentParticipation(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE)
     start_time = models.DateTimeField(null=True, blank=True)
-    end_time = models.DateTimeField(null=True, blank=True)
     score = models.IntegerField(default=0)
 
     def __str__(self):
         return f"{self.user.username} in {self.tournament.name}"
 
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
 
-class TournamentAnswer(models.Model):
+
+class TournamentQuestion(models.Model):
     participation = models.ForeignKey(TournamentParticipation, on_delete=models.CASCADE)
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
-    answer = models.CharField(max_length=1)
-    is_correct = models.BooleanField()
+    status = models.CharField(max_length=10,
+                              choices=[('Correct', 'Correct'), ('Incorrect', 'Incorrect'), ('Blank', 'Blank')])
     time_taken = models.DurationField()  # Time taken to answer from start of participation
 
     def __str__(self):
-        return f"{self.participation.user.username} - Q{self.question.id} - {self.is_correct}"
+        return f"{self.participation.user.username} - Q{self.question.id}"
