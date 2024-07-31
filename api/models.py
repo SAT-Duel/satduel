@@ -132,7 +132,7 @@ class Room(models.Model):
         user2_profile.save()
 
         # Update global rankings
-        Ranking.update_rankings()
+        # Ranking.update_rankings()
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         if self.status == 'Ended' and not hasattr(self, '_battle_ended'):
@@ -222,8 +222,8 @@ class Tournament(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField()
     start_time = models.DateTimeField()
-    duration = models.DurationField(default=timezone.timedelta(hours=24))
     end_time = models.DateTimeField(null=True)
+    duration = models.DurationField(default=timezone.timedelta(minutes=30))
     questions = models.ManyToManyField(Question)
     private = models.BooleanField(default=False)
 
@@ -248,7 +248,7 @@ class TournamentParticipation(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE)
     start_time = models.DateTimeField(null=True, blank=True)
-    score = models.IntegerField(default=0)
+    end_time = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.user.username} in {self.tournament.name}"
@@ -262,7 +262,7 @@ class TournamentQuestion(models.Model):
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
     status = models.CharField(max_length=10,
                               choices=[('Correct', 'Correct'), ('Incorrect', 'Incorrect'), ('Blank', 'Blank')])
-    time_taken = models.DurationField()  # Time taken to answer from start of participation
+    time_taken = models.DurationField(blank=True, null=True)  # Time taken to answer from start of participation
 
     def __str__(self):
         return f"{self.participation.user.username} - Q{self.question.id}"

@@ -47,6 +47,7 @@ def tournament_detail(request, pk):
 def join_tournament(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
     user = request.user
+    duration = tournament.duration
 
     if TournamentParticipation.objects.filter(user=user, tournament=tournament).exists():
         return Response({"error": "Already joined this tournament"}, status=status.HTTP_400_BAD_REQUEST)
@@ -54,22 +55,40 @@ def join_tournament(request, pk):
     participation = TournamentParticipation.objects.create(
         user=user,
         tournament=tournament,
-        start_time=timezone.now()
+        start_time=timezone.now(),
+        end_time=timezone.now()+duration
     )
 
-    questions = Tournament.questions.all()
+    questions = tournament.questions.all()
+    for question in questions:
+        TournamentQuestion.objects.create(
+            participation=participation,
+            question=question,
+            status='Blank'
+        )
 
     serializer = TournamentParticipationSerializer(participation)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_participation(request,pk):
+    user = request.user
+    tournament = get_object_or_404(Tournament, pk=pk)
+    participation = get_object_or_404(TournamentParticipation, user=user, tournament=tournament)
+    serializer = TournamentParticipationSerializer(participation)
+    return Response(serializer.data)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def get_tournament_questions(request, pk):
     user = request.user
     tournament = Tournament.objects.get(id=pk)
+    participation = TournamentParticipation.objects.get(user=user, tournament=tournament)
 
-    tournament_questions = TournamentQuestion.objects.filter(user=user, tournament=tournament).order_by(id)
-    serializer = TournamentQuestionSerializer(tournament_questions)
+    tournament_questions = TournamentQuestion.objects.filter(participation=participation).order_by('id')
+    serializer = TournamentQuestionSerializer(tournament_questions, many=True)
     return Response(serializer.data)
 
 @api_view(['GET'])
@@ -84,30 +103,28 @@ def tournament_leaderboard(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def submit_answer(request, pk):
-    participation = get_object_or_404(TournamentParticipation, pk=pk)
-    question_id = request.data.get('question_id')
-    answer = request.data.get('answer')
+    tournament = get_object_or_404(Tournament, pk=pk)
+    user = request.user
+    participation = get_object_or_404(TournamentParticipation, user=user, tournament=tournament)
+    data = request.data
+    question_id = data.get('question_id')
+    tournament_question_id = data.get('tournament_question_id')
+    selected_choice = data.get('selected_choice')
 
-    if not question_id or not answer:
+    if not question_id or not selected_choice:
         return Response({"error": "Question ID and answer are required"}, status=status.HTTP_400_BAD_REQUEST)
 
     question = get_object_or_404(Question, id=question_id)
-    is_correct = question.answer == answer
+    tournament_question = get_object_or_404(TournamentQuestion, id=tournament_question_id)
+
+    is_correct = question.answer_text == selected_choice
     time_taken = timezone.now() - participation.start_time
 
-    tournament_answer = TournamentQuestion.objects.create(
-        participation=participation,
-        question=question,
-        answer=answer,
-        is_correct=is_correct,
-        time_taken=time_taken
-    )
+    tournament_question.status = 'Correct' if is_correct else 'Incorrect'
+    tournament_question.time_taken = time_taken
+    tournament_question.save()
 
-    if is_correct:
-        participation.score += 1
-        participation.save()
-
-    serializer = TournamentQuestionSerializer(tournament_answer)
+    serializer = TournamentQuestionSerializer(tournament_question)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
