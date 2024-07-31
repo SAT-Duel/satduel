@@ -249,6 +249,8 @@ class TournamentParticipation(models.Model):
     tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE)
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
+    score = models.IntegerField(default=0)
+    last_correct_submission = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.user.username} in {self.tournament.name}"
