@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404
 
 from api.models import Tournament, TournamentParticipation, Question, TournamentQuestion, Profile
 from api.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentQuestionSerializer, \
-    ProfileSerializer
+    ProfileSerializer, TPSubmitAnswerSerializer
 
 
 @api_view(['GET', 'POST'])
@@ -56,7 +56,8 @@ def join_tournament(request, pk):
         user=user,
         tournament=tournament,
         start_time=timezone.now(),
-        end_time=timezone.now() + duration
+        end_time=timezone.now() + duration,
+        status='Active'
     )
 
     questions = tournament.questions.all()
@@ -97,8 +98,9 @@ def get_tournament_questions(request, pk):
 @permission_classes([IsAuthenticated])
 def tournament_leaderboard(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
-    participations = TournamentParticipation.objects.filter(tournament=tournament).order_by('-score')
-    serializer = TournamentParticipationSerializer(participations, many=True)
+    participations = TournamentParticipation.objects.filter(tournament=tournament).order_by('-score',
+                                                                                            'last_correct_submission')
+    serializer = TPSubmitAnswerSerializer(participations, many=True)
     return Response(serializer.data)
 
 
@@ -129,7 +131,7 @@ def submit_answer(request, pk):
     # Update the score of the user
     if is_correct:
         participation.score += 1
-        participation.last_correct_submission = timezone.now()-participation.start_time
+        participation.last_correct_submission = timezone.now() - participation.start_time
         participation.save()
 
     serializer = TournamentQuestionSerializer(tournament_question)
@@ -139,8 +141,10 @@ def submit_answer(request, pk):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def finish_participation(request, pk):
-    participation = get_object_or_404(TournamentParticipation, pk=pk)
-    participation.end_time = timezone.now()
+    tournament = get_object_or_404(Tournament, pk=pk)
+    user = request.user
+    participation = get_object_or_404(TournamentParticipation, user=user, tournament=tournament)
+    participation.status = 'Completed'
     participation.save()
     serializer = TournamentParticipationSerializer(participation)
     return Response(serializer.data)

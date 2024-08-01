@@ -59,7 +59,7 @@ urlpatterns = [
     path('tournaments/<int:pk>/questions/', tournaments_views.get_tournament_questions, name='get-tournament-questions'),
     path('tournaments/<int:pk>/leaderboard/', tournaments_views.tournament_leaderboard, name='tournament-leaderboard'),
     path('tournaments/<int:pk>/submit-answer/', tournaments_views.submit_answer, name='submit-answer'),
-    path('participations/<int:pk>/finish/', tournaments_views.finish_participation, name='finish-participation'),
+    path('tournaments/<int:pk>/finish/', tournaments_views.finish_participation, name='finish-participation'),
 
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

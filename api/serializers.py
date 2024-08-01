@@ -144,3 +144,16 @@ class TournamentQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = TournamentQuestion
         fields = ['id', 'participation', 'question', 'status', 'time_taken']
+
+
+class TPSubmitAnswerSerializer(serializers.ModelSerializer):
+    tournament_questions = serializers.SerializerMethodField()
+    user = UserSerializer()
+    class Meta:
+        model = TournamentParticipation
+        fields = ['id', 'user', 'score', 'last_correct_submission', 'tournament_questions']
+
+    def get_tournament_questions(self, obj):
+        # Retrieve and order the questions by ID
+        questions = obj.tournamentquestion_set.all().order_by('id')
+        return TournamentQuestionSerializer(questions, many=True).data

@@ -251,6 +251,7 @@ class TournamentParticipation(models.Model):
     end_time = models.DateTimeField(null=True, blank=True)
     score = models.IntegerField(default=0)
     last_correct_submission = models.DurationField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=[('Active', 'Active'), ('Completed', 'Completed')])
 
     def __str__(self):
         return f"{self.user.username} in {self.tournament.name}"
