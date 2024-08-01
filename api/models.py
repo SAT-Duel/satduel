@@ -250,7 +250,7 @@ class TournamentParticipation(models.Model):
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
     score = models.IntegerField(default=0)
-    last_correct_submission = models.DateTimeField(null=True, blank=True)
+    last_correct_submission = models.DurationField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.user.username} in {self.tournament.name}"
@@ -267,4 +267,4 @@ class TournamentQuestion(models.Model):
     time_taken = models.DurationField(blank=True, null=True)  # Time taken to answer from start of participation
 
     def __str__(self):
-        return f"{self.participation.user.username} - Q{self.question.id}"
+        return f"{self.participation.user.username} - Q{self.question.id} - {self.status} - {self.time_taken}"

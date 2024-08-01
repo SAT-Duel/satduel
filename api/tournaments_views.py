@@ -56,7 +56,7 @@ def join_tournament(request, pk):
         user=user,
         tournament=tournament,
         start_time=timezone.now(),
-        end_time=timezone.now()+duration
+        end_time=timezone.now() + duration
     )
 
     questions = tournament.questions.all()
@@ -73,12 +73,13 @@ def join_tournament(request, pk):
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
-def get_participation(request,pk):
+def get_participation(request, pk):
     user = request.user
     tournament = get_object_or_404(Tournament, pk=pk)
     participation = get_object_or_404(TournamentParticipation, user=user, tournament=tournament)
     serializer = TournamentParticipationSerializer(participation)
     return Response(serializer.data)
+
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -90,6 +91,7 @@ def get_tournament_questions(request, pk):
     tournament_questions = TournamentQuestion.objects.filter(participation=participation).order_by('id')
     serializer = TournamentQuestionSerializer(tournament_questions, many=True)
     return Response(serializer.data)
+
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -127,7 +129,7 @@ def submit_answer(request, pk):
     # Update the score of the user
     if is_correct:
         participation.score += 1
-        participation.last_correct_submission = timezone.now()
+        participation.last_correct_submission = timezone.now()-participation.start_time
         participation.save()
 
     serializer = TournamentQuestionSerializer(tournament_question)
