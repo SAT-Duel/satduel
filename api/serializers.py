@@ -127,7 +127,7 @@ class TournamentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Tournament
-        fields = ['id', 'name', 'start_time', 'end_time', 'participantNumber', 'questionNumber']
+        fields = ['id', 'name', 'description', 'duration', 'start_time', 'end_time', 'participantNumber', 'questionNumber']
 
 
 class TournamentParticipationSerializer(serializers.ModelSerializer):
@@ -135,7 +135,7 @@ class TournamentParticipationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TournamentParticipation
-        fields = ['id', 'user', 'tournament', 'start_time', 'end_time', 'score', 'last_correct_submission']
+        fields = ['id', 'user', 'tournament', 'start_time', 'end_time', 'score', 'last_correct_submission', 'status']
 
 
 class TournamentQuestionSerializer(serializers.ModelSerializer):

@@ -7,13 +7,14 @@ from django.shortcuts import get_object_or_404
 
 from api.models import Tournament, TournamentParticipation, Question, TournamentQuestion, Profile
 from api.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentQuestionSerializer, \
-    ProfileSerializer, TPSubmitAnswerSerializer
+    ProfileSerializer, TPSubmitAnswerSerializer, QuestionSerializer
 
 
 @api_view(['GET', 'POST'])
 def tournament_list(request):
     if request.method == 'GET':
-        tournaments = Tournament.objects.all()
+        # Todo: Add a filter that filters tournament with end time larger than the current time
+        tournaments = Tournament.objects.filter(private=False)
         serializer = TournamentSerializer(tournaments, many=True)
         return Response(serializer.data)
     elif request.method == 'POST':
@@ -27,7 +28,6 @@ def tournament_list(request):
 @api_view(['GET', 'PUT', 'DELETE'])
 def tournament_detail(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
-
     if request.method == 'GET':
         serializer = TournamentSerializer(tournament)
         return Response(serializer.data)
@@ -50,7 +50,9 @@ def join_tournament(request, pk):
     duration = tournament.duration
 
     if TournamentParticipation.objects.filter(user=user, tournament=tournament).exists():
-        return Response({"error": "Already joined this tournament"}, status=status.HTTP_400_BAD_REQUEST)
+        participation = TournamentParticipation.objects.get(user=user, tournament=tournament)
+        serializer = TournamentParticipationSerializer(participation)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     participation = TournamentParticipation.objects.create(
         user=user,
@@ -95,7 +97,6 @@ def get_tournament_questions(request, pk):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
 def tournament_leaderboard(request, pk):
     tournament = get_object_or_404(Tournament, pk=pk)
     participations = TournamentParticipation.objects.filter(tournament=tournament).order_by('-score',
@@ -164,3 +165,34 @@ def update_rating(request):
 
     serializer = ProfileSerializer(profile)
     return Response(serializer.data)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_tournament(request):
+    data = request.data
+    questions_data = data['questions']
+    tournament = Tournament.objects.create(
+        name=data['name'],
+        description=data['description'],
+        start_time=data['start_time'],
+        end_time=data['end_time'],
+        private=data['private'],
+    )
+
+    for question in questions_data:
+        question = Question.objects.create(
+            question=question['question'],
+            choice_a=question['choice_a'],
+            choice_b=question['choice_b'],
+            choice_c=question['choice_c'],
+            choice_d=question['choice_d'],
+            answer=question['answer'],
+            difficulty=question['difficulty'],
+            question_type=question.get('question_type', ''),  # Default empty string if not provided
+            explanation=question.get('explanation', ''),  # Default empty string if not provided
+        )
+        tournament.questions.add(question)
+    tournament.save()
+    serializer = TournamentSerializer(tournament)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)

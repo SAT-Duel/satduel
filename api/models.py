@@ -238,11 +238,6 @@ class Tournament(models.Model):
     def participantNumber(self):
         return self.tournamentparticipation_set.count()
 
-    def save(self, *args, **kwargs):
-        if self.start_time and self.duration:
-            self.end_time = self.start_time + self.duration
-        super(Tournament, self).save(*args, **kwargs)
-
 
 class TournamentParticipation(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
