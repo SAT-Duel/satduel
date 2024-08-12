@@ -1,15 +1,18 @@
 import json
 
 from dj_rest_auth.registration.views import RegisterView
+from django.contrib.auth.forms import PasswordResetForm, SetPasswordForm
 from django.contrib.auth.models import User
+from django.contrib.auth.tokens import default_token_generator
 from django.http import JsonResponse
 from django.utils.decorators import method_decorator
+from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.http import require_POST
 from rest_framework import status
-from rest_framework.decorators import api_view
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from api.models import Profile
 
@@ -94,7 +97,42 @@ def register(request):
         return JsonResponse({'error': 'Invalid HTTP method'}, status=405)
 
 
-
 @method_decorator(csrf_exempt, name='dispatch')
 class CustomRegisterView(RegisterView):
     serializer_class = CustomRegisterSerializer
+
+
+class PasswordResetRequestView(APIView):
+    def post(self, request):
+        email = request.data.get('email')
+        if email:
+            form = PasswordResetForm({'email': email})
+            if form.is_valid():
+                form.save(
+                    request=request,
+                    use_https=True,
+                    token_generator=default_token_generator,
+                    from_email=None,
+                    email_template_name='registration/password_reset_email.html',
+                    subject_template_name='registration/password_reset_subject.txt',
+                )
+                return Response({"message": "Password reset link sent."}, status=status.HTTP_200_OK)
+            return Response({"error": "Invalid email address."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PasswordResetConfirmView(APIView):
+    def post(self, request, uidb64, token):
+        try:
+            uid = urlsafe_base64_decode(uidb64).decode()
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+
+        if user is not None and default_token_generator.check_token(user, token):
+            form = SetPasswordForm(user, request.data)
+            if form.is_valid():
+                form.save()
+                return Response({"message": "Password reset successful."}, status=status.HTTP_200_OK)
+            return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"error": "Invalid token or user ID."}, status=status.HTTP_400_BAD_REQUEST)

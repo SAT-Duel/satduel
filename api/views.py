@@ -1,4 +1,6 @@
 from django.contrib.auth.models import User
+from django.http import JsonResponse
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.response import Response
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest
@@ -192,6 +194,7 @@ def get_match_history(request, user_id=None):
     serializer = RoomSerializer(rooms, many=True)
     return Response(serializer.data)
 
+
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -210,6 +213,7 @@ def get_match_info(request):
     opponent_data = UserSerializer(opponent)
     user_data = UserSerializer(user)
     return Response({'opponent': opponent_data.data, 'currentUser': user_data.data})
+
 
 @api_view(['POST'])
 def get_question(request):
@@ -270,6 +274,7 @@ def get_opponent_progres(request):
     serializer = TrackedQuestionSerializer(opponent_tracked_questions, many=True)
     return Response(serializer.data)
 
+
 @api_view(['POST'])
 def get_results(request):
     data = request.data
@@ -287,6 +292,7 @@ def get_results(request):
 
     return Response(combined_data)
 
+
 @api_view(['POST'])
 def set_winner(request):
     data = request.data
@@ -302,6 +308,7 @@ def set_winner(request):
     room.status = 'Ended'
     room.save()
     return Response({'status': 'success'})
+
 
 @api_view(['POST'])
 def set_score(request):
@@ -333,8 +340,6 @@ def update_biography(request):
 
 
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
 def search_users(request):
     query = request.query_params.get('q', '')
     users = User.objects.filter(username__icontains=query)
@@ -400,6 +405,7 @@ def list_friends(request):
     serializer = ProfileSerializer(profiles, many=True)
     return Response(serializer.data)
 
+
 @api_view(['PATCH'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -423,6 +429,7 @@ def update_ranking(request, user_id):
         return Response(ProfileSerializer(profile).data, status=status.HTTP_200_OK)
 
     return Response({'max_streak': profile.max_streak}, status=status.HTTP_200_OK)
+
 
 @api_view(['PATCH'])
 @authentication_classes([JWTAuthentication])
@@ -449,11 +456,7 @@ def update_streak(request):
     return Response({'max_streak': profile.max_streak}, status=status.HTTP_200_OK)
 
 
-
-
 @api_view(['GET'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
 def view_profile(request, user_id):
     try:
         user = User.objects.get(id=user_id)
@@ -461,3 +464,9 @@ def view_profile(request, user_id):
         return Response({'error': 'User not found'}, status=404)
     serializer = ProfileSerializer(user.profile)
     return Response(serializer.data)
+
+
+@ensure_csrf_cookie
+def set_csrf_token(request):
+    return JsonResponse({'detail': 'CSRF cookie set'})
+
