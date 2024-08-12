@@ -29,12 +29,17 @@ SECRET_KEY = 'django-insecure-dgr1ce)$3vwmmfp1qnjh1a0kxr2te60*t&f+nx$&$#8sjt3lkn
 DEBUG = True
 
 ALLOWED_HOSTS = ['*']
-# CORS_ALLOWED_ORIGINS = [
-#     "http://localhost:3000",
-# ]
+
 CORS_ALLOWED_ORIGINS = [
     'https://satduel.netlify.app',  # Your Netlify frontend URL
     "http://localhost:3000",
+    'http://127.0.0.1:3000',
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    'https://satduel.netlify.app',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -180,6 +185,8 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
 
 ACCOUNT_ADAPTER = 'api.adapters.CustomAccountAdapter'  # Replace 'your_app' with the actual app name
 FRONTEND_URL = 'https://satduel.netlify.app'  # Replace with your frontend URL
+PASSWORD_RESET_TIMEOUT_DAYS = 1
+CSRF_COOKIE_HTTPONLY = False
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
