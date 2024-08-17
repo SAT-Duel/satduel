@@ -1,5 +1,7 @@
 from django.contrib.auth.models import User
+from django.core.paginator import Paginator
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.response import Response
@@ -22,6 +24,76 @@ def get_random_questions(request):
 
     random_questions = Question.get_random_questions(num_questions)
     serializer = QuestionSerializer(random_questions, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+def list_questions(request):
+    question_type = request.GET.get('type', 'any')
+    difficulty = request.GET.get('difficulty', 'any')
+    page = request.GET.get('page', 1)
+    page_size = request.GET.get('page_size', 15)
+
+    questions = Question.objects.all().order_by('id')
+
+    if question_type != 'any':
+        questions = questions.filter(question_type=question_type)
+    if difficulty != 'any':
+        questions = questions.filter(difficulty=int(difficulty))
+
+    paginator = Paginator(questions, page_size)
+    questions_paginated = paginator.get_page(page)
+
+    serializer = QuestionSerializer(questions_paginated, many=True)
+    return Response({
+        'questions': serializer.data,
+        # 'question_types': Question.objects.values_list('question_type', flat=True).distinct(),
+        # 'difficulties': Question.objects.values_list('difficulty', flat=True).distinct(),
+        'total': paginator.count,
+    })
+
+
+@api_view(['POST'])
+def edit_question(request, question_id):
+    question = get_object_or_404(Question, id=question_id)
+    data = request.data
+    question.question = data['question']
+    question.choice_a = data['choice_a']
+    question.choice_b = data['choice_b']
+    question.choice_c = data['choice_c']
+    question.choice_d = data['choice_d']
+    question.answer = data['answer']
+    question.difficulty = data['difficulty']
+    question.question_type = data['question_type']
+    question.explanation = data['explanation']
+    question.save()
+    return JsonResponse({'status': 'success'})
+
+
+@api_view(['POST'])
+def create_question(request):
+    data = request.data
+    question = Question.objects.create(
+        question=data['question'],
+        choice_a=data['choice_a'],
+        choice_b=data['choice_b'],
+        choice_c=data['choice_c'],
+        choice_d=data['choice_d'],
+        answer=data['answer'],
+        difficulty=data['difficulty'],
+        question_type=data['question_type'],
+        explanation=data['explanation']
+    )
+    question.save()
+    return JsonResponse({'status':'success'})
+
+@api_view(['GET'])
+def get_question(request, question_id):
+    try:
+        question = Question.objects.get(id=question_id)
+    except Question.DoesNotExist:
+        return Response({'error': 'Question does not exist'}, status=404)
+    serializer = QuestionSerializer(question)
     return Response(serializer.data)
 
 
@@ -213,18 +285,6 @@ def get_match_info(request):
     opponent_data = UserSerializer(opponent)
     user_data = UserSerializer(user)
     return Response({'opponent': opponent_data.data, 'currentUser': user_data.data})
-
-
-@api_view(['POST'])
-def get_question(request):
-    data = request.data
-    question_id = data.get('question_id')
-    try:
-        question = Question.objects.get(id=question_id)
-    except Question.DoesNotExist:
-        return Response({'error': 'Question does not exist'}, status=404)
-    serializer = QuestionSerializer(question)
-    return Response(serializer.data)
 
 
 @api_view(['POST'])
@@ -469,4 +529,3 @@ def view_profile(request, user_id):
 @ensure_csrf_cookie
 def set_csrf_token(request):
     return JsonResponse({'detail': 'CSRF cookie set'})
-
