@@ -10,9 +10,12 @@ from . import tournaments_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
-    path('get_question/', views.get_question, name='get_question'),
+    path('get_question/<int:question_id>', views.get_question, name='get_question'),
     path('check_answer/', views.check_answer, name='check_answer'),
     path('get_answer/', views.get_answer, name='get_answer'),
+    path('filter_questions/', views.list_questions, name='list_questions'),
+    path('edit_question/<int:question_id>', views.edit_question, name='edit_question'),
+    path('create_question/', views.create_question, name='create_question'),
 
     path('profile/', views.profile_view, name='profile'),
     path('profile/update_biography/', views.update_biography, name='update_biography'),
