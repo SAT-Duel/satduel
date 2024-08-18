@@ -1,3 +1,4 @@
+from django.http import JsonResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -13,8 +14,8 @@ from api.serializers import TournamentSerializer, TournamentParticipationSeriali
 @api_view(['GET', 'POST'])
 def tournament_list(request):
     if request.method == 'GET':
-        # Todo: Add a filter that filters tournament with end time larger than the current time
-        tournaments = Tournament.objects.filter(private=False)
+        current_time = timezone.now()
+        tournaments = Tournament.objects.filter(private=False, end_time__gt=current_time)
         serializer = TournamentSerializer(tournaments, many=True)
         return Response(serializer.data)
     elif request.method == 'POST':
@@ -196,3 +197,28 @@ def create_tournament(request):
     tournament.save()
     serializer = TournamentSerializer(tournament)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+def create_tournament_admin(request):
+    data = request.data
+
+    # Extract and validate the data
+    question_ids = data['question_ids']
+    tournament = Tournament.objects.create(
+        name=data['name'],
+        description=data['description'],
+        start_time=data['start_time'],
+        end_time=data['end_time'],
+        private=data.get('private', False),
+        duration=data.get('duration', 30),
+    )
+
+
+
+    # Associate the selected questions with the tournament
+    questions = Question.objects.filter(id__in=question_ids)
+    tournament.questions.set(questions)
+
+    return JsonResponse({'message': 'Tournament created successfully!'}, status=201)
+
