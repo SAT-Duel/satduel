@@ -70,6 +70,7 @@ urlpatterns = [
     path('tournaments/<int:pk>/submit-answer/', tournaments_views.submit_answer, name='submit-answer'),
     path('tournaments/<int:pk>/finish/', tournaments_views.finish_participation, name='finish-participation'),
     path('tournaments/create/', tournaments_views.create_tournament, name='create-tournament'),
+    path('tournaments/admin_create/', tournaments_views.create_tournament_admin, name='create-tournament-admin'),
 
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
