@@ -90,7 +90,7 @@ class Room(models.Model):
     status = models.CharField(max_length=10,
                               choices=[('Searching', 'Searching'), ('Battling', 'Battling'), ('Ended', 'Ended')])
     battle_start_time = models.DateTimeField(null=True, blank=True)
-    battle_duration = models.IntegerField(default=20)  # Duration in seconds, default 5 minutes
+    battle_duration = models.IntegerField(default=300)  # Duration in seconds, default 5 minutes
     winner = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
     user1_score = models.IntegerField(default=0)
     user2_score = models.IntegerField(default=0)
