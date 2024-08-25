@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, InfiniteQuestionStatistics, \
+from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
@@ -38,7 +38,17 @@ class ProfileBiographySerializer(serializers.ModelSerializer):
         model = Profile
         fields = ['id', 'biography']
 
+class InfiniteQuestionsSerializer(serializers.ModelSerializer):
+    user = UserSerializer()
+    total_multiplier = serializers.SerializerMethodField()
 
+    class Meta:
+        model = UserStatistics
+        fields = ['id', 'user', 'xp', 'level', 'coins', 'total_multiplier', 'correct_number', 'incorrect_number', 'current_streak']
+
+    def get_total_multiplier(self, obj):
+        return obj.total_multiplier()
+    
 class RoomSerializer(serializers.ModelSerializer):
     user1 = UserSerializer()
     user2 = UserSerializer()
@@ -74,7 +84,7 @@ class FriendRequestSerializer(serializers.ModelSerializer):
 
 class InfiniteQuestionStatisticsSerializer(serializers.ModelSerializer):
     class Meta:
-        model = InfiniteQuestionStatistics
+        model = UserStatistics
         fields = '__all__'
 
 
