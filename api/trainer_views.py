@@ -3,18 +3,20 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from api.models import InfiniteQuestionStatistics, PowerSprintStatistics, SurvivalStatistics
-from api.serializers import InfiniteQuestionStatisticsSerializer, PowerSprintStatisticsSerializer, \
+from api.models import UserStatistics, PowerSprintStatistics, SurvivalStatistics
+from api.serializers import InfiniteQuestionsSerializer, PowerSprintStatisticsSerializer, \
     SurvivalStatisticsSerializer
 
+from random import randint, choice
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def get_infinite_question_stats(request):
     user = request.user
-    stats,created = InfiniteQuestionStatistics.objects.get_or_create(user=user)
-    serializer = InfiniteQuestionStatisticsSerializer(stats)
+    stats, created = UserStatistics.objects.get_or_create(user=user)
+    serializer = InfiniteQuestionsSerializer(stats)
+    print(serializer.data)
     return Response(serializer.data)
 
 @api_view(['POST'])
@@ -28,19 +30,31 @@ def set_infinite_question_stats(request):
         correct = int(data.get('correct_number', 0))
         incorrect = int(data.get('incorrect', 0))
         current_streak = int(data.get('current_streak', 0))
+        xp = int(data.get('xp', 0))
+        level = int(data.get('level', 0))
+        coins = int(data.get('coins', 0))
+        multiplier = float(data.get('multiplier', 1.00))
     except ValueError:
         return Response({'status': 'error', 'message': 'Invalid data types'}, status=400)
 
-    stats, created = InfiniteQuestionStatistics.objects.update_or_create(
+    # Update the statistics in the database
+    stats, created = UserStatistics.objects.update_or_create(
         user=user,
         defaults={
             'correct_number': correct,
             'incorrect_number': incorrect,
-            'current_streak': current_streak
+            'current_streak': current_streak,
+            'xp': xp,
+            'level': level,
+            'coins': coins,
+            'multiplier': multiplier
         }
     )
 
-    return Response({'status': 'success'}, status=200)
+    # Return only the status; lootbox logic is handled in the frontend
+    return Response({
+            'status': 'success'
+        }, status=200)
 
 @api_view(['GET'])
 def get_power_sprint_stats(request):

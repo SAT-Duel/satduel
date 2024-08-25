@@ -2,6 +2,8 @@ import random
 from django.utils import timezone
 from django.contrib.auth.models import User
 from django.db import models
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 
 class Question(models.Model):
@@ -36,6 +38,16 @@ class Question(models.Model):
             num_questions = len(questions)
         return random.sample(questions, num_questions)
 
+class Pet(models.Model):
+    name = models.CharField(max_length=255)
+    price = models.IntegerField()
+    animation_data = models.JSONField()  # Assuming you store animation data as JSON
+
+    # pet perks
+    coin_multipliers = models.JSONField(default=dict)  # Using JSONField instead of ArrayField
+
+    def __str__(self):
+        return self.name
 
 class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -61,6 +73,19 @@ class Profile(models.Model):
 
     def __str__(self):
         return f"{self.user.username}'s Profile"
+
+class UserInventory(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='user_inventory')
+    pets = models.ManyToManyField(Pet, related_name='owners', blank=True)  # Many-to-many field for pets
+
+    def __str__(self):
+        return f"{self.user.username}'s Inventory"
+
+# Create UserInventory for each new user
+@receiver(post_save, sender=User)
+def create_user_inventory(sender, instance, created, **kwargs):
+    if created:
+        UserInventory.objects.create(user=instance)
 
 class Ranking(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -189,15 +214,29 @@ class FriendRequest(models.Model):
         self.save()
 
 
-class InfiniteQuestionStatistics(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
+class UserStatistics(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='infinitequestionstatistics')
     correct_number = models.IntegerField(default=0)
     incorrect_number = models.IntegerField(default=0)
     current_streak = models.IntegerField(default=0)
+    xp = models.IntegerField(default=0)
+    level = models.IntegerField(default=0)
+    coins = models.IntegerField(default=0)
+    normal_multiplier = models.FloatField(default=1.00)
+    user_pet_levels = models.JSONField(default=dict)
 
     def __str__(self):
         return f"{self.user.username} - {self.correct_number}/{self.correct_number + self.incorrect_number}"
 
+    def total_multiplier(self):  # normal multiplier + pet multipliers
+        total_multiplier = self.normal_multiplier
+        for pet_id, level in self.user_pet_levels.items():
+            try:
+                pet = Pet.objects.get(id=pet_id)
+                total_multiplier *= pet.coin_multipliers[str(level)]
+            except Pet.DoesNotExist:
+                continue
+        return total_multiplier
 
 class PowerSprintStatistics(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -264,3 +303,26 @@ class TournamentQuestion(models.Model):
 
     def __str__(self):
         return f"{self.participation.user.username} - Q{self.question.id} - {self.status} - {self.time_taken}"
+
+
+class House(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    name = models.CharField(max_length=255, default="My House")
+
+class Area(models.Model):
+    house = models.ForeignKey(House, related_name='areas', on_delete=models.CASCADE)
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+    is_unlocked = models.BooleanField(default=True)  # Automatically unlocked for now
+    position_x = models.IntegerField()  # Position on the map
+    position_y = models.IntegerField()
+    width = models.IntegerField()  # Size of the area
+    height = models.IntegerField()
+
+    def __str__(self):
+        return self.name
+    
+@receiver(post_save, sender=User)
+def create_house(sender, instance, created, **kwargs):
+    if created:
+        House.objects.create(user=instance)

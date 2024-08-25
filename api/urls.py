@@ -7,6 +7,8 @@ from . import user_views
 from .user_views import CustomRegisterView
 from . import trainer_views as trainer_view
 from . import tournaments_views
+from . import shop_views
+from . import house_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -27,6 +29,7 @@ urlpatterns = [
     path('profile/friends/', views.list_friends, name='list_friends'),
     path('profile/view_profile/<int:user_id>/', views.view_profile, name='view_profile'),
     path('profile/update-rating/', tournaments_views.update_rating, name='update-rating'),
+    path('infinite_questions_profile/', views.infinite_questions_profile_view, name='infinite_questions_profile'),
 
     path('login/', user_views.login_view, name='login'),
     path('logout/', user_views.logout_view, name='logout'),
@@ -71,9 +74,14 @@ urlpatterns = [
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
+    path('buy_pet/', shop_views.buy_pet, name='buy_pet'),
+
     # Password reset
     path('password_reset/', user_views.PasswordResetRequestView.as_view(), name='password_reset'),
     path('reset/<uidb64>/<token>/', user_views.PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 
     path('csrf/', views.set_csrf_token),
+
+    # House
+    path('house/', house_views.get_house_map, name='get_house_map'),
 ]

@@ -3,14 +3,15 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import status
 from rest_framework.response import Response
-from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest
+from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db.models import Q
 from django.utils import timezone
 from api.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer, \
-    ProfileBiographySerializer, UserSerializer, FriendRequestSerializer, TrackedQuestionResultSerializer
+    ProfileBiographySerializer, UserSerializer, FriendRequestSerializer, TrackedQuestionResultSerializer, \
+    InfiniteQuestionsSerializer
 
 
 @api_view(['GET'])
@@ -70,6 +71,24 @@ def profile_view(request):
             return Response(serializer.data, status=200)
         return Response(serializer.errors, status=400)
 
+@api_view(['GET', 'POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def infinite_questions_profile_view(request):
+    user = request.user
+    alcumus_profile = UserStatistics.objects.get(user=user)  
+
+    if request.method == 'GET':
+        serializer = InfiniteQuestionsSerializer(alcumus_profile)
+        print(serializer.data)
+        return Response(serializer.data)
+    elif request.method == 'POST':
+        serializer = InfiniteQuestionsSerializer(alcumus_profile, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=200)
+        return Response(serializer.errors, status=400)
+ 
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
