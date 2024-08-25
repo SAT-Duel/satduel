@@ -65,7 +65,7 @@ def clean_text(text):
 
 
 # Extract text from PDF
-pdf_file_path = 'Cross-Text Connections (Level 1) Answer Key.pdf'
+pdf_file_path = 'Text Structure and Purpose (Level 1) Answer Key.pdf'
 doc = fitz.open(pdf_file_path)
 text = ""
 for page in doc:
