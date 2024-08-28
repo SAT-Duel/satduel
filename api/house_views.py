@@ -12,7 +12,7 @@ def get_house_map(request):
     print('Accessed house')
     user = request.user
     try:
-        house = House.objects.get(user=user)
+        house, created = House.objects.get_or_create(user=user)
         areas = house.areas.all()
         areas_data = [
             {

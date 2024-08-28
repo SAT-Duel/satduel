@@ -38,17 +38,20 @@ class ProfileBiographySerializer(serializers.ModelSerializer):
         model = Profile
         fields = ['id', 'biography']
 
+
 class InfiniteQuestionsSerializer(serializers.ModelSerializer):
     user = UserSerializer()
     total_multiplier = serializers.SerializerMethodField()
 
     class Meta:
         model = UserStatistics
-        fields = ['id', 'user', 'xp', 'level', 'coins', 'total_multiplier', 'correct_number', 'incorrect_number', 'current_streak']
+        fields = ['id', 'user', 'xp', 'level', 'coins', 'total_multiplier', 'correct_number', 'incorrect_number',
+                  'current_streak']
 
     def get_total_multiplier(self, obj):
         return obj.total_multiplier()
-    
+
+
 class RoomSerializer(serializers.ModelSerializer):
     user1 = UserSerializer()
     user2 = UserSerializer()
@@ -82,12 +85,6 @@ class FriendRequestSerializer(serializers.ModelSerializer):
         fields = ['id', 'from_user', 'to_user', 'timestamp', 'status']
 
 
-class InfiniteQuestionStatisticsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = UserStatistics
-        fields = '__all__'
-
-
 class PowerSprintStatisticsSerializer(serializers.ModelSerializer):
     class Meta:
         model = PowerSprintStatistics
@@ -103,7 +100,7 @@ class SurvivalStatisticsSerializer(serializers.ModelSerializer):
 class CustomRegisterSerializer(RegisterSerializer):
     first_name = serializers.CharField(required=True, write_only=True)
     last_name = serializers.CharField(required=True, write_only=True)
-    grade = serializers.IntegerField(required=True, write_only=True)
+    grade = serializers.CharField(required=True, write_only=True)
 
     def get_cleaned_data(self):
         data_dict = super().get_cleaned_data()
@@ -137,7 +134,8 @@ class TournamentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Tournament
-        fields = ['id', 'name', 'description', 'duration', 'start_time', 'end_time', 'participantNumber', 'questionNumber']
+        fields = ['id', 'name', 'description', 'duration', 'start_time', 'end_time', 'participantNumber',
+                  'questionNumber']
 
 
 class TournamentParticipationSerializer(serializers.ModelSerializer):
@@ -159,6 +157,7 @@ class TournamentQuestionSerializer(serializers.ModelSerializer):
 class TPSubmitAnswerSerializer(serializers.ModelSerializer):
     tournament_questions = serializers.SerializerMethodField()
     user = UserSerializer()
+
     class Meta:
         model = TournamentParticipation
         fields = ['id', 'user', 'score', 'last_correct_submission', 'tournament_questions']

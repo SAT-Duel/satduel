@@ -148,7 +148,7 @@ def profile_view(request):
 @permission_classes([IsAuthenticated])
 def infinite_questions_profile_view(request):
     user = request.user
-    alcumus_profile = UserStatistics.objects.get(user=user)  
+    alcumus_profile, created = UserStatistics.objects.get_or_create(user=user)
 
     if request.method == 'GET':
         serializer = InfiniteQuestionsSerializer(alcumus_profile)

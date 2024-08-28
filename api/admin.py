@@ -2,7 +2,7 @@ from django.contrib import admin
 
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, UserInventory, House, Area
+    Pet, House, Area
 
 # Register your models here.
 admin.site.register(Question)
@@ -18,6 +18,5 @@ admin.site.register(TournamentParticipation)
 admin.site.register(TournamentQuestion)
 admin.site.register(Ranking)
 admin.site.register(Pet)
-admin.site.register(UserInventory)
 admin.site.register(House)
 admin.site.register(Area)

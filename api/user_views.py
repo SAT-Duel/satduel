@@ -19,6 +19,7 @@ from api.models import Profile
 from allauth.account.models import EmailAddress
 
 from api.serializers import CustomRegisterSerializer
+from satduel import settings
 
 
 @csrf_exempt
@@ -79,7 +80,7 @@ def register(request):
         Profile.objects.create(
             user=user,
             biography='This user is lazy, he did not write anything yet',
-            grade=grade
+            grade=str(grade)
         )
         if user:
             login(request, user)
@@ -115,6 +116,7 @@ class PasswordResetRequestView(APIView):
                     from_email=None,
                     email_template_name='registration/password_reset_email.html',
                     subject_template_name='registration/password_reset_subject.txt',
+                    domain_override=settings.FRONTEND_URL.replace("https://", ""),
                 )
                 return Response({"message": "Password reset link sent."}, status=status.HTTP_200_OK)
             return Response({"error": "Invalid email address."}, status=status.HTTP_400_BAD_REQUEST)

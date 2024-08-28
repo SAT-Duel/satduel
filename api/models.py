@@ -18,7 +18,6 @@ class Question(models.Model):
     explanation = models.TextField(null=True, blank=True)
 
     def __str__(self):
-
         return self.question
 
     @property
@@ -39,16 +38,18 @@ class Question(models.Model):
             num_questions = len(questions)
         return random.sample(questions, num_questions)
 
+
 class Pet(models.Model):
     name = models.CharField(max_length=255)
     price = models.IntegerField()
     animation_data = models.JSONField()  # Assuming you store animation data as JSON
 
-    # pet perks
+    # pet perks (pet benefit)
     coin_multipliers = models.JSONField(default=dict)  # Using JSONField instead of ArrayField
 
     def __str__(self):
         return self.name
+
 
 class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -61,32 +62,24 @@ class Profile(models.Model):
     problems_solved = models.IntegerField(default=0)
     country = models.CharField(max_length=2, default='US')
     max_streak = models.IntegerField(default=0)
+    pets = models.ManyToManyField(Pet, related_name='owners', blank=True)  # Many-to-many field for pets
+
     def update_elo(self, opponent_elo, result):
         k = 32  # K-factor for ELO calculation
         expected_score = 1 / (1 + 10 ** ((opponent_elo - self.elo_rating) / 400))
         new_elo = self.elo_rating + k * (result - expected_score)
         self.elo_rating = int(new_elo)
         self.save()
+
     def increment_problems_solved(self):
         self.problems_solved += 1
         self.save()
 
-
     def __str__(self):
         return f"{self.user.username}'s Profile"
 
-class UserInventory(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='user_inventory')
-    pets = models.ManyToManyField(Pet, related_name='owners', blank=True)  # Many-to-many field for pets
 
-    def __str__(self):
-        return f"{self.user.username}'s Inventory"
 
-# Create UserInventory for each new user
-@receiver(post_save, sender=User)
-def create_user_inventory(sender, instance, created, **kwargs):
-    if created:
-        UserInventory.objects.create(user=instance)
 
 class Ranking(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
@@ -106,6 +99,7 @@ class Ranking(models.Model):
             ranking, created = cls.objects.get_or_create(user=profile.user)
             ranking.rank = index
             ranking.save()
+
 
 class Room(models.Model):
     user1 = models.ForeignKey(User, related_name='room_user1', on_delete=models.CASCADE)
@@ -159,6 +153,7 @@ class Room(models.Model):
 
         # Update global rankings
         # Ranking.update_rankings()
+
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         if self.status == 'Ended' and not hasattr(self, '_battle_ended'):
@@ -239,6 +234,7 @@ class UserStatistics(models.Model):
                 continue
         return total_multiplier
 
+
 class PowerSprintStatistics(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     bullet_record = models.IntegerField(default=0)
@@ -310,6 +306,7 @@ class House(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=255, default="My House")
 
+
 class Area(models.Model):
     house = models.ForeignKey(House, related_name='areas', on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
@@ -322,7 +319,8 @@ class Area(models.Model):
 
     def __str__(self):
         return self.name
-    
+
+
 @receiver(post_save, sender=User)
 def create_house(sender, instance, created, **kwargs):
     if created:
