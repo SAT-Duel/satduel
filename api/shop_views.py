@@ -7,7 +7,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 import json
 
-from .models import Pet, UserInventory, UserStatistics
+from .models import Pet, Profile, UserStatistics
 
 
 @api_view(['POST'])
@@ -26,16 +26,16 @@ def buy_pet(request):
             return JsonResponse({"error": "User statistics not found."}, status=404)
         
         # Ensure UserInventory exists
-        user_inventory, created = UserInventory.objects.get_or_create(user=user)
+        user_profile = Profile.objects.get(user=user)
         pet = Pet.objects.get(id=pet_id)
         
-        if pet in user_inventory.pets.all():
+        if pet in user_profile.pets.all():
             response = 'Purchase failed. You already own this pet!'
             purchased = False
         elif profile.coins >= pet.price:
             profile.coins -= pet.price
-            user_inventory.pets.add(pet)
-            user_inventory.save()
+            user_profile.pets.add(pet)
+            user_profile.save()
             profile.save()
             response = 'Purchase successful.'
             purchased = True

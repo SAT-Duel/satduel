@@ -84,8 +84,6 @@ urlpatterns = [
     path('password_reset/', user_views.PasswordResetRequestView.as_view(), name='password_reset'),
     path('reset/<uidb64>/<token>/', user_views.PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 
-    path('csrf/', views.set_csrf_token),
-
     # House
     path('house/', house_views.get_house_map, name='get_house_map'),
 ]
