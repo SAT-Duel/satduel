@@ -184,7 +184,7 @@ EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
 
 ACCOUNT_ADAPTER = 'api.adapters.CustomAccountAdapter'  # Replace 'your_app' with the actual app name
-FRONTEND_URL = 'https://satduel.netlify.app'  # Replace with your frontend URL
+FRONTEND_URL = 'https://satduel.com'  # Replace with your frontend URL
 PASSWORD_RESET_TIMEOUT_DAYS = 1
 CSRF_COOKIE_HTTPONLY = False
 

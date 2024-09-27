@@ -7,7 +7,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 import json
 
-from .models import Pet, Profile, UserStatistics
+from api.models import Pet, Profile, UserStatistics
 
 
 @api_view(['POST'])
