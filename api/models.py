@@ -79,8 +79,6 @@ class Profile(models.Model):
         return f"{self.user.username}'s Profile"
 
 
-
-
 class Ranking(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     rank = models.PositiveIntegerField(unique=True)
@@ -151,9 +149,6 @@ class Room(models.Model):
         user1_profile.save()
         user2_profile.save()
 
-        # Update global rankings
-        # Ranking.update_rankings()
-
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         if self.status == 'Ended' and not hasattr(self, '_battle_ended'):
@@ -174,6 +169,46 @@ class Room(models.Model):
                     question=question,
                     status="Blank"
                 )
+
+
+class Game(models.Model):
+    host = models.ForeignKey(User, related_name='host', on_delete=models.CASCADE)
+    players = models.ManyToManyField(User, related_name='players', blank=True)
+    max_players = models.IntegerField(default=2)
+    questions = models.ManyToManyField(Question, blank=True)
+    question_number = models.IntegerField(default=10)
+    status = models.CharField(max_length=10,
+                              choices=[('Waiting', 'Waiting'), ('Battling', 'Battling'), ('Ended', 'Ended')])
+    battle_start_time = models.DateTimeField(null=True, blank=True)
+    battle_duration = models.IntegerField(default=600)  # Duration in seconds, default 10 minutes
+    created_at = models.DateTimeField(auto_now_add=True)
+    password = models.CharField(max_length=255, blank=True, null=True)
+    has_password = models.BooleanField(default=False)
+
+    def assign_questions(self):
+        # If questions already exist, return without doing anything
+        if self.questions.exists():
+            return
+
+        # Assign random questions to the game
+        random_questions = Question.get_random_questions(self.question_number)
+        self.questions.set(random_questions)
+        self.save()
+
+        # Initialize GameQuestion entries for each player
+        questions_status = {index: {'status': 'blank', 'duration': None} for index in
+                            self.questions.all().order_by('id')}
+        for player in self.players.all():
+            game_question = GameQuestion(user=player, game=self, questions_status=questions_status)
+            game_question.save()
+        game_question = GameQuestion(user=self.host, game=self, questions_status=questions_status)
+        game_question.save()
+
+
+class GameQuestion(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    game = models.ForeignKey(Game, on_delete=models.CASCADE)
+    questions_status = models.JSONField(default=dict)
 
 
 class TrackedQuestion(models.Model):
@@ -228,7 +263,7 @@ class UserStatistics(models.Model):
         total_multiplier = self.normal_multiplier
         for pet_id, level in self.user_pet_levels.items():
             try:
-                pet = Pet.objects.get(id=pet_id)
+                pet =  Pet.objects.get(id=pet_id)
                 total_multiplier *= pet.coin_multipliers[str(level)]
             except Pet.DoesNotExist:
                 continue

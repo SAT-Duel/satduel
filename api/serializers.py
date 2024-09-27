@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
-    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
+    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Game
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
 from allauth.account.utils import setup_user_email
@@ -166,3 +166,9 @@ class TPSubmitAnswerSerializer(serializers.ModelSerializer):
         # Retrieve and order the questions by ID
         questions = obj.tournamentquestion_set.all().order_by('id')
         return TournamentQuestionSerializer(questions, many=True).data
+
+
+
+
+
+
