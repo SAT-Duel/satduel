@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.models import UserStatistics, PowerSprintStatistics, SurvivalStatistics
-from api.serializers import InfiniteQuestionsSerializer, PowerSprintStatisticsSerializer, \
+from api.views.serializers import InfiniteQuestionsSerializer, PowerSprintStatisticsSerializer, \
     SurvivalStatisticsSerializer
 
 @api_view(['GET'])

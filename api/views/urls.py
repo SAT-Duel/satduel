@@ -1,9 +1,9 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from . import views, house_views, inventory_views, shop_views, tournaments_views, trainer_views as trainer_view, \
-    user_views
-from api.user_views import CustomRegisterView
+from api import views, shop_views
+from api.views import house_views, inventory_views, tournaments_views, trainer_views as trainer_view, user_views
+from api.views.user_views import CustomRegisterView
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),

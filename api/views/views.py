@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db.models import Q
 from django.utils import timezone
-from api.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer, \
+from api.views.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer, \
     ProfileBiographySerializer, UserSerializer, FriendRequestSerializer, TrackedQuestionResultSerializer, \
     InfiniteQuestionsSerializer
 
