@@ -3,7 +3,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from .models import House
+from api.models import House
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])

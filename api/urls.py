@@ -1,14 +1,9 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from django.contrib.auth import views as auth_views
 
-from . import views
-from . import user_views
-from .user_views import CustomRegisterView
-from . import trainer_views as trainer_view
-from . import tournaments_views
-from . import shop_views
-from . import house_views
+from . import views, house_views, inventory_views, shop_views, tournaments_views, trainer_views as trainer_view, \
+    user_views
+from api.user_views import CustomRegisterView
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -86,4 +81,7 @@ urlpatterns = [
 
     # House
     path('house/', house_views.get_house_map, name='get_house_map'),
+    # Inventory
+    path('user_pets/', inventory_views.user_pets, name='user_pets'),
+    path('upgrade_pet/', inventory_views.upgrade_pet, name='upgrade_pet'),
 ]
