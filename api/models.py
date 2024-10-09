@@ -149,9 +149,6 @@ class Room(models.Model):
         user1_profile.save()
         user2_profile.save()
 
-        # Update global rankings
-        # Ranking.update_rankings()
-
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
         if self.status == 'Ended' and not hasattr(self, '_battle_ended'):
