@@ -1,7 +1,8 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from api import views, shop_views
+from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
+from api.views import views, shop_views
 from api.views import house_views, inventory_views, tournaments_views, trainer_views as trainer_view, user_views
 from api.views.user_views import CustomRegisterView
 
@@ -84,4 +85,13 @@ urlpatterns = [
     # Inventory
     path('user_pets/', inventory_views.user_pets, name='user_pets'),
     path('upgrade_pet/', inventory_views.upgrade_pet, name='upgrade_pet'),
+
+
+    path('games/<int:game_id>/join/', join_room, name='join_room'),
+    path('games/<int:game_id>/start/', start_game, name='start_game'),  # New endpoint for starting the game
+    path('games/create/', create_game, name='create_game'),  # New endpoint for creating a game
+    path('games/waiting/', list_waiting_games, name='list_waiting_games'),  # List all waiting games
+    path('games/<int:game_id>/', retrieve_game, name='retrieve_game'),  # Retrieve a specific game by ID
+    path('games/<int:game_id>/delete/', delete_game, name='delete_game'),
+
 ]

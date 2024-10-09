@@ -214,8 +214,6 @@ def create_tournament_admin(request):
         duration=data.get('duration', 30),
     )
 
-
-
     # Associate the selected questions with the tournament
     questions = Question.objects.filter(id__in=question_ids)
     tournament.questions.set(questions)
