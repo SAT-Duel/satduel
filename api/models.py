@@ -263,11 +263,21 @@ class UserStatistics(models.Model):
         total_multiplier = self.normal_multiplier
         for pet_id, level in self.user_pet_levels.items():
             try:
-                pet =  Pet.objects.get(id=pet_id)
-                total_multiplier *= pet.coin_multipliers[str(level)]
+                pet = Pet.objects.get(id=pet_id)
+                # Get coin multipliers for the pet
+                multipliers = pet.coin_multipliers
+
+                # If the current level does not exist, default to the highest level
+                if str(level) in multipliers:
+                    total_multiplier *= multipliers[str(level)]
+                else:
+                    # Default to the highest level multiplier available
+                    highest_level = max(map(int, multipliers.keys()))  # Convert keys to integers to find the max level
+                    total_multiplier *= multipliers[str(highest_level)]
             except Pet.DoesNotExist:
-                continue
-        return total_multiplier
+                continue  # If the pet doesn't exist, skip it
+
+        return round(total_multiplier, 2)  # Return the total multiplier rounded to 2 decimal places
 
 
 class PowerSprintStatistics(models.Model):

@@ -4,10 +4,8 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.models import UserStatistics, PowerSprintStatistics, SurvivalStatistics
-from api.serializers import InfiniteQuestionsSerializer, PowerSprintStatisticsSerializer, \
+from api.views.serializers import InfiniteQuestionsSerializer, PowerSprintStatisticsSerializer, \
     SurvivalStatisticsSerializer
-
-from random import randint, choice
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
@@ -15,9 +13,12 @@ from random import randint, choice
 def get_infinite_question_stats(request):
     user = request.user
     stats, created = UserStatistics.objects.get_or_create(user=user)
-    serializer = InfiniteQuestionsSerializer(stats)
-    print(serializer.data)
-    return Response(serializer.data)
+
+    # Use the total multiplier, which includes both the default and pet multipliers
+    stats_data = InfiniteQuestionsSerializer(stats).data
+    stats_data['multiplier'] = stats.total_multiplier()  # Set the total multiplier
+
+    return Response(stats_data)
 
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
@@ -33,11 +34,11 @@ def set_infinite_question_stats(request):
         xp = int(data.get('xp', 0))
         level = int(data.get('level', 0))
         coins = int(data.get('coins', 0))
-        multiplier = float(data.get('multiplier', 1.00))
+        # Don't get the multiplier from the data, calculate the total multiplier instead
     except ValueError:
         return Response({'status': 'error', 'message': 'Invalid data types'}, status=400)
 
-    # Update the statistics in the database
+    # Fetch the user's statistics and calculate the total multiplier
     stats, created = UserStatistics.objects.update_or_create(
         user=user,
         defaults={
@@ -47,14 +48,14 @@ def set_infinite_question_stats(request):
             'xp': xp,
             'level': level,
             'coins': coins,
-            'multiplier': multiplier
         }
     )
 
     # Return only the status; lootbox logic is handled in the frontend
     return Response({
-            'status': 'success'
-        }, status=200)
+        'status': 'success',
+        'multiplier': round(stats.total_multiplier(), 2)  # Send the total multiplier in the response
+    }, status=200)
 
 @api_view(['GET'])
 def get_power_sprint_stats(request):

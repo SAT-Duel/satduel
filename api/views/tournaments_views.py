@@ -7,8 +7,8 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 
 from api.models import Tournament, TournamentParticipation, Question, TournamentQuestion, Profile
-from api.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentQuestionSerializer, \
-    ProfileSerializer, TPSubmitAnswerSerializer, QuestionSerializer
+from api.views.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentQuestionSerializer, \
+    ProfileSerializer, TPSubmitAnswerSerializer
 
 
 @api_view(['GET', 'POST'])

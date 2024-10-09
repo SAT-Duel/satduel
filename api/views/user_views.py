@@ -18,7 +18,7 @@ from api.models import Profile
 
 from allauth.account.models import EmailAddress
 
-from api.serializers import CustomRegisterSerializer
+from api.views.serializers import CustomRegisterSerializer
 from satduel import settings
 
 
