@@ -33,7 +33,12 @@ class Question(models.Model):
 
     @classmethod
     def get_random_questions(self, num_questions):
-        questions = list(self.objects.all())
+        default_question_types = [
+            'Cross-Text Connections', 'Text Structure and Purpose', 'Words in Context',
+            'Rhetorical Synthesis', 'Transitions', 'Central Ideas and Details',
+            'Command of Evidence', 'Inferences', 'Boundaries', 'Form, Structure, and Sense'
+        ]
+        questions = list(self.objects.filter(question_type__in=default_question_types))
         if num_questions > len(questions):
             num_questions = len(questions)
         return random.sample(questions, num_questions)

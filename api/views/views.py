@@ -1,3 +1,5 @@
+from random import sample
+
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.http import JsonResponse
@@ -32,24 +34,39 @@ def get_random_questions(request):
 def list_questions(request):
     question_type = request.GET.get('type', 'any')
     difficulty = request.GET.get('difficulty', 'any')
-    page = request.GET.get('page', 1)
-    page_size = request.GET.get('page_size', 15)
+    page = int(request.GET.get('page', 1))
+    page_size = int(request.GET.get('page_size', 15))
+    random_flag = request.GET.get('random', 'false').lower() == 'true'
 
-    questions = Question.objects.all().order_by('id')
+    # Default question types if 'any' is selected
+    default_question_types = [
+        'Cross-Text Connections', 'Text Structure and Purpose', 'Words in Context',
+        'Rhetorical Synthesis', 'Transitions', 'Central Ideas and Details',
+        'Command of Evidence', 'Inferences', 'Boundaries', 'Form, Structure, and Sense'
+    ]
 
+    # Filter questions based on type and difficulty
     if question_type != 'any':
-        questions = questions.filter(question_type=question_type)
+        questions = Question.objects.filter(question_type=question_type).order_by('id')
+    else:
+        questions = Question.objects.filter(question_type__in=default_question_types).order_by('id')
+
     if difficulty != 'any':
-        questions = questions.filter(difficulty=int(difficulty))
+        questions = questions.filter(difficulty=int(difficulty)).order_by('id')
 
-    paginator = Paginator(questions, page_size)
+    # Handle 'random' parameter to select random questions
+    if random_flag:
+        questions_list = list(questions)  # Convert queryset to list
+        questions_list = sample(questions_list, min(page_size, len(questions_list)))  # Random sample
+        paginator = Paginator(questions_list, page_size)
+    else:
+        paginator = Paginator(questions, page_size)
+
     questions_paginated = paginator.get_page(page)
-
     serializer = QuestionSerializer(questions_paginated, many=True)
+
     return Response({
         'questions': serializer.data,
-        # 'question_types': Question.objects.values_list('question_type', flat=True).distinct(),
-        # 'difficulties': Question.objects.values_list('difficulty', flat=True).distinct(),
         'total': paginator.count,
     })
 
