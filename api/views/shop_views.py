@@ -21,10 +21,8 @@ def buy_pet(request):
         pet2 = Pet.objects.get(name="Bessie The Cow")
         print(pet_id, pet2.id)
 
-
-        # Fetch the InfiniteQuestionStatistics instance for this user
         try:
-            profile = user.infinitequestionstatistics.get()  # Assuming there is only one related InfiniteQuestionStatistics instance per user
+            profile = user.infinitequestionstatistics.get()
         except UserStatistics.DoesNotExist:
             return JsonResponse({"error": "User statistics not found."}, status=404)
 
