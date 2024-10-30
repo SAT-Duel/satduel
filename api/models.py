@@ -375,3 +375,11 @@ class Area(models.Model):
 def create_house(sender, instance, created, **kwargs):
     if created:
         House.objects.create(user=instance)
+
+
+class OnlineUser(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    last_seen = models.DateTimeField(default=timezone.now)
+
+    def __str__(self):
+        return self.user.username
