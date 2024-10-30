@@ -63,6 +63,7 @@ class RoomSerializer(serializers.ModelSerializer):
 
 
 class TrackedQuestionSerializer(serializers.ModelSerializer):
+    question = QuestionSerializer()
     class Meta:
         model = TrackedQuestion
         fields = '__all__'

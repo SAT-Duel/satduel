@@ -5,6 +5,7 @@ from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, house_views, inventory_views
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
+from api.views import onlineuser_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -94,13 +95,7 @@ urlpatterns = [
     path('games/<int:game_id>/', retrieve_game, name='retrieve_game'),  # Retrieve a specific game by ID
     path('games/<int:game_id>/delete/', delete_game, name='delete_game'),
 
-
-
-    path('games/<int:game_id>/join/', join_room, name='join_room'),
-    path('games/<int:game_id>/start/', start_game, name='start_game'),  # New endpoint for starting the game
-    path('games/create/', create_game, name='create_game'),  # New endpoint for creating a game
-    path('games/waiting/', list_waiting_games, name='list_waiting_games'),  # List all waiting games
-    path('games/<int:game_id>/', retrieve_game, name='retrieve_game'),  # Retrieve a specific game by ID
-    path('games/<int:game_id>/delete/', delete_game, name='delete_game'),
-
+    path('online_users/', onlineuser_views.get_online_users, name='get_online_users'),
+    path('update_online_status/', onlineuser_views.update_online_status, name='update_online_status'),
+    path('remove_online_user/', onlineuser_views.remove_online_user, name='remove_online_user'),
 ]
