@@ -71,6 +71,10 @@ urlpatterns = [
     path('tournaments/<int:pk>/finish/', tournaments_views.finish_participation, name='finish-participation'),
     path('tournaments/create/', tournaments_views.create_tournament, name='create-tournament'),
     path('tournaments/admin_create/', tournaments_views.create_tournament_admin, name='create-tournament-admin'),
+    path('tournaments/get_history/', tournaments_views.tournament_history, name='tournament-history'),
+    path('tournaments/get_history/<int:id>/', tournaments_views.tournament_history, name='tournament-history'),
+    path('tournaments/join_from_code/', tournaments_views.join_from_code, name='join-tournament-from-code'),
+    path('tournaments/my_tournaments/', tournaments_views.get_my_tournaments, name='get_my_tournaments'),
 
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

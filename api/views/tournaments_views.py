@@ -1,3 +1,5 @@
+import random
+from django.contrib.auth.models import User
 from django.http import JsonResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -5,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
+import string
 
 from api.models import Tournament, TournamentParticipation, Question, TournamentQuestion, Profile
 from api.views.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentQuestionSerializer, \
@@ -168,17 +171,30 @@ def update_rating(request):
     return Response(serializer.data)
 
 
+def generate_unique_join_code():
+    """Generate a unique 6-character alphanumeric join code."""
+    code_length = 6
+    characters = string.ascii_uppercase + string.digits
+    while True:
+        join_code = ''.join(random.choices(characters, k=code_length))
+        if not Tournament.objects.filter(join_code=join_code).exists():
+            return join_code
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_tournament(request):
     data = request.data
     questions_data = data['questions']
+
+    join_code = generate_unique_join_code() if data['private'] else None
+
     tournament = Tournament.objects.create(
         name=data['name'],
         description=data['description'],
         start_time=data['start_time'],
         end_time=data['end_time'],
         private=data['private'],
+        join_code=join_code,
     )
 
     for question in questions_data:
@@ -195,13 +211,17 @@ def create_tournament(request):
         )
         tournament.questions.add(question)
     tournament.save()
+    user = User.objects.get(id=request.user.id)
+    user.my_tournaments.add(tournament)
     serializer = TournamentSerializer(tournament)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def create_tournament_admin(request):
     data = request.data
+    join_code = generate_unique_join_code() if data['private'] else None
 
     # Extract and validate the data
     question_ids = data['question_ids']
@@ -212,11 +232,50 @@ def create_tournament_admin(request):
         end_time=data['end_time'],
         private=data.get('private', False),
         duration=data.get('duration', 30),
+        join_code=join_code,
     )
 
     # Associate the selected questions with the tournament
     questions = Question.objects.filter(id__in=question_ids)
     tournament.questions.set(questions)
+    tournament.save()
+    profile = Profile.objects.get(user=request.user)
+    profile.my_tournaments.add(tournament)
+    return JsonResponse({'join_code': tournament.join_code}, status=201)
 
-    return JsonResponse({'message': 'Tournament created successfully!'}, status=201)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def tournament_history(request, id=None):
+    if id:
+        user = User.objects.get(id=id)
+        participations = TournamentParticipation.objects.filter(user=user, status="Completed").order_by('-start_time')
+        serializer = TournamentParticipationSerializer(participations, many=True)
+        return Response(serializer.data)
+    else:
+        user = request.user
+        participations = TournamentParticipation.objects.filter(user=user, status="Completed").order_by('-start_time')
+        serializer = TournamentParticipationSerializer(participations, many=True)
+        return Response(serializer.data)
 
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def join_from_code(request):
+    data = request.data
+    join_code = data.get('join_code', '').strip()
+    try:
+        tournament = Tournament.objects.get(join_code=join_code)
+    except Tournament.DoesNotExist:
+        return Response({"error": "Invalid join code. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({"id": tournament.id}, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_my_tournaments(request):
+    user = request.user
+    profile = user.profile  # Assuming you have a one-to-one relationship
+    tournaments = profile.my_tournaments.all()
+    serializer = TournamentSerializer(tournaments, many=True)
+    return Response(serializer.data)

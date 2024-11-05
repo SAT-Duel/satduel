@@ -56,6 +56,55 @@ class Pet(models.Model):
         return self.name
 
 
+class Tournament(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField()
+    start_time = models.DateTimeField()
+    end_time = models.DateTimeField(null=True)
+    duration = models.DurationField(default=timezone.timedelta(minutes=30))
+    questions = models.ManyToManyField(Question)
+    private = models.BooleanField(default=False)
+    join_code = models.CharField(max_length=10, blank=True, null=True)
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def questionNumber(self):
+        return self.questions.count()
+
+    @property
+    def participantNumber(self):
+        return self.tournamentparticipation_set.count()
+
+
+class TournamentParticipation(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE)
+    start_time = models.DateTimeField(null=True, blank=True)
+    end_time = models.DateTimeField(null=True, blank=True)
+    score = models.IntegerField(default=0)
+    last_correct_submission = models.DurationField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=[('Active', 'Active'), ('Completed', 'Completed')])
+
+    def __str__(self):
+        return f"{self.user.username} in {self.tournament.name}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+
+
+class TournamentQuestion(models.Model):
+    participation = models.ForeignKey(TournamentParticipation, on_delete=models.CASCADE)
+    question = models.ForeignKey(Question, on_delete=models.CASCADE)
+    status = models.CharField(max_length=10,
+                              choices=[('Correct', 'Correct'), ('Incorrect', 'Incorrect'), ('Blank', 'Blank')])
+    time_taken = models.DurationField(blank=True, null=True)  # Time taken to answer from start of participation
+
+    def __str__(self):
+        return f"{self.participation.user.username} - Q{self.question.id} - {self.status} - {self.time_taken}"
+
+
 class Profile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     biography = models.TextField(blank=True, null=True)
@@ -67,7 +116,9 @@ class Profile(models.Model):
     problems_solved = models.IntegerField(default=0)
     country = models.CharField(max_length=2, default='US')
     max_streak = models.IntegerField(default=0)
-    pets = models.ManyToManyField(Pet, related_name='owners', blank=True)  # Many-to-many field for pets
+    pets = models.ManyToManyField(Pet, related_name='owners', blank=True)
+
+    my_tournaments = models.ManyToManyField(Tournament, related_name='my_tournaments', blank=True)
 
     def update_elo(self, opponent_elo, result):
         k = 32  # K-factor for ELO calculation
@@ -302,54 +353,6 @@ class SurvivalStatistics(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.record}"
-
-
-class Tournament(models.Model):
-    name = models.CharField(max_length=255)
-    description = models.TextField()
-    start_time = models.DateTimeField()
-    end_time = models.DateTimeField(null=True)
-    duration = models.DurationField(default=timezone.timedelta(minutes=30))
-    questions = models.ManyToManyField(Question)
-    private = models.BooleanField(default=False)
-
-    def __str__(self):
-        return self.name
-
-    @property
-    def questionNumber(self):
-        return self.questions.count()
-
-    @property
-    def participantNumber(self):
-        return self.tournamentparticipation_set.count()
-
-
-class TournamentParticipation(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    tournament = models.ForeignKey(Tournament, on_delete=models.CASCADE)
-    start_time = models.DateTimeField(null=True, blank=True)
-    end_time = models.DateTimeField(null=True, blank=True)
-    score = models.IntegerField(default=0)
-    last_correct_submission = models.DurationField(null=True, blank=True)
-    status = models.CharField(max_length=10, choices=[('Active', 'Active'), ('Completed', 'Completed')])
-
-    def __str__(self):
-        return f"{self.user.username} in {self.tournament.name}"
-
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-
-
-class TournamentQuestion(models.Model):
-    participation = models.ForeignKey(TournamentParticipation, on_delete=models.CASCADE)
-    question = models.ForeignKey(Question, on_delete=models.CASCADE)
-    status = models.CharField(max_length=10,
-                              choices=[('Correct', 'Correct'), ('Incorrect', 'Incorrect'), ('Blank', 'Blank')])
-    time_taken = models.DurationField(blank=True, null=True)  # Time taken to answer from start of participation
-
-    def __str__(self):
-        return f"{self.participation.user.username} - Q{self.question.id} - {self.status} - {self.time_taken}"
 
 
 class House(models.Model):
