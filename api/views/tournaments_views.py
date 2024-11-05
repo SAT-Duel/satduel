@@ -221,7 +221,7 @@ def create_tournament(request):
 @permission_classes([IsAuthenticated])
 def create_tournament_admin(request):
     data = request.data
-    join_code = generate_unique_join_code() if data['private'] else None
+    join_code = generate_unique_join_code() if data.get('private', False) else None
 
     # Extract and validate the data
     question_ids = data['question_ids']
