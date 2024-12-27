@@ -34,6 +34,7 @@ urlpatterns = [
     path('login/', user_views.login_view, name='login'),
     path('logout/', user_views.logout_view, name='logout'),
     path('register/', CustomRegisterView.as_view(), name='register'),
+    path('set_goal/', user_views.set_goal, name='set_goal'),
 
     path('match/', views.match, name='match'),
     path('match/questions/', views.get_match_questions, name='get_match_questions'),
