@@ -117,6 +117,10 @@ class Profile(models.Model):
     country = models.CharField(max_length=2, default='US')
     max_streak = models.IntegerField(default=0)
     pets = models.ManyToManyField(Pet, related_name='owners', blank=True)
+    goal = models.CharField(max_length=255,
+                            choices=[('Beginner Path', 'Beginner Path'), ('Steady Learner', 'Steady Learner'),
+                                     ('Advanced Track', 'Advanced Track'), ('Expert Challenge', 'Expert Challenge')],
+                            default='Beginner Path')
 
     my_tournaments = models.ManyToManyField(Tournament, related_name='my_tournaments', blank=True)
 
