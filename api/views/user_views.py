@@ -1,5 +1,4 @@
 import json
-
 from dj_rest_auth.registration.views import RegisterView
 from django.contrib.auth.forms import PasswordResetForm, SetPasswordForm
 from django.contrib.auth.models import User
@@ -11,8 +10,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.http import require_POST
 from rest_framework import status
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.models import Profile
 
@@ -31,6 +33,7 @@ def login_view(request):
         user = authenticate(request, username=username, password=password)
         if user is not None:
             if EmailAddress.objects.filter(user=user, verified=True).exists():
+                is_first_login = user.last_login is None
                 login(request, user)
                 return JsonResponse({
                     'message': 'Logged In Successfully',
@@ -38,6 +41,7 @@ def login_view(request):
                     'email': user.email,
                     'id': user.id,
                     'is_admin': user.is_staff,
+                    'is_first_login': is_first_login
                 }, status=200)
             else:
                 return JsonResponse({'error': 'Please verify your email address before logging in'}, status=401)
@@ -138,3 +142,15 @@ class PasswordResetConfirmView(APIView):
                 return Response({"message": "Password reset successful."}, status=status.HTTP_200_OK)
             return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
         return Response({"error": "Invalid token or user ID."}, status=status.HTTP_400_BAD_REQUEST)
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def set_goal(request):
+    user = request.user
+    data = json.loads(request.body)
+    goal = data.get('goal')
+    if goal:
+        user.profile.goal = goal
+        user.profile.save()
+        return JsonResponse({'message': 'Goal set successfully'}, status=200)
