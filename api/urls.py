@@ -5,7 +5,7 @@ from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, house_views, inventory_views
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
-from api.views import onlineuser_views
+from api.views import onlineuser_views, quests_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -102,4 +102,10 @@ urlpatterns = [
     path('online_users/', onlineuser_views.get_online_users, name='get_online_users'),
     path('update_online_status/', onlineuser_views.update_online_status, name='update_online_status'),
     path('remove_online_user/', onlineuser_views.remove_online_user, name='remove_online_user'),
+
+    # Quest endpoints
+    path('quests/', quests_views.get_user_quests, name='get_user_quests'),
+    path('quests/update_progress/', quests_views.update_quest_progress, name='update_quest_progress'),
+    path('quests/claim_reward/', quests_views.claim_quest_reward, name='claim_quest_reward'),
+    path('api/user_streak/', views.get_user_streak, name='user-streak'),
 ]

@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
-    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Game
+    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, \
+    Quest, UserQuest
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
 from allauth.account.utils import setup_user_email
@@ -168,8 +169,15 @@ class TPSubmitAnswerSerializer(serializers.ModelSerializer):
         questions = obj.tournamentquestion_set.all().order_by('id')
         return TournamentQuestionSerializer(questions, many=True).data
 
+class QuestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Quest
+        fields = ['id', 'name', 'description', 'target', 'reward_xp', 'reward_coins', 'quest_type']
 
+class UserQuestSerializer(serializers.ModelSerializer):
+    quest = QuestSerializer()
+    is_reward_claimed = serializers.BooleanField()
 
-
-
-
+    class Meta:
+        model = UserQuest
+        fields = ['id', 'quest', 'progress', 'is_completed', 'is_reward_claimed']

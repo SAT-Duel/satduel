@@ -114,8 +114,104 @@ def get_question(request, question_id):
     serializer = QuestionSerializer(question)
     return Response(serializer.data)
 
+from django.db.models import F
+from django.utils import timezone
+from ..models import Question, UserStatistics, Quest, UserQuest
+from rest_framework import status
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def claim_quest_reward(request):
+    user = request.user
+    quest_id = request.data.get('quest_id')
+
+    try:
+        user_quest = UserQuest.objects.get(user=user, quest_id=quest_id)
+    except UserQuest.DoesNotExist:
+        return Response({'detail': 'Quest not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not user_quest.is_completed:
+        return Response({'detail': 'Quest not completed yet.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if user_quest.is_reward_claimed:
+        return Response({'detail': 'Reward already claimed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Reward the user
+    user_stats, created = UserStatistics.objects.get_or_create(user=user)
+    user_stats.xp += user_quest.quest.reward_xp
+    user_stats.coins += user_quest.quest.reward_coins
+    user_stats.save()
+
+    # Mark reward as claimed
+    user_quest.is_reward_claimed = True
+    user_quest.save()
+
+    return Response({'detail': 'Reward claimed successfully.'}, status=status.HTTP_200_OK)
+
+
+from django.utils import timezone
+from datetime import timedelta
+
+def is_same_day(dt1, dt2):
+    return dt1.date() == dt2.date()
+
+def is_same_week(dt1, dt2):
+    # Assuming week starts on Monday
+    return dt1.isocalendar()[1] == dt2.isocalendar()[1] and dt1.year == dt2.year
+
+def update_user_quest_progress(user, answer_is_correct):
+    # Get all active quests
+    active_quests = Quest.objects.filter(is_active=True)
+
+    for quest in active_quests:
+        user_quest, created = UserQuest.objects.get_or_create(user=user, quest=quest)
+
+        # Check if quest needs to be reset
+        now = timezone.now()
+        reset_quest = False
+
+        if user_quest.is_completed:
+            if quest.quest_type == 'daily' and user_quest.last_completed and not is_same_day(user_quest.last_completed, now):
+                reset_quest = True
+            elif quest.quest_type == 'weekly' and user_quest.last_completed and not is_same_week(user_quest.last_completed, now):
+                reset_quest = True
+            elif quest.quest_type == 'one_time':
+                reset_quest = False  # One-time quests do not reset
+
+        if reset_quest:
+            user_quest.progress = 0
+            user_quest.is_completed = False
+            user_quest.is_reward_claimed = False
+            user_quest.last_completed = None
+            user_quest.save()
+
+        if user_quest.is_completed:
+            continue  # Skip if quest is already completed and not reset
+
+        progress_updated = False
+
+        # Define quest update logic based on quest name or type
+        if quest.name == 'Answer 10 Questions Correctly' and answer_is_correct:
+            user_quest.progress += 1
+            progress_updated = True
+        elif quest.name == 'Answer 20 Questions':
+            user_quest.progress += 1
+            progress_updated = True
+        # Add more quest conditions as needed
+
+        if progress_updated:
+            if user_quest.progress >= quest.target:
+                user_quest.progress = quest.target
+                user_quest.is_completed = True
+                user_quest.last_completed = now
+                # Do not reward the user here; reward will be given upon claiming
+            user_quest.save()
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def check_answer(request):
     data = request.data
     question_id = data.get('question_id')
@@ -130,8 +226,27 @@ def check_answer(request):
         return Response({'error': 'Question does not exist'}, status=404)
 
     correct = (question.answer_text == selected_choice)
-    return Response({'result': 'correct' if correct else 'incorrect'})
 
+    # Update user statistics
+    user = request.user
+    user_stats, created = UserStatistics.objects.get_or_create(user=user)
+
+    if correct:
+        user_stats.correct_number = F('correct_number') + 1
+        user_stats.current_streak = F('current_streak') + 1
+    else:
+        user_stats.incorrect_number = F('incorrect_number') + 1
+        user_stats.current_streak = 0
+
+    user_stats.save()
+    user_stats.refresh_from_db()
+
+    # Update quest progress
+    update_user_quest_progress(user, correct)
+    user_stats, created = UserStatistics.objects.get_or_create(user=request.user)
+    user_stats.increment_login_streak()
+
+    return Response({'result': 'correct' if correct else 'incorrect'})
 
 @api_view(['POST'])
 def get_answer(request):
@@ -389,18 +504,92 @@ def get_results(request):
     return Response(combined_data)
 
 
+def sigma(r, kappa, s=400):
+    """
+    Calculate the sigma function used in the Elo-Davidson model.
+    """
+    exponent = 10 ** (r / s)
+    return exponent / (10 ** (-r / s) + kappa + exponent)
+
+
+def g_function(r, kappa, s=400):
+    """
+    Calculate the g(r; kappa) function.
+    """
+    exponent = 10 ** (r / s)
+    return (exponent + kappa / 2) / (10 ** (-r / s) + kappa + exponent)
+
+
+def f(result, elo1, elo2, kappa=1, k=32):
+    """
+    Update Elo ratings based on the result using the Elo-Davidson model.
+
+    Parameters:
+    result (float): 1 for win, 0.5 for draw, 0 for loss (Player 1's perspective).
+    elo1 (float): Player 1's Elo rating before the game.
+    elo2 (float): Player 2's Elo rating before the game.
+    kappa (float): Parameter controlling draw probability. Default is 1.
+    k (float): Learning rate or K-factor. Default is 32.
+
+    Returns:
+    new_elo1 (float): Player 1's updated Elo rating.
+    new_elo2 (float): Player 2's updated Elo rating.
+    """
+    # Rating difference
+    r_ab = elo1 - elo2
+
+    # Expected score for player 1
+    E1 = g_function(r_ab, kappa)
+    E2 = 1 - E1  # Expected score for player 2
+
+    # Update ratings
+    new_elo1 = elo1 + k * (result - E1)
+    new_elo2 = elo2 + k * ((1 - result) - E2)
+
+    return new_elo1, new_elo2
+
+
+def get_new_elo(result, elo1, elo2):
+    result = result # Draw
+    elo1 = elo1 # Player 1's initial rating
+    elo2 = elo2  # Player 2's initial rating
+    kappa = 1  # Default draw adjustment parameter
+    k = 16  # K-factor - adjust for how much it fluctuates after a result
+
+    new_elo1, new_elo2 = f(result, elo1, elo2, kappa, k)
+    return new_elo1, new_elo2
+
 @api_view(['POST'])
 def set_winner(request):
     data = request.data
     room_id = data.get('room_id')
     winner = data.get('winner')
-    if winner == 'Tie':
-        return Response({'status': 'success'})
     room = Room.objects.get(id=room_id)
+
+    # profile1 = get_object_or_404(Profile, user=room.user1)
+    # profile2 = get_object_or_404(Profile, user=room.user2)
+    #
+    # old_elo1 = profile1.elo_rating
+    # old_elo2 = profile2.elo_rating
+    #
+    # print(old_elo1, old_elo2)
+
+    if winner == 'Tie':
+        # new_elo1, new_elo2 = get_new_elo(0.5, old_elo1, old_elo2)
+        return Response({'status': 'success'})
     if room.user1.username == winner:
+        # new_elo1, new_elo2 = get_new_elo(1, old_elo1, old_elo2)
         room.winner = room.user1
     else:
+        # new_elo1, new_elo2 = get_new_elo(0, old_elo1, old_elo2)
         room.winner = room.user2
+
+    # profile1.elo_rating = new_elo1
+    # profile2.elo_rating = new_elo2
+    # print(new_elo1, new_elo2, old_elo1, old_elo2)
+    # profile1.save()
+    # profile2.save()
+
     room.status = 'Ended'
     room.save()
     return Response({'status': 'success'})
@@ -560,6 +749,18 @@ def view_profile(request, user_id):
         return Response({'error': 'User not found'}, status=404)
     serializer = ProfileSerializer(user.profile)
     return Response(serializer.data)
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def get_user_streak(request):
+    user = request.user
+    try:
+        user_statistics = UserStatistics.objects.get(user=user)
+        login_streak = user_statistics.login_streak
+        return Response({"login_streak": login_streak})
+    except UserStatistics.DoesNotExist:
+        return Response({"error": "User statistics not found."}, status=404)
 
 
 @ensure_csrf_cookie
