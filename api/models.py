@@ -14,7 +14,7 @@ class Question(models.Model):
     choice_d = models.CharField(max_length=1000)
     answer = models.CharField(max_length=1, choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')])
     difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)])
-    question_type = models.CharField(max_length=1000, null=True, blank=True)
+    question_type = models.CharField(max_length=1000, null=True, blankd=True)
     explanation = models.TextField(null=True, blank=True)
 
     def __str__(self):
@@ -121,15 +121,66 @@ class Profile(models.Model):
                             choices=[('Beginner Path', 'Beginner Path'), ('Steady Learner', 'Steady Learner'),
                                      ('Advanced Track', 'Advanced Track'), ('Expert Challenge', 'Expert Challenge')],
                             default='Beginner Path')
-
     my_tournaments = models.ManyToManyField(Tournament, related_name='my_tournaments', blank=True)
 
+    def sigma(self, r, kappa, s=400):
+        """
+        Calculate the sigma function used in the Elo-Davidson model.
+        """
+        exponent = 10 ** (r / s)
+        return exponent / (10 ** (-r / s) + kappa + exponent)
+
+    def g_function(self, r, kappa, s=400):
+        """
+        Calculate the g(r; kappa) function.
+        """
+        exponent = 10 ** (r / s)
+        return (exponent + kappa / 2) / (10 ** (-r / s) + kappa + exponent)
+
+    def f(self, result, elo1, elo2, kappa=1, k=32):
+        """
+        Update Elo ratings based on the result using the Elo-Davidson model.
+
+        Parameters:
+        result (float): 1 for win, 0.5 for draw, 0 for loss (Player 1's perspective).
+        elo1 (float): Player 1's Elo rating before the game.
+        elo2 (float): Player 2's Elo rating before the game.
+        kappa (float): Parameter controlling draw probability. Default is 1.
+        k (float): Learning rate or K-factor. Default is 32.
+
+        Returns:
+        new_elo1 (float): Player 1's updated Elo rating.
+        new_elo2 (float): Player 2's updated Elo rating.
+        """
+        # Rating difference
+        r_ab = elo1 - elo2
+
+        # Expected score for player 1
+        E1 = self.g_function(r_ab, kappa)
+        E2 = 1 - E1  # Expected score for player 2
+
+        # Update ratings
+        new_elo1 = elo1 + k * (result - E1)
+        new_elo2 = elo2 + k * ((1 - result) - E2)
+
+        return new_elo1, new_elo2
+
     def update_elo(self, opponent_elo, result):
-        k = 32  # K-factor for ELO calculation
-        expected_score = 1 / (1 + 10 ** ((opponent_elo - self.elo_rating) / 400))
-        new_elo = self.elo_rating + k * (result - expected_score)
-        self.elo_rating = int(new_elo)
+        # k = 32  # K-factor for ELO calculation
+        # expected_score = 1 / (1 + 10 ** ((opponent_elo - self.elo_rating) / 400))
+        # new_elo = self.elo_rating + k * (result - expected_score)
+        # self.elo_rating = int(new_elo)
+        # self.save()
+        result = result  # Draw
+        elo1 = self.elo_rating  # Player 1's initial rating
+        elo2 = opponent_elo # Player 2's initial rating
+        kappa = 1  # Default draw adjustment parameter
+        k = 16  # K-factor - adjust for how much it fluctuates after a result
+
+        new_elo1, new_elo2 = self.f(result, elo1, elo2, kappa, k)
+        self.elo_rating = int(new_elo1)
         self.save()
+
 
     def increment_problems_solved(self):
         self.problems_solved += 1
@@ -307,6 +358,8 @@ class FriendRequest(models.Model):
 
 class UserStatistics(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='infinitequestionstatistics')
+    login_streak = models.IntegerField(default=0)
+    last_login_date = models.DateField(null=True, blank=True)
     correct_number = models.IntegerField(default=0)
     incorrect_number = models.IntegerField(default=0)
     current_streak = models.IntegerField(default=0)
@@ -338,6 +391,19 @@ class UserStatistics(models.Model):
                 continue  # If the pet doesn't exist, skip it
 
         return round(total_multiplier, 2)  # Return the total multiplier rounded to 2 decimal places
+
+    def increment_login_streak(self):
+        today = timezone.now().date()
+        if self.last_login_date == today:
+            return  # Streak already updated for today
+
+        if self.last_login_date == today - timezone.timedelta(days=1):
+            self.login_streak += 1  # Continue streak
+        else:
+            self.login_streak = 1  # Reset streak
+
+        self.last_login_date = today
+        self.save()
 
 
 class PowerSprintStatistics(models.Model):
@@ -390,3 +456,36 @@ class OnlineUser(models.Model):
 
     def __str__(self):
         return self.user.username
+
+
+class Quest(models.Model):
+    QUEST_TYPE_CHOICES = [
+        ('daily', 'Daily'),
+        ('weekly', 'Weekly'),
+        ('one_time', 'One-Time'),
+    ]
+
+    name = models.CharField(max_length=255)
+    description = models.TextField()
+    target = models.IntegerField()
+    reward_xp = models.IntegerField(default=0)
+    reward_coins = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    quest_type = models.CharField(max_length=10, choices=QUEST_TYPE_CHOICES, default='daily')
+    # Add any additional fields as needed
+
+    def __str__(self):
+        return self.name
+
+
+class UserQuest(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    quest = models.ForeignKey(Quest, on_delete=models.CASCADE)
+    progress = models.IntegerField(default=0)
+    is_completed = models.BooleanField(default=False)
+    is_reward_claimed = models.BooleanField(default=False)
+    last_completed = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.quest.name}"
+
