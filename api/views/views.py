@@ -109,6 +109,8 @@ def create_question(request):
 def get_question(request, question_id):
     try:
         question = Question.objects.get(id=question_id)
+        if question.sp_elo_rating == 0:
+            question.save()  # This will trigger the save() logic and initialize sp_elo_rating
     except Question.DoesNotExist:
         return Response({'error': 'Question does not exist'}, status=404)
     serializer = QuestionSerializer(question)
@@ -209,6 +211,39 @@ def update_user_quest_progress(user, answer_is_correct):
             user_quest.save()
 
 
+def update_singleplayer_elo(user_profile: Profile, question: Question, user_correct: bool):
+    """
+    Update both the user's singleplayer Elo (sp_elo_rating)
+    and the question's Elo (sp_elo_rating) based on whether the user
+    got the question correct (user_correct=True) or not.
+    """
+
+    # user Elo BEFORE
+    user_elo_before = user_profile.sp_elo_rating
+    # question Elo BEFORE
+    question_elo_before = question.sp_elo_rating
+
+    # Use your Elo-Davidson or standard Elo formula:
+    # result for user = 1 if correct, else 0
+    user_result = 1.0 if user_correct else 0.0
+    question_result = 1.0 - user_result  # If user is correct, question "loses"
+
+    # We can reuse your existing f(...) function:
+    new_user_elo, new_question_elo = f(
+        result=user_result,
+        elo1=user_elo_before,
+        elo2=question_elo_before,
+        kappa=1,
+        k=16  # or your chosen K-factor
+    )
+
+    # Assign and save
+    user_profile.sp_elo_rating = int(new_user_elo)
+    user_profile.save()
+
+    question.sp_elo_rating = int(new_question_elo)
+    question.save()
+
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -240,6 +275,18 @@ def check_answer(request):
 
     user_stats.save()
     user_stats.refresh_from_db()
+
+    # ---------------------------
+    # NEW: Update Singleplayer Elo
+    # ---------------------------
+    # 1) Get the user's Profile
+    user_profile = user.profile
+    # 2) Call our Elo update helper
+    update_singleplayer_elo(
+        user_profile=user_profile,
+        question=question,
+        user_correct=correct
+    )
 
     # Update quest progress
     update_user_quest_progress(user, correct)
