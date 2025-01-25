@@ -35,6 +35,11 @@ def login_view(request):
             if EmailAddress.objects.filter(user=user, verified=True).exists():
                 is_first_login = user.last_login is None
                 login(request, user)
+                timezone = data.get('timezone')
+                if timezone:
+                    profile = user.profile
+                    profile.timezone = timezone
+                    profile.save()
                 return JsonResponse({
                     'message': 'Logged In Successfully',
                     'username': user.username,

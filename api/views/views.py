@@ -1,20 +1,23 @@
 from random import sample
+from venv import logger
 from django.contrib.auth.models import User
 from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import ensure_csrf_cookie
-from rest_framework import status
 from rest_framework.response import Response
-from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics
+from api.models import Profile, Room, TrackedQuestion, FriendRequest, PersonalizedQuest
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db.models import Q
-from django.utils import timezone
 from api.views.serializers import QuestionSerializer, ProfileSerializer, RoomSerializer, TrackedQuestionSerializer, \
     ProfileBiographySerializer, UserSerializer, FriendRequestSerializer, TrackedQuestionResultSerializer, \
     InfiniteQuestionsSerializer
+from django.db.models import F
+from django.utils import timezone
+from ..models import Question, UserStatistics
+from rest_framework import status
 
 
 @api_view(['GET'])
@@ -102,7 +105,8 @@ def create_question(request):
         explanation=data['explanation']
     )
     question.save()
-    return JsonResponse({'status':'success'})
+    return JsonResponse({'status': 'success'})
+
 
 @api_view(['GET'])
 def get_question(request, question_id):
@@ -115,99 +119,83 @@ def get_question(request, question_id):
     serializer = QuestionSerializer(question)
     return Response(serializer.data)
 
-from django.db.models import F
-from django.utils import timezone
-from ..models import Question, UserStatistics, Quest, UserQuest
-from rest_framework import status
+
+def update_user_quest_progress(user, answer_is_correct):
+    """Update quest progress when user answers a question correctly."""
+    if not answer_is_correct:
+        return
+
+    # Get all active, uncompleted quests
+    active_quests = PersonalizedQuest.objects.filter(
+        user=user,
+        completed=False,
+        reward_claimed=False,
+        end_time__gt=timezone.now()
+    )
+
+    for quest in active_quests:
+        quest.progress += 1
+
+        # Check if quest is completed
+        if quest.progress >= quest.target:
+            quest.progress = quest.target
+            quest.completed = True
+
+        quest.save()
+
 
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
-def claim_quest_reward(request):
-    user = request.user
-    quest_id = request.data.get('quest_id')
-
+def check_answer(request):
+    """Check if the submitted answer is correct."""
     try:
-        user_quest = UserQuest.objects.get(user=user, quest_id=quest_id)
-    except UserQuest.DoesNotExist:
-        return Response({'detail': 'Quest not found.'}, status=status.HTTP_404_NOT_FOUND)
+        data = request.data
+        question_id = data.get('question_id')
+        selected_choice = data.get('selected_choice')
 
-    if not user_quest.is_completed:
-        return Response({'detail': 'Quest not completed yet.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not question_id or not selected_choice:
+            return Response(
+                {'error': 'Missing question_id or selected_choice'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-    if user_quest.is_reward_claimed:
-        return Response({'detail': 'Reward already claimed.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            question = Question.objects.get(id=question_id)
+        except Question.DoesNotExist:
+            return Response(
+                {'error': 'Question does not exist'},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-    # Reward the user
-    user_stats, created = UserStatistics.objects.get_or_create(user=user)
-    user_stats.xp += user_quest.quest.reward_xp
-    user_stats.coins += user_quest.quest.reward_coins
-    user_stats.save()
+        correct = (question.answer_text == selected_choice)
 
-    # Mark reward as claimed
-    user_quest.is_reward_claimed = True
-    user_quest.save()
+        # Update user statistics
+        user = request.user
+        user_stats, created = UserStatistics.objects.get_or_create(user=user)
 
-    return Response({'detail': 'Reward claimed successfully.'}, status=status.HTTP_200_OK)
+        if correct:
+            user_stats.correct_number = F('correct_number') + 1
+            user_stats.current_streak = F('current_streak') + 1
+            # Update quest progress only for correct answers
+            update_user_quest_progress(user, correct)
+        else:
+            user_stats.incorrect_number = F('incorrect_number') + 1
+            user_stats.current_streak = 0
 
+        user_stats.save()
+        user_stats.refresh_from_db()
 
-from django.utils import timezone
-from datetime import timedelta
+        return Response({
+            'result': 'correct' if correct else 'incorrect',
+            'status': status.HTTP_200_OK
+        })
 
-def is_same_day(dt1, dt2):
-    return dt1.date() == dt2.date()
-
-def is_same_week(dt1, dt2):
-    # Assuming week starts on Monday
-    return dt1.isocalendar()[1] == dt2.isocalendar()[1] and dt1.year == dt2.year
-
-def update_user_quest_progress(user, answer_is_correct):
-    # Get all active quests
-    active_quests = Quest.objects.filter(is_active=True)
-
-    for quest in active_quests:
-        user_quest, created = UserQuest.objects.get_or_create(user=user, quest=quest)
-
-        # Check if quest needs to be reset
-        now = timezone.now()
-        reset_quest = False
-
-        if user_quest.is_completed:
-            if quest.quest_type == 'daily' and user_quest.last_completed and not is_same_day(user_quest.last_completed, now):
-                reset_quest = True
-            elif quest.quest_type == 'weekly' and user_quest.last_completed and not is_same_week(user_quest.last_completed, now):
-                reset_quest = True
-            elif quest.quest_type == 'one_time':
-                reset_quest = False  # One-time quests do not reset
-
-        if reset_quest:
-            user_quest.progress = 0
-            user_quest.is_completed = False
-            user_quest.is_reward_claimed = False
-            user_quest.last_completed = None
-            user_quest.save()
-
-        if user_quest.is_completed:
-            continue  # Skip if quest is already completed and not reset
-
-        progress_updated = False
-
-        # Define quest update logic based on quest name or type
-        if quest.name == 'Answer 10 Questions Correctly' and answer_is_correct:
-            user_quest.progress += 1
-            progress_updated = True
-        elif quest.name == 'Answer 20 Questions':
-            user_quest.progress += 1
-            progress_updated = True
-        # Add more quest conditions as needed
-
-        if progress_updated:
-            if user_quest.progress >= quest.target:
-                user_quest.progress = quest.target
-                user_quest.is_completed = True
-                user_quest.last_completed = now
-                # Do not reward the user here; reward will be given upon claiming
-            user_quest.save()
+    except Exception as e:
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 def update_singleplayer_elo(user_profile: Profile, question: Question, user_correct: bool):
@@ -243,56 +231,6 @@ def update_singleplayer_elo(user_profile: Profile, question: Question, user_corr
     question.sp_elo_rating = int(new_question_elo)
     question.save()
 
-@api_view(['POST'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def check_answer(request):
-    data = request.data
-    question_id = data.get('question_id')
-    selected_choice = data.get('selected_choice')
-
-    if not question_id or not selected_choice:
-        return Response({'error': 'Missing question_id or selected_choice'}, status=400)
-
-    try:
-        question = Question.objects.get(id=question_id)
-    except Question.DoesNotExist:
-        return Response({'error': 'Question does not exist'}, status=404)
-
-    correct = (question.answer_text == selected_choice)
-
-    # Update user statistics
-    user = request.user
-    user_stats, created = UserStatistics.objects.get_or_create(user=user)
-
-    if correct:
-        user_stats.correct_number = F('correct_number') + 1
-        user_stats.current_streak = F('current_streak') + 1
-    else:
-        user_stats.incorrect_number = F('incorrect_number') + 1
-        user_stats.current_streak = 0
-
-    user_stats.save()
-    user_stats.refresh_from_db()
-
-    # ---------------------------
-    # NEW: Update Singleplayer Elo
-    # ---------------------------
-    # 1) Get the user's Profile
-    user_profile = user.profile
-    # 2) Call our Elo update helper
-    update_singleplayer_elo(
-        user_profile=user_profile,
-        question=question,
-        user_correct=correct
-    )
-
-    # Update quest progress
-    update_user_quest_progress(user, correct)
-    user_stats, created = UserStatistics.objects.get_or_create(user=request.user)
-    user_stats.increment_login_streak()
-
-    return Response({'result': 'correct' if correct else 'incorrect'})
 
 @api_view(['POST'])
 def get_answer(request):
@@ -321,6 +259,7 @@ def profile_view(request):
             return Response(serializer.data, status=200)
         return Response(serializer.errors, status=400)
 
+
 @api_view(['GET', 'POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -338,7 +277,7 @@ def infinite_questions_profile_view(request):
             serializer.save()
             return Response(serializer.data, status=200)
         return Response(serializer.errors, status=400)
- 
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
@@ -596,14 +535,15 @@ def f(result, elo1, elo2, kappa=1, k=32):
 
 
 def get_new_elo(result, elo1, elo2):
-    result = result # Draw
-    elo1 = elo1 # Player 1's initial rating
+    result = result  # Draw
+    elo1 = elo1  # Player 1's initial rating
     elo2 = elo2  # Player 2's initial rating
     kappa = 1  # Default draw adjustment parameter
     k = 16  # K-factor - adjust for how much it fluctuates after a result
 
     new_elo1, new_elo2 = f(result, elo1, elo2, kappa, k)
     return new_elo1, new_elo2
+
 
 @api_view(['POST'])
 def set_winner(request):
@@ -795,6 +735,7 @@ def view_profile(request, user_id):
         return Response({'error': 'User not found'}, status=404)
     serializer = ProfileSerializer(user.profile)
     return Response(serializer.data)
+
 
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
