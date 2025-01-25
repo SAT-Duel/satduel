@@ -1,11 +1,12 @@
 from django.contrib.auth.models import User
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, \
-    Quest, UserQuest
+    QuestTemplate, PersonalizedQuest
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
 from allauth.account.utils import setup_user_email
 from dj_rest_auth.registration.serializers import RegisterSerializer
+from django.utils import timezone
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -65,6 +66,7 @@ class RoomSerializer(serializers.ModelSerializer):
 
 class TrackedQuestionSerializer(serializers.ModelSerializer):
     question = QuestionSerializer()
+
     class Meta:
         model = TrackedQuestion
         fields = '__all__'
@@ -169,15 +171,41 @@ class TPSubmitAnswerSerializer(serializers.ModelSerializer):
         questions = obj.tournamentquestion_set.all().order_by('id')
         return TournamentQuestionSerializer(questions, many=True).data
 
-class QuestSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Quest
-        fields = ['id', 'name', 'description', 'target', 'reward_xp', 'reward_coins', 'quest_type']
 
-class UserQuestSerializer(serializers.ModelSerializer):
-    quest = QuestSerializer()
-    is_reward_claimed = serializers.BooleanField()
+class QuestTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestTemplate
+        fields = ['id', 'goal_type', 'period_type', 'base_target']
+
+
+class PersonalizedQuestSerializer(serializers.ModelSerializer):
+    template = QuestTemplateSerializer()
+    completion_percentage = serializers.SerializerMethodField()
+    time_remaining = serializers.SerializerMethodField()
 
     class Meta:
-        model = UserQuest
-        fields = ['id', 'quest', 'progress', 'is_completed', 'is_reward_claimed']
+        model = PersonalizedQuest
+        fields = [
+            'id',
+            'template',
+            'target',
+            'reward_coins',
+            'start_time',
+            'end_time',
+            'progress',
+            'completed',
+            'reward_claimed',
+            'completion_percentage',
+            'time_remaining'
+        ]
+
+    def get_completion_percentage(self, obj):
+        if obj.target == 0:
+            return 0
+        return min(100, int((obj.progress / obj.target) * 100))
+
+    def get_time_remaining(self, obj):
+        now = timezone.now()
+        if now > obj.end_time:
+            return 0
+        return int((obj.end_time - now).total_seconds())

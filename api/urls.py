@@ -1,6 +1,5 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-
 from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, house_views, inventory_views
 from api.views import trainer_views as trainer_view
@@ -92,7 +91,6 @@ urlpatterns = [
     path('user_pets/', inventory_views.user_pets, name='user_pets'),
     path('upgrade_pet/', inventory_views.upgrade_pet, name='upgrade_pet'),
 
-
     path('games/<int:game_id>/join/', join_room, name='join_room'),
     path('games/<int:game_id>/start/', start_game, name='start_game'),  # New endpoint for starting the game
     path('games/create/', create_game, name='create_game'),  # New endpoint for creating a game
@@ -106,7 +104,6 @@ urlpatterns = [
 
     # Quest endpoints
     path('quests/', quests_views.get_user_quests, name='get_user_quests'),
-    path('quests/update_progress/', quests_views.update_quest_progress, name='update_quest_progress'),
     path('quests/claim_reward/', quests_views.claim_quest_reward, name='claim_quest_reward'),
     path('api/user_streak/', views.get_user_streak, name='user-streak'),
 ]
