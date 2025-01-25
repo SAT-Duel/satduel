@@ -30,7 +30,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Profile
-        fields = ['id', 'user', 'biography', 'grade', 'max_streak', 'elo_rating', 'country']
+        fields = ['id', 'user', 'biography', 'grade', 'max_streak', 'elo_rating', 'country', 'sp_elo_rating']
         depth = 1
 
 

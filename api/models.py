@@ -14,11 +14,28 @@ class Question(models.Model):
     choice_d = models.CharField(max_length=1000)
     answer = models.CharField(max_length=1, choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')])
     difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)])
-    question_type = models.CharField(max_length=1000, null=True, blankd=True)
+    question_type = models.CharField(max_length=1000, null=True)
     explanation = models.TextField(null=True, blank=True)
+    sp_elo_rating = models.IntegerField(default=0)
 
     def __str__(self):
         return self.question
+
+    def save(self, *args, **kwargs):
+        # If this is a newly created object with no Elo yet, initialize based on difficulty
+        if self.pk is None and self.sp_elo_rating == 0:
+            if self.difficulty == 1:
+                self.sp_elo_rating = 600
+            elif self.difficulty == 2:
+                self.sp_elo_rating = 800
+            elif self.difficulty == 3:
+                self.sp_elo_rating = 1200
+            elif self.difficulty == 4:
+                self.sp_elo_rating = 1600
+            elif self.difficulty == 5:
+                self.sp_elo_rating = 2000
+
+        super().save(*args, **kwargs)
 
     @property
     def answer_text(self):
@@ -113,6 +130,7 @@ class Profile(models.Model):
                              default='11')
     friends = models.ManyToManyField(User, related_name='friends', blank=True)
     elo_rating = models.IntegerField(default=1500)  # Starting ELO rating
+    sp_elo_rating = models.IntegerField(default=1200)
     problems_solved = models.IntegerField(default=0)
     country = models.CharField(max_length=2, default='US')
     max_streak = models.IntegerField(default=0)
@@ -185,6 +203,13 @@ class Profile(models.Model):
     def increment_problems_solved(self):
         self.problems_solved += 1
         self.save()
+
+    def save(self, *args, **kwargs):
+        # Initialize sp_elo_rating if it's missing or zero
+        if self.sp_elo_rating == 0:
+            self.sp_elo_rating = 1200  # Default starting SP Elo
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.user.username}'s Profile"
