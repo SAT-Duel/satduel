@@ -155,22 +155,6 @@ def finish_participation(request, pk):
     return Response(serializer.data)
 
 
-@api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def update_rating(request):
-    profile, created = Profile.objects.get_or_create(user=request.user)
-    new_rating = request.data.get('rating')
-
-    if new_rating is None:
-        return Response({"error": "New rating is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-    profile.rating = new_rating
-    profile.save()
-
-    serializer = ProfileSerializer(profile)
-    return Response(serializer.data)
-
-
 def generate_unique_join_code():
     """Generate a unique 6-character alphanumeric join code."""
     code_length = 6

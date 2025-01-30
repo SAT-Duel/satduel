@@ -5,16 +5,7 @@ from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.utils import timezone
 from api.models import UserStatistics, PersonalizedQuest
-from .serializers import QuestTemplateSerializer, PersonalizedQuestSerializer
-
-
-def is_same_day(dt1, dt2):
-    return dt1.date() == dt2.date()
-
-
-def is_same_week(dt1, dt2):
-    # Assuming the week starts on Monday
-    return dt1.isocalendar()[1] == dt2.isocalendar()[1] and dt1.year == dt2.year
+from .serializers import PersonalizedQuestSerializer
 
 
 @api_view(['GET'])
