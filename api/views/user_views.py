@@ -88,7 +88,7 @@ def register(request):
         )
         Profile.objects.create(
             user=user,
-            biography='This user is lazy, he did not write anything yet',
+            biography="This user is lazy and didn't write anything yet",
             grade=str(grade)
         )
         if user:
