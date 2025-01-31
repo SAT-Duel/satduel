@@ -166,6 +166,7 @@ def check_answer(request):
         # Update user statistics
         user = request.user
         user_stats, created = UserStatistics.objects.get_or_create(user=user)
+        update_singleplayer_elo(user.profile, question, correct)
 
         if correct:
             user_stats.correct_number = F('correct_number') + 1
