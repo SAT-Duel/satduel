@@ -23,16 +23,32 @@ class QuestionSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email']
+        fields = ['id', 'username', 'first_name', 'last_name', 'email']
 
 
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
-
+    
     class Meta:
         model = Profile
-        fields = ['id', 'user', 'biography', 'grade', 'max_streak', 'elo_rating', 'country', 'sp_elo_rating']
-        depth = 1
+        fields = ['id', 'user', 'biography', 'grade', 'country', 'elo_rating', 'sp_elo_rating']
+
+    def update(self, instance, validated_data):
+        user_data = validated_data.pop('user', {})
+        user = instance.user
+        
+        # Update user fields if data exists
+        if user_data:
+            for attr, value in user_data.items():
+                setattr(user, attr, value)
+            user.save()
+
+        # Update profile fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        return instance
 
 
 class ProfileBiographySerializer(serializers.ModelSerializer):

@@ -6,7 +6,13 @@ from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, 
 
 # Register your models here.
 admin.site.register(Question)
-admin.site.register(Profile)
+
+@admin.register(Profile)
+class ProfileAdmin(admin.ModelAdmin):
+    list_display = ['user', 'role', 'grade']
+    list_filter = ['role', 'grade']
+    search_fields = ['user__username']
+
 admin.site.register(Room)
 admin.site.register(TrackedQuestion)
 admin.site.register(FriendRequest)

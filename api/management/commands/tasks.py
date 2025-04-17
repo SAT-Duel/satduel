@@ -1,10 +1,7 @@
 from django.utils import timezone
 import pytz
 from datetime import timedelta
-from .models import Profile, QuestTemplate, PersonalizedQuest
-
-# celery -A satduel worker --pool=solo -l info
-# celery -A satduel beat -l info
+from api.models import Profile, QuestTemplate, PersonalizedQuest
 
 def generate_user_quests():
     """Generate quests for all users based on their local midnight."""
@@ -69,3 +66,15 @@ def generate_user_quests():
 
         except Exception as e:
             pass
+
+    # Add this cleanup section at the end
+    try:
+        # Delete expired quests older than 1 day
+        expiration_threshold = timezone.now() - timedelta(days=1)
+        expired_quests = PersonalizedQuest.objects.filter(
+            end_time__lte=expiration_threshold
+        )
+        delete_count, _ = expired_quests.delete()
+        print(f"Cleaned up {delete_count} expired quests")
+    except Exception as e:
+        print(f"Error cleaning up quests: {str(e)}")

@@ -138,8 +138,6 @@ def update_user_quest_progress(user, answer_is_correct):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
 def check_answer(request):
     """Check if the submitted answer is correct."""
     try:
@@ -163,22 +161,23 @@ def check_answer(request):
 
         correct = (question.answer_text == selected_choice)
 
-        # Update user statistics
-        user = request.user
-        user_stats, created = UserStatistics.objects.get_or_create(user=user)
-        update_singleplayer_elo(user.profile, question, correct)
+        # If the user is authenticated, update user statistics
+        if request.user.is_authenticated:
+            user = request.user
+            user_stats, created = UserStatistics.objects.get_or_create(user=user)
+            update_singleplayer_elo(user.profile, question, correct)
 
-        if correct:
-            user_stats.correct_number = F('correct_number') + 1
-            user_stats.current_streak = F('current_streak') + 1
-            # Update quest progress only for correct answers
-            update_user_quest_progress(user, correct)
-        else:
-            user_stats.incorrect_number = F('incorrect_number') + 1
-            user_stats.current_streak = 0
+            if correct:
+                user_stats.correct_number = F('correct_number') + 1
+                user_stats.current_streak = F('current_streak') + 1
+                # Update quest progress only for correct answers
+                update_user_quest_progress(user, correct)
+            else:
+                user_stats.incorrect_number = F('incorrect_number') + 1
+                user_stats.current_streak = 0
 
-        user_stats.save()
-        user_stats.refresh_from_db()
+            user_stats.save()
+            user_stats.refresh_from_db()
 
         return Response({
             'result': 'correct' if correct else 'incorrect',

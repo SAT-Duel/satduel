@@ -1,0 +1,198 @@
+[
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: Oracles of the Pink Universe was a 2021 exhibition at the Denver Museum of Art in Colorado. It featured eight artworks by South African artist Simphiwe Ndzube. One of these works is a painting titled Assertion of Will. Assertion of Will depicts three standing figures. The figures wear clothing made of fabric pieces stitched to the painting\u2019s canvas. The student wants to describe how fabric is used in Assertion of Will. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "In Assertion of Will, the figures\u2019 clothing is made of fabric pieces stitched to the painting\u2019s canvas.",
+            "choice_b": "The exhibition Oracles of the Pink Universe featured artworks by artist Simphiwe Ndzube.",
+            "choice_c": "Depicting three standing, clothed figures, Assertion of Will is a painting by Simphiwe Ndzube.",
+            "choice_d": "Simphiwe Ndzube\u2019s Assertion of Will was one of eight artworks exhibited in Oracles of the Pink Universe at the Denver Museum of Art.",
+            "answer": "A",
+            "explanation": "Choice A is the best answer. This choice directly describes how fabric is used in Assertion of Will, by explaining that the fabric pieces are part of the painting itself. Choice B is incorrect. This choice provides contextual information about the exhibition, but it doesn\u2019t mention anything about the painting or the fabric. Choice C is incorrect. This choice mentions that the figures are clothed, but it doesn\u2019t explain how the fabric is integrated into the painting. Choice D is incorrect. This choice provides contextual information about the painting, but it doesn\u2019t mention anything about the fabric or how it is used.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: Muslins are woven cotton fabrics with a variety of uses. Dhaka muslin is a handmade fabric produced in Dhaka, Bangladesh. It has an extremely fine weave and is primarily used to make luxury clothing. Sheeting muslin is a machine-made fabric produced in factories. It has a coarse weave and is primarily used to upholster furniture and create backdrops for theater sets. The student wants to emphasize a difference between the two muslins. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Dhaka muslin is a handmade fabric with an extremely fine weave, while sheeting muslin is machine made with a coarse weave.",
+            "choice_b": "Dhaka muslin and sheeting muslin are two different types of woven cotton fabrics.",
+            "choice_c": "Muslins can be used in a variety of ways, from making luxury clothing to upholstering furniture and creating backdrops for theater sets.",
+            "choice_d": "Sheeting muslin is machine made, has a coarse weave, and is used for furniture and theater sets.",
+            "answer": "A",
+            "explanation": "Choice A is the best answer. The difference between the two different kinds of muslin is emphasized. Choice B is incorrect. This choice lists two kinds of muslins, but does not say how they are different from one another. Choice C is incorrect. This choice does not emphasize a difference between the two muslins. Choice D is incorrect. This choice does not emphasize a difference between the two muslins. It only describes sheeting muslin.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: The Azores is a group of islands about 870 miles off the coast of Portugal. Historians have long believed that in the fifteenth century Portuguese mariners were the first humans to populate the Azores. A 2015 study coauthored by Sofia Gabriel and Maria da Luz Mathias found that Vikings from Scandinavia may have populated the Azores as early as the ninth century. The researchers found a genetic connection between house mice in the Azores and house mice in Scandinavia. House mice may have traveled from Scandinavia to the Azores on Viking ships. The student wants to specify who may have first populated the Azores, according to the 2015 study. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Historians have long believed that the first humans to populate the Azores, a group of islands about 870 miles off the coast of Portugal, arrived in the fifteenth century.",
+            "choice_b": "Portuguese mariners may not have been the first humans to populate the Azores.",
+            "choice_c": "In their 2015 study, the researchers found a genetic connection between house mice in the Azores and those in Scandinavia.",
+            "choice_d": "According to a 2015 study, the first humans to populate the Azores may have been Vikings from Scandinavia, not mariners from Portugal as previously believed.",
+            "answer": "D",
+            "explanation": "Choice D is the best answer. This choice effectively specifies who may have first populated the Azores, according to the 2015 study: the Vikings. Choice A is incorrect. This choice doesn\u2019t effectively specify who may have first populated the Azores, according to the 2015 study. It only mentions the historical belief that the Portuguese were first. The 2015 study drew a different conclusion. Choice B is incorrect. This choice casts doubt on the Portuguese claim but doesn\u2019t name the group of people who may have arrived before the Portuguese. Choice C is incorrect. This choice mentions the evidence that the researchers found but not the conclusion they drew from it. It doesn\u2019t name the possible group of people who may have arrived before the Portuguese.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: Yellowstone is a national park in the northwest United States. In 1995, gray wolves were reintroduced into the park. Since then, the number of gray wolves in the park has stabilized at roughly 100. This number is believed to be the park\u2019s carrying capacity. Carrying capacity describes the maximum number of a species that a specific environment\u2019s resources can sustain over time. The student wants to specify the number of gray wolves in Yellowstone. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Gray wolves were reintroduced into Yellowstone, a national park in the northwest United States, in 1995.",
+            "choice_b": "As of 1995, there were gray wolves living in Yellowstone, a national park in the northwest United States.",
+            "choice_c": "The carrying capacity of an environment, such as Yellowstone, describes the maximum number of species that the environment can sustain over time.",
+            "choice_d": "Yellowstone is a national park that has roughly 100 gray wolves living in it.",
+            "answer": "D",
+            "explanation": "Choice D is the best answer. This choice uses relevant information from the third bullet point to state the approximate number of gray wolves in Yellowstone. Choice A is incorrect. This choice mentions the year gray wolves in Yellowstone were reintroduced but not how many there are currently. Choice B is incorrect. This choice mentions the year gray wolves in Yellowstone were reintroduced but not how many there are currently. Choice C is incorrect. This choice defines the term carrying capacity but doesn\u2019t connect it to the specific number of gray wolves currently living in Yellowstone.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: Novelist Willa Cather grew up in Nebraska and attended the University of Nebraska-Lincoln. Some of Cather\u2019s best-known novels are set in Nebraska. Two such novels are O Pioneers! (1913) and My \u00c1ntonia (1918). Cather\u2019s novels describe the experiences of immigrants who settled in the Great Plains. The student wants to identify the setting of Cather\u2019s novel My \u00c1ntonia. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "My \u00c1ntonia is set in Nebraska, where Cather grew up.",
+            "choice_b": "Cather, author of My \u00c1ntonia, described the experiences of immigrants in her novels.",
+            "choice_c": "Among Cather\u2019s best-known novels are O Pioneers! (1913) and My \u00c1ntonia (1918).",
+            "choice_d": "Cather attended the University of Nebraska-Lincoln and set some of her novels in Nebraska.",
+            "answer": "A",
+            "explanation": "Choice A is the best answer. This choice directly identifies the setting of Cather\u2019s novel My \u00c1ntonia as Nebraska. Choice B is incorrect. This choice mentions that Cather wrote about immigrants, but it doesn\u2019t indicate where they lived. Choice C is incorrect. This choice mentions that My \u00c1ntonia is one of Cather\u2019s best-known novels but doesn\u2019t state where it takes place. Choice D is incorrect. This choice mentions that some of Cather\u2019s novels are set in Nebraska, but it doesn\u2019t specify which ones, so we can\u2019t be certain that My \u00c1ntonia is one of them. It also includes irrelevant information about Cather\u2019s education.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: In 2013, paleontology professor Hesham Sallam and his students from Mansoura University in Egypt made a discovery. The team found a partial dinosaur skeleton at a site in Egypt\u2019s Dakhla Oasis. The skeleton belonged to a dinosaur species that lived approximately 80 million years ago. The new species was named Mansourasaurus to recognize the team that discovered it. The student wants to explain the origin of the species\u2019 name. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Mansourasaurus, a new species discovered in Egypt in 2013, lived approximately 80 million years ago.",
+            "choice_b": "A partial dinosaur skeleton found in Egypt\u2019s Dakhla Oasis belonged to a species named Mansourasaurus.",
+            "choice_c": "Mansourasaurus, a species that lived approximately 80 million years ago, was discovered in 2013 by Egyptian paleontologist Hesham Sallam and a team of university students.",
+            "choice_d": "The new species was named Mansourasaurus to recognize the team that discovered it, a professor and students from Mansoura University.",
+            "answer": "D",
+            "explanation": "Choice D is the best answer. It explains where the dinosaur\u2019s name came from. Choice A is incorrect. This choice does not explain the origin of the dinosaur\u2019s name. Choice B is incorrect. This choice does not explain the origin of the dinosaur\u2019s name. Choice C is incorrect. This choice does not explain the origin of the dinosaur\u2019s name.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: The tundra is a type of environment characterized by especially harsh winter conditions. Winter temperatures in the tundra average a frigid \u221230 degrees Fahrenheit. Animals that have adapted to these conditions can survive tundra winters. During the tundra\u2019s short growing season, average temperatures can reach a relatively mild 54 degrees Fahrenheit. Around 1,700 different kinds of plants are able to grow in the tundra. The student wants to emphasize how harsh the conditions can be in the tundra. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Winters in the tundra are especially harsh, with temperatures averaging a frigid \u221230 degrees Fahrenheit.",
+            "choice_b": "Animals that have adapted to harsh winter conditions can survive tundra winters.",
+            "choice_c": "There are around 1,700 different kinds of plants that can live in the tundra, where average temperatures can reach a mild 54 degrees Fahrenheit.",
+            "choice_d": "Along with animals that have adapted to the tundra\u2019s conditions, around 1,700 different kinds of plants can live in the tundra.",
+            "answer": "A",
+            "explanation": "Choice A is the best answer. The sentence emphasizes how harsh the conditions in the tundra can be, noting that the winters are especially harsh and describing the average temperatures as \u201cfrigid.\u201d Choice B is incorrect because the sentence explains that some animals can survive harsh tundra winters; it doesn\u2019t emphasize how harsh the conditions can be. Choice C is incorrect because the sentence specifies how many different kinds of plants can live in the tundra; it doesn\u2019t emphasize how harsh the conditions in the tundra can be. Choice D is incorrect because the sentence explains that both plants and animals can survive in the tundra; it doesn\u2019t emphasize how harsh the conditions in the tundra can be.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: A wok is a cooking pan that originated in China during the Han dynasty (206 BCE\u2013220 CE). The wok\u2019s round, wide base helps to cook food evenly. The wok\u2019s high, angled sides help to contain oil splatters. Grace Young is a cook and culinary historian. Her book The Breath of a Wok (2004) traces the history of the wok. The student wants to describe the wok\u2019s shape. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Grace Young\u2019s 2004 book, The Breath of a Wok, traces the history of the cooking pan.",
+            "choice_b": "Able to cook food evenly and contain oil splatters, the wok is the subject of Grace Young\u2019s 2004 book.",
+            "choice_c": "A wok is a cooking pan with a round, wide base and high, angled sides.",
+            "choice_d": "The design of a wok, a type of cooking pan that originated in China during the Han dynasty, helps the pan cook food evenly and contain oil splatters.",
+            "answer": "C",
+            "explanation": "Choice C is the best answer. It summarizes the information that describes the wok\u2019s shape from the second and third bullet points. Choice A is incorrect. This choice doesn\u2019t describe the shape of a wok. Choice B is incorrect. This choice doesn\u2019t describe the shape of a wok, just some of its features. Choice D is incorrect. This choice doesn\u2019t describe the shape of a wok, only some of its benefits or functions.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: The Sasanian Empire lasted about 400 years (AD 224 to AD 651). The Sasanians controlled an area spanning 1.4 million square miles. This area included present-day Iran and Iraq. The empire\u2019s capital was the ancient city of Ctesiphon. Ctesiphon was located near present-day Baghdad, Iraq. The student wants to specify the location of Ctesiphon. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "The Sasanian Empire began in AD 224 and ended in AD 651.",
+            "choice_b": "The capital of the Sasanian Empire, which spanned 1.4 million square miles, was Ctesiphon.",
+            "choice_c": "The Sasanians controlled an area of 1.4 million square miles, including present-day Iran and Iraq.",
+            "choice_d": "Ctesiphon, the capital of the Sasanian Empire, was located near present-day Baghdad, Iraq.",
+            "answer": "D",
+            "explanation": "Choice D is the best answer. The sentence specifies the location of Ctesiphon, noting that it was located near present-day Baghdad, Iraq. Choice A is incorrect because the sentence explains when the Sasanian Empire began and ended; it doesn\u2019t specify the location of Ctesiphon. Choice B is incorrect because the sentence emphasizes that Ctesiphon was the capital of the Sasanian Empire; it doesn\u2019t specify Ctesiphon\u2019s location. Choice C is incorrect because it emphasizes the size of the Sasanian Empire; it doesn\u2019t specify the location of Ctesiphon.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: Archaeologist Dr. Sada Mire founded the Horn Heritage Foundation to preserve the cultural history of regions in the Horn of Africa. Horn Heritage has overseen a preservation project to create 3D digital scans of ancient rock art in Somaliland. Paintings found at the Laas Geel caves are included in the scans. The Laas Geel paintings feature human figures and animals. Paintings found at the Dhagah Nabi Galay caves are included in the scans. The Dhagah Nabi Galay caves feature what are thought to be the earliest examples of writing in East Africa. The student wants to emphasize a similarity between the Laas Geel paintings and the Dhagah Nabi Galay paintings. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "The earliest examples of writing in East Africa are thought to be featured in the paintings at the Dhagah Nabi Galay caves in Somaliland.",
+            "choice_b": "The paintings at the Dhagah Nabi Galay caves feature examples of writing, while those at the Laas Geel caves feature humans and animals.",
+            "choice_c": "In Somaliland, the paintings in the Laas Geel caves feature human figures and animals.",
+            "choice_d": "The Laas Geel paintings and the Dhagah Nabi Galay paintings are both examples of ancient rock art found in Somaliland.",
+            "answer": "D",
+            "explanation": "Choice D is the best answer. This choice compares the Laas Geel paintings and the Dhagah Nabi Galay paintings to one another and emphasizes what they have in common: they are both ancient rock art found in the same region. Choice A is incorrect. This choice only mentions the Dhagah Nabi Galay paintings. It doesn\u2019t compare them to the Laas Geel paintings. Choice B is incorrect. This choice doesn\u2019t emphasize a similarity between the two paintings. Instead, it emphasizes a difference: the type of content they depict. Choice C is incorrect. This choice only mentions the Laas Geel paintings. It doesn\u2019t compare them to the Dhagah Nabi Galay paintings.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: In 1897, African American inventor Andrew Beard invented an automatic coupler. It improved on the existing design of train car couplers. It made the job of connecting train cars safer. In 1938, African American inventor Frederick Jones invented a mobile refrigeration system. It improved on the existing design of food transport trucks. It enabled trucks to carry perishable foods farther. The student wants to emphasize a similarity between Beard\u2019s invention and Jones\u2019s invention. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Beard\u2019s automatic coupler and Jones\u2019s mobile refrigeration system both improved on existing designs.",
+            "choice_b": "In 1897, Beard invented an automatic coupler, which made the job of connecting train cars safer.",
+            "choice_c": "Beard\u2019s invention made the job of connecting train cars safer, whereas Jones\u2019s invention enabled food transport trucks to carry perishables farther.",
+            "choice_d": "Jones\u2019s mobile refrigeration system, which he invented in 1938, made it possible for food transport trucks to carry perishable foods farther.",
+            "answer": "A",
+            "explanation": "Choice A is the best answer. It compares Beard\u2019s and Jones\u2019s inventions to one another, and emphasizes what they have in common. Choice B is incorrect. This choice doesn\u2019t emphasize a similarity. It only mentions Beard\u2019s invention. It doesn\u2019t compare it to Jones\u2019s invention. Choice C is incorrect. This choice doesn\u2019t emphasize a similarity between the two inventions. Instead, it emphasizes a difference. Choice D is incorrect. This choice doesn\u2019t emphasize a similarity. It only mentions Jones\u2019s invention. It doesn\u2019t compare it to Beard\u2019s invention.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: The painter Frida Kahlo is one of the most influential artists of the twentieth century. She was born in Coyoac\u00e1n, Mexico, in 1907. She is best known for her vivid and richly symbolic self-portraits. The Two Fridas (1939) features two versions of Kahlo sitting together. One version wears a European-style dress and the other a traditional Tehuana dress. The student wants to introduce Kahlo to an audience unfamiliar with the artist. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Known for being vivid and richly symbolic, Frida Kahlo\u2019s self-portraits include The Two Fridas (1939).",
+            "choice_b": "The 1939 painting The Two Fridas is one example of a self-portrait by Frida Kahlo.",
+            "choice_c": "One painting by Frida Kahlo features two versions of herself, with one version wearing a European-style dress and the other a traditional Tehuana dress.",
+            "choice_d": "One of the most influential artists of the twentieth century, Mexican painter Frida Kahlo is best known for her self- portraits, which are vivid and richly symbolic.",
+            "answer": "D",
+            "explanation": "Choice D is the best answer. By identifying Kahlo as an influential artist from Mexico, and by describing the work she\u2019s best known for, this choice provides the background information necessary to introduce Kahlo to an unfamiliar audience. Choice A is incorrect. This choice doesn\u2019t effectively introduce Kahlo. It doesn\u2019t include any background information about who Kahlo is or where she\u2019s from. It simply identifies one of her paintings. Choice B is incorrect. This choice doesn\u2019t effectively introduce Kahlo. It doesn\u2019t include any background information about who Kahlo is or where she\u2019s from. It simply identifies one of her paintings. Choice C is incorrect. This choice doesn\u2019t effectively introduce Kahlo. It doesn\u2019t include any background information about who Kahlo is or where she\u2019s from. Instead, it describes one of her paintings in detail.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: Bioluminescence is the emission of light by living organisms. This light is produced by chemical reactions in organisms\u2019 cells. Jellyfish emit flashes of blue light. This behavior serves to startle predators. Black dragonfish emit a steady red light. This behavior helps them locate prey in deep waters. The student wants to emphasize a difference between the behavior of jellyfish and that of black dragonfish. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Both jellyfish and black dragonfish are organisms that emit light, which is produced by chemical reactions in these organisms\u2019 cells.",
+            "choice_b": "Black dragonfish emit a steady red light, which helps them locate prey in deep waters.",
+            "choice_c": "Bioluminescence, the emission of light by living organisms, results from chemical reactions in organisms\u2019 cells.",
+            "choice_d": "Jellyfish emit light to startle predators, whereas black dragonfish do so to locate prey.",
+            "answer": "D",
+            "explanation": "Choice D is the best answer. The sentence emphasizes a difference between the behavior of jellyfish and that of black dragonfish, noting that jellyfish and black dragonfish emit light as part of different behaviors (protection and predation, respectively). Choice A is incorrect. The sentence emphasizes a similarity between jellyfish and black dragonfish; it doesn\u2019t emphasize a difference between the behavior of the two animals. Choice B is incorrect. The sentence emphasizes the type of bioluminescence exhibited by black dragonfish, noting that it\u2019s used in predation; it doesn\u2019t emphasize a difference between the behavior of the two animals. Choice C is incorrect. The sentence defines bioluminescence and explains how it works; the sentence doesn\u2019t mention either animal or emphasize a difference between them.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    },
+    {
+        "fields": {
+            "question": "While researching a topic, a student has taken the following notes: Annie Wu is a prominent American flutist who graduated from the New England Conservatory. She has won multiple national flute competitions. She is best known for a 2011 YouTube video that has been viewed over two million times. The video shows her performing Three Beats for Beatbox Flute, an original work by composer Greg Pattillo. Wu combines flute playing and beatboxing in the video. The student wants to emphasize Wu\u2019s most well-known achievement. Which choice most effectively uses relevant information from the notes to accomplish this goal?",
+            "choice_a": "Annie Wu, who has won multiple national flute competitions, has also combined flute playing and beatboxing.",
+            "choice_b": "Among her many achievements, prominent American flutist Annie Wu graduated from the New England Conservatory and has won multiple national flute competitions.",
+            "choice_c": "Annie Wu is best known for a 2011 YouTube video performance of Three Beats for Beatbox Flute that has been viewed over two million times.",
+            "choice_d": "Composer Greg Pattillo\u2019s original work Three Beats for Beatbox Flute combines flute playing and beatboxing.",
+            "answer": "C",
+            "explanation": "Choice C is the best answer. This describes the achievement for which Wu is best known. Choice A is incorrect. This choice doesn\u2019t emphasize Wu\u2019s most well-known achievement. It mentions some of her general achievements, but not the one for which she is \u201cbest known.\u201d Choice B is incorrect. This choice doesn\u2019t emphasize Wu\u2019s most well-known achievement\u2014it describes several of her achievements equally. Choice D is incorrect. This choice doesn\u2019t emphasize Wu\u2019s most well-known achievement. It describes a piece of music featured in her most well-known achievement.",
+            "difficulty": 1,
+            "question_type": "Rhetorical Synthesis"
+        },
+        "model": "api.question"
+    }
+]

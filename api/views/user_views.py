@@ -46,7 +46,8 @@ def login_view(request):
                     'email': user.email,
                     'id': user.id,
                     'is_admin': user.is_staff,
-                    'is_first_login': is_first_login
+                    'is_first_login': is_first_login,
+                    'role': user.profile.role,
                 }, status=200)
             else:
                 return JsonResponse({'error': 'Please verify your email address before logging in'}, status=401)

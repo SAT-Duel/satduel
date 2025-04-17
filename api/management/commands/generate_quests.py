@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from api.tasks import generate_user_quests
+from api.management.commands.tasks import generate_user_quests
 
 class Command(BaseCommand):
     help = 'Generate quests for all users'
