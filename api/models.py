@@ -92,9 +92,15 @@ class Profile(models.Model):
     biography = models.TextField(blank=True, null=True)
     grade = models.CharField(
         max_length=3,
-        choices=[(str(i), str(i)) for i in range(1, 12)] + [('<1', '<1'), ('>12', '>12')],
+        choices=[(str(i), str(i)) for i in range(1, 13)] + [('<1', '<1'), ('>12', '>12')],
         default='11'
     )
+    role = models.CharField(
+        max_length=7,
+        choices=[('STUDENT', 'Student'), ('TEACHER', 'Teacher')],
+        default='STUDENT'
+    )
+    
     friends = models.ManyToManyField(User, related_name='friends', blank=True)
     elo_rating = models.IntegerField(default=1500)  # Starting ELO rating
     sp_elo_rating = models.IntegerField(default=1200)
