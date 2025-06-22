@@ -14,7 +14,7 @@ class QuestionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Question
-        fields = ['id', 'question', 'choices', 'difficulty', 'question_type']
+        fields = ['id', 'question', 'choices', 'difficulty', 'question_type', 'choice_a', 'choice_b', 'choice_c', 'choice_d', 'answer', 'explanation']
 
     def get_choices(self, obj):
         return [obj.choice_a, obj.choice_b, obj.choice_c, obj.choice_d]
