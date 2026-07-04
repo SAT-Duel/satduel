@@ -1,7 +1,5 @@
 from django.contrib.auth.models import User
 from django.db import models, transaction
-from django.db.models.signals import post_save
-from django.dispatch import receiver
 from django.utils import timezone
 import random
 import pytz
@@ -521,31 +519,6 @@ class Ranking(models.Model):
 
 
 # =========================================================
-# Customization and Virtual Space Models
-# =========================================================
-
-class House(models.Model):
-    """User's virtual house/space."""
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    name = models.CharField(max_length=255, default="My House")
-
-
-class Area(models.Model):
-    """Represents areas within a user's house."""
-    house = models.ForeignKey(House, related_name='areas', on_delete=models.CASCADE)
-    name = models.CharField(max_length=100)
-    description = models.TextField(blank=True, null=True)
-    is_unlocked = models.BooleanField(default=True)  # Automatically unlocked for now
-    position_x = models.IntegerField()  # Position on the map
-    position_y = models.IntegerField()
-    width = models.IntegerField()  # Size of the area
-    height = models.IntegerField()
-
-    def __str__(self):
-        return self.name
-
-
-# =========================================================
 # Tracking and Progress Models
 # =========================================================
 
@@ -556,13 +529,6 @@ class OnlineUser(models.Model):
 
     def __str__(self):
         return self.user.username
-
-
-@receiver(post_save, sender=User)
-def create_house(sender, instance, created, **kwargs):
-    """Creates a house for new users automatically."""
-    if created:
-        House.objects.create(user=instance)
 
 
 # =========================================================
