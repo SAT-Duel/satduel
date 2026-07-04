@@ -27,6 +27,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from allauth.account.models import EmailAddress
+from allauth.socialaccount.models import SocialAccount
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
@@ -219,7 +220,20 @@ def google_login(request):
         idinfo.get('given_name', ''),
         idinfo.get('family_name', ''),
     )
+    _link_social_account(user, idinfo)
     return _issue_login_response(user, extra={'is_new_user': created})
+
+
+def _link_social_account(user, idinfo):
+    """Record (or refresh) the allauth SocialAccount so Google usage is tracked."""
+    uid = idinfo.get('sub')
+    if not uid:
+        return
+    SocialAccount.objects.update_or_create(
+        provider='google',
+        uid=uid,
+        defaults={'user': user, 'extra_data': idinfo},
+    )
 
 
 # ---------------------------------------------------------------------------
