@@ -10,14 +10,22 @@ from django.utils import timezone
 
 
 class QuestionSerializer(serializers.ModelSerializer):
+    """Public question payload — must never include the correct answer or explanation."""
     choices = serializers.SerializerMethodField()
 
     class Meta:
         model = Question
-        fields = ['id', 'question', 'choices', 'difficulty', 'question_type', 'choice_a', 'choice_b', 'choice_c', 'choice_d', 'answer', 'explanation']
+        fields = ['id', 'question', 'choices', 'difficulty', 'question_type', 'choice_a', 'choice_b', 'choice_c', 'choice_d']
 
     def get_choices(self, obj):
         return [obj.choice_a, obj.choice_b, obj.choice_c, obj.choice_d]
+
+
+class QuestionAdminSerializer(QuestionSerializer):
+    """Full question payload including answer/explanation — staff only."""
+
+    class Meta(QuestionSerializer.Meta):
+        fields = QuestionSerializer.Meta.fields + ['answer', 'explanation']
 
 
 class UserSerializer(serializers.ModelSerializer):

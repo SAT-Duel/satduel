@@ -7,7 +7,7 @@ from api.models import Profile, PersonalizedQuest
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from api.views.serializers import QuestionSerializer
+from api.views.serializers import QuestionSerializer, QuestionAdminSerializer
 from django.db.models import F
 from django.utils import timezone
 from ..models import Question, UserStatistics
@@ -106,6 +106,7 @@ def create_question(request):
 
 
 @api_view(['GET'])
+@authentication_classes([JWTAuthentication])
 def get_question(request, question_id):
     try:
         question = Question.objects.get(id=question_id)
@@ -113,7 +114,12 @@ def get_question(request, question_id):
             question.save()  # This will trigger the save() logic and initialize sp_elo_rating
     except Question.DoesNotExist:
         return Response({'error': 'Question does not exist'}, status=404)
-    serializer = QuestionSerializer(question)
+    # Staff get answer/explanation (needed by the admin editor); everyone else
+    # gets the public payload without them.
+    if request.user.is_authenticated and request.user.is_staff:
+        serializer = QuestionAdminSerializer(question)
+    else:
+        serializer = QuestionSerializer(question)
     return Response(serializer.data)
 
 
