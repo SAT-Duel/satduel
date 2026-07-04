@@ -24,3 +24,6 @@ PyMuPDF==1.26.3
 
 # Required by allauth Google provider (JWT verification)
 cryptography==45.0.5
+
+# Google id_token verification for social login
+google-auth==2.40.3
