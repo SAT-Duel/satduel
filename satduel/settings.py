@@ -20,25 +20,39 @@ from datetime import timedelta
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+load_dotenv()
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-dgr1ce)$3vwmmfp1qnjh1a0kxr2te60*t&f+nx$&$#8sjt3lkn'
+# Set SECRET_KEY in the environment (Heroku config vars). The fallback keeps
+# existing deployments working but is public in git history — rotate it.
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY',
+    'django-insecure-dgr1ce)$3vwmmfp1qnjh1a0kxr2te60*t&f+nx$&$#8sjt3lkn'
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = os.environ.get(
+    'ALLOWED_HOSTS',
+    'satduel-e07814415d4e.herokuapp.com,localhost,127.0.0.1'
+).split(',')
 
 CORS_ALLOWED_ORIGINS = [
-    'https://satduel.netlify.app',  # Your Netlify frontend URL
-    "http://localhost:3000",
+    'https://satduel.netlify.app',  # Netlify frontend URL
+    'https://satduel.com',
+    'https://www.satduel.com',
+    'http://localhost:3000',
     'http://127.0.0.1:3000',
 ]
 
 CSRF_TRUSTED_ORIGINS = [
     'https://satduel.netlify.app',
+    'https://satduel.com',
+    'https://www.satduel.com',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
 ]
@@ -68,15 +82,15 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'allauth.account.middleware.AccountMiddleware',
 ]
 
@@ -84,8 +98,6 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
 ]
-
-CORS_ALLOW_ALL_ORIGINS = True
 
 ROOT_URLCONF = 'satduel.urls'
 
@@ -110,10 +122,9 @@ WSGI_APPLICATION = 'satduel.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
-load_dotenv()
+# Uses DATABASE_URL when set (Heroku Postgres); falls back to local SQLite.
 DATABASES = {
-    'default': dj_database_url.config(default=os.environ.get('DATABASE_URL'))
-
+    'default': dj_database_url.config(default=f'sqlite:///{BASE_DIR / "db.sqlite3"}')
 }
 
 # Password validation
@@ -140,8 +151,9 @@ REST_FRAMEWORK = {
     ),
 }
 
-REST_AUTH_REGISTER_SERIALIZERS = {
-    'REGISTER_SERIALIZER': 'api.serializers.CustomRegisterSerializer',
+REST_AUTH = {
+    'USE_JWT': True,
+    'REGISTER_SERIALIZER': 'api.views.serializers.CustomRegisterSerializer',
 }
 
 # Internationalization
@@ -160,10 +172,14 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, 'static'),
-]
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
@@ -172,10 +188,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 SITE_ID = 1
 
-REST_USE_JWT = True
 ACCOUNT_EMAIL_VERIFICATION = 'mandatory'
-ACCOUNT_EMAIL_REQUIRED = True
-ACCOUNT_AUTHENTICATION_METHOD = 'email'
+ACCOUNT_LOGIN_METHODS = {'email'}
+ACCOUNT_SIGNUP_FIELDS = ['email*', 'username*', 'password1*', 'password2*']
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.getenv('EMAIL_HOST')
@@ -185,10 +200,16 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
 
-ACCOUNT_ADAPTER = 'api.adapters.CustomAccountAdapter'  # Replace 'your_app' with the actual app name
-FRONTEND_URL = 'https://satduel.com'  # Replace with your frontend URL
-PASSWORD_RESET_TIMEOUT_DAYS = 1
+ACCOUNT_ADAPTER = 'api.adapters.CustomAccountAdapter'
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://satduel.com')
+PASSWORD_RESET_TIMEOUT = 60 * 60 * 24  # 1 day, in seconds
 CSRF_COOKIE_HTTPONLY = False
+
+# Production security (Heroku terminates TLS at its router)
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 SOCIALACCOUNT_PROVIDERS = {
     'google': {

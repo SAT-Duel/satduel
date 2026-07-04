@@ -1,6 +1,8 @@
 from api.models import Game
 from rest_framework import serializers
 
+from api.views.serializers import UserSerializer
+
 class GameCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Game
@@ -23,7 +25,11 @@ class GameCreateSerializer(serializers.ModelSerializer):
 
 
 class GameLightSerializer(serializers.ModelSerializer):
+    # Explicit user serializers: depth=1 would expose every User field,
+    # including the password hash and email.
+    host = UserSerializer(read_only=True)
+    players = UserSerializer(many=True, read_only=True)
+
     class Meta:
         model = Game
         fields = ['id', 'host', 'max_players', 'players', 'status', 'battle_duration', 'question_number', 'has_password']  # Include only essential fields
-        depth = 1  # Use depth=1 to include related user info for host and players, kept light
