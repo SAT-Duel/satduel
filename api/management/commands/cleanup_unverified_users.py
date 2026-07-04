@@ -8,11 +8,31 @@ logged in, and are older than a cutoff. Dry-run by default.
 """
 from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
-from django.db import transaction
+from django.db import connection, transaction
 from django.utils import timezone
 from datetime import timedelta
 
 from allauth.account.models import EmailAddress
+
+# Tables left behind by auth libraries that were uninstalled (django-oauth-toolkit,
+# social-auth-app-django). They still hold FK constraints to auth_user but are no
+# longer managed by Django, so its cascade won't clear them on user delete.
+LEGACY_USER_FK_TABLES = [
+    'oauth2_provider_refreshtoken',
+    'oauth2_provider_accesstoken',
+    'social_auth_usersocialauth',
+]
+
+
+def _clear_legacy_references(user_ids):
+    """Delete rows referencing the given users in orphaned legacy tables."""
+    if not user_ids:
+        return
+    with connection.cursor() as cur:
+        existing = set(connection.introspection.table_names())
+        for table in LEGACY_USER_FK_TABLES:
+            if table in existing:
+                cur.execute(f'DELETE FROM {table} WHERE user_id = ANY(%s)', [user_ids])
 
 
 class Command(BaseCommand):
@@ -53,6 +73,8 @@ class Command(BaseCommand):
                 "\nDRY RUN — nothing deleted. Re-run with --delete to remove these accounts."))
             return
 
+        stale_ids = list(stale.values_list('id', flat=True))
         with transaction.atomic():
-            deleted, _ = stale.delete()
+            _clear_legacy_references(stale_ids)
+            deleted, _ = User.objects.filter(id__in=stale_ids).delete()
         self.stdout.write(self.style.SUCCESS(f"\nDeleted {count} account(s) ({deleted} rows total)."))
