@@ -8,6 +8,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import QuestionSerializer, QuestionAdminSerializer
+from django.db import models
 from django.db.models import F
 from django.utils import timezone
 from ..models import Question, UserStatistics
@@ -236,13 +237,38 @@ def update_singleplayer_elo(user_profile: Profile, question: Question, user_corr
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def get_answer(request):
+    """Reveal a question's answer/explanation.
+
+    Requires login, and refuses while the requester is actively competing on
+    this question (open tournament participation or a live duel) so it can't
+    be used to cheat mid-game.
+    """
     data = request.data
     question_id = data.get('question_id')
     try:
         question = Question.objects.get(id=question_id)
     except Question.DoesNotExist:
         return Response({'error': 'Question does not exist'}, status=404)
+
+    from api.models import TournamentParticipation, Room
+    in_active_tournament = TournamentParticipation.objects.filter(
+        user=request.user,
+        status='Active',
+        tournament__questions=question,
+    ).exists()
+    in_active_duel = Room.objects.filter(
+        status='Battling',
+        questions=question,
+    ).filter(models.Q(user1=request.user) | models.Q(user2=request.user)).exists()
+    if in_active_tournament or in_active_duel:
+        return Response(
+            {'error': 'Answers are hidden while you are competing on this question.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     return Response(
         {'answer': question.answer_text, 'explanation': question.explanation, 'answer_choice': question.answer})
 

@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from api.views.user_views import CustomRegisterView
-from api.views import views, user_views, tournaments_views, shop_views, house_views, inventory_views, duel_views, profile_views
+from api.views import views, user_views, tournaments_views, shop_views, inventory_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
 from api.views import onlineuser_views, quests_views, auth_views
@@ -89,8 +89,6 @@ urlpatterns = [
     path('password_reset/', user_views.PasswordResetRequestView.as_view(), name='password_reset'),
     path('reset/<uidb64>/<token>/', user_views.PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 
-    # House
-    path('house/', house_views.get_house_map, name='get_house_map'),
     # Inventory
     path('user_pets/', inventory_views.user_pets, name='user_pets'),
     path('upgrade_pet/', inventory_views.upgrade_pet, name='upgrade_pet'),

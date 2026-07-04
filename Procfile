@@ -1,1 +1,1 @@
-web: gunicorn satduel.wsgi --log-file -
+web: gunicorn satduel.wsgi --workers 2 --threads 4 --log-file -

@@ -245,3 +245,48 @@ class QuestionAnswerLeakTests(APITestCase):
         if resp.data:
             self.assertNotIn('answer', resp.data[0])
             self.assertNotIn('explanation', resp.data[0])
+
+
+class GetAnswerLockdownTests(APITestCase):
+    def setUp(self):
+        from api.models import Question
+        self.q = Question.objects.create(
+            question='Q?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type='Transitions', explanation='why',
+        )
+        self.user = User.objects.create_user(username='dave', email='d@e.com')
+        Profile.objects.create(user=self.user)
+
+    def test_anonymous_denied(self):
+        resp = self.client.post('/api/get_answer/', {'question_id': self.q.id}, format='json')
+        self.assertEqual(resp.status_code, 401)
+
+    def test_authenticated_allowed(self):
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.post('/api/get_answer/', {'question_id': self.q.id}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['answer_choice'], 'B')
+
+    def test_blocked_during_active_tournament(self):
+        from api.models import Tournament, TournamentParticipation
+        from django.utils import timezone
+        t = Tournament.objects.create(
+            name='T', description='d', start_time=timezone.now(),
+        )
+        t.questions.add(self.q)
+        TournamentParticipation.objects.create(user=self.user, tournament=t, status='Active')
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.post('/api/get_answer/', {'question_id': self.q.id}, format='json')
+        self.assertEqual(resp.status_code, 403)
+
+    def test_allowed_after_tournament_finished(self):
+        from api.models import Tournament, TournamentParticipation
+        from django.utils import timezone
+        t = Tournament.objects.create(
+            name='T', description='d', start_time=timezone.now(),
+        )
+        t.questions.add(self.q)
+        TournamentParticipation.objects.create(user=self.user, tournament=t, status='Completed')
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.post('/api/get_answer/', {'question_id': self.q.id}, format='json')
+        self.assertEqual(resp.status_code, 200)
