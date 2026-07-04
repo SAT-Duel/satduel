@@ -5,7 +5,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
 from api.models import Profile, PersonalizedQuest
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import QuestionSerializer
 from django.db.models import F
@@ -67,6 +67,8 @@ def list_questions(request):
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
 def edit_question(request, question_id):
     question = get_object_or_404(Question, id=question_id)
     data = request.data
@@ -84,6 +86,8 @@ def edit_question(request, question_id):
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
 def create_question(request):
     data = request.data
     question = Question.objects.create(
