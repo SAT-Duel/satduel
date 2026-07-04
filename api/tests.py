@@ -54,12 +54,13 @@ class PasswordLoginTests(APITestCase):
         self.assertEqual(resp.status_code, 401)
 
 
-def _fake_idinfo(email='bob@example.com', verified=True):
+def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):
     return {
         'email': email,
         'email_verified': verified,
         'given_name': 'Bob',
         'family_name': 'Jones',
+        'sub': sub,
     }
 
 
@@ -76,6 +77,22 @@ class GoogleLoginTests(APITestCase):
         self.assertTrue(Profile.objects.filter(user=user).exists())
         self.assertTrue(EmailAddress.objects.filter(user=user, verified=True).exists())
         self.assertFalse(user.has_usable_password())
+
+    @patch('api.views.auth_views.google_id_token.verify_oauth2_token')
+    def test_google_records_social_account(self, mock_verify):
+        from allauth.socialaccount.models import SocialAccount
+        mock_verify.return_value = _fake_idinfo(sub='uid-abc')
+        self.client.post(reverse('auth_google'), {'credential': 'fake'}, format='json')
+        sa = SocialAccount.objects.get(provider='google', uid='uid-abc')
+        self.assertEqual(sa.user.email, 'bob@example.com')
+
+    @patch('api.views.auth_views.google_id_token.verify_oauth2_token')
+    def test_google_repeat_login_no_duplicate_social(self, mock_verify):
+        from allauth.socialaccount.models import SocialAccount
+        mock_verify.return_value = _fake_idinfo(sub='uid-xyz')
+        self.client.post(reverse('auth_google'), {'credential': 'fake'}, format='json')
+        self.client.post(reverse('auth_google'), {'credential': 'fake'}, format='json')
+        self.assertEqual(SocialAccount.objects.filter(uid='uid-xyz').count(), 1)
 
     @patch('api.views.auth_views.google_id_token.verify_oauth2_token')
     def test_google_links_to_existing_verified_account(self, mock_verify):
@@ -176,6 +193,42 @@ class RankingUpdateTests(APITestCase):
         Ranking.update_rankings()
         Ranking.update_rankings()  # second run must not blow up on unique constraint
         self.assertEqual(Ranking.objects.get(user=u).rank, 1)
+
+
+class CleanupUnverifiedUsersTests(APITestCase):
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        old = timezone.now() - timedelta(days=45)
+
+        # stale: unverified, never logged in, old -> should be deleted
+        self.stale = User.objects.create_user(username='stale', email='stale@e.com')
+        User.objects.filter(pk=self.stale.pk).update(date_joined=old)
+
+        # recent unverified -> kept
+        self.recent = User.objects.create_user(username='recent', email='recent@e.com')
+
+        # verified old -> kept
+        self.verified = User.objects.create_user(username='verified', email='v@e.com')
+        User.objects.filter(pk=self.verified.pk).update(date_joined=old)
+        EmailAddress.objects.create(user=self.verified, email='v@e.com', verified=True, primary=True)
+
+        # staff, unverified, old -> kept (never touch staff)
+        self.staff = User.objects.create_user(username='staff', email='s@e.com', is_staff=True)
+        User.objects.filter(pk=self.staff.pk).update(date_joined=old)
+
+    def test_dry_run_deletes_nothing(self):
+        from django.core.management import call_command
+        call_command('cleanup_unverified_users')
+        self.assertTrue(User.objects.filter(username='stale').exists())
+
+    def test_delete_only_removes_stale(self):
+        from django.core.management import call_command
+        call_command('cleanup_unverified_users', '--delete')
+        self.assertFalse(User.objects.filter(username='stale').exists())
+        self.assertTrue(User.objects.filter(username='recent').exists())
+        self.assertTrue(User.objects.filter(username='verified').exists())
+        self.assertTrue(User.objects.filter(username='staff').exists())
 
 
 class QuestionAnswerLeakTests(APITestCase):
