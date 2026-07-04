@@ -222,3 +222,11 @@ SOCIALACCOUNT_PROVIDERS = {
         }
     }
 }
+
+# Google OAuth client ID used to verify id_tokens from the frontend.
+# Public value (safe to ship); overridable via env. Must match the client ID
+# the frontend uses to mint the token, or verification fails.
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get(
+    'GOOGLE_OAUTH_CLIENT_ID',
+    '161107240389-9q9viaqdig0vmehe3gahnkqte3s4d3c5.apps.googleusercontent.com',
+)

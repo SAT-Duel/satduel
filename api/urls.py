@@ -4,7 +4,7 @@ from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, house_views, inventory_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
-from api.views import onlineuser_views, quests_views
+from api.views import onlineuser_views, quests_views, auth_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -33,6 +33,11 @@ urlpatterns = [
     path('logout/', user_views.logout_view, name='logout'),
     path('register/', CustomRegisterView.as_view(), name='register'),
     path('set_goal/', user_views.set_goal, name='set_goal'),
+
+    # Unified auth (single-request JWT login + Google + profile completion)
+    path('auth/login/', auth_views.login_view, name='auth_login'),
+    path('auth/google/', auth_views.google_login, name='auth_google'),
+    path('auth/complete_profile/', auth_views.complete_profile, name='auth_complete_profile'),
 
     path('match/', duel_views.match, name='match'),
     path('match/questions/', duel_views.get_match_questions, name='get_match_questions'),

@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from django.db import models
+from django.db import models, transaction
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -19,10 +19,16 @@ class Question(models.Model):
     choice_c = models.CharField(max_length=1000)
     choice_d = models.CharField(max_length=1000)
     answer = models.CharField(max_length=1, choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')])
-    difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)])
-    question_type = models.CharField(max_length=1000, null=True, blank=True)
+    difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)], db_index=True)
+    question_type = models.CharField(max_length=1000, null=True, blank=True, db_index=True)
     explanation = models.TextField(null=True, blank=True)
     sp_elo_rating = models.IntegerField(default=0)
+
+    class Meta:
+        indexes = [
+            # list_questions filters on type and difficulty together
+            models.Index(fields=['question_type', 'difficulty']),
+        ]
 
     def __str__(self):
         return self.question
@@ -325,7 +331,7 @@ class Room(models.Model):
     user2 = models.ForeignKey(User, related_name='room_user2', on_delete=models.CASCADE, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     questions = models.ManyToManyField(Question, blank=True)
-    status = models.CharField(max_length=10,
+    status = models.CharField(max_length=10, db_index=True,
                               choices=[('Searching', 'Searching'), ('Battling', 'Battling'), ('Ended', 'Ended')])
     battle_start_time = models.DateTimeField(null=True, blank=True)
     battle_duration = models.IntegerField(default=300)  # Duration in seconds, default 5 minutes
@@ -399,7 +405,7 @@ class Game(models.Model):
     max_players = models.IntegerField(default=2)
     questions = models.ManyToManyField(Question, blank=True)
     question_number = models.IntegerField(default=10)
-    status = models.CharField(max_length=10,
+    status = models.CharField(max_length=10, db_index=True,
                               choices=[('Waiting', 'Waiting'), ('Battling', 'Battling'), ('Ended', 'Ended')])
     battle_start_time = models.DateTimeField(null=True, blank=True)
     battle_duration = models.IntegerField(default=600)  # Duration in seconds, default 10 minutes
@@ -484,11 +490,34 @@ class Ranking(models.Model):
 
     @classmethod
     def update_rankings(cls):
-        profiles = Profile.objects.all().order_by('-elo_rating', '-problems_solved')
-        for index, profile in enumerate(profiles, start=1):
-            ranking, created = cls.objects.get_or_create(user=profile.user)
-            ranking.rank = index
-            ranking.save()
+        """Recompute every user's rank in bulk (was 2 queries per user)."""
+        profiles = list(
+            Profile.objects.order_by('-elo_rating', '-problems_solved')
+            .values_list('user_id', flat=True)
+        )
+        existing = {r.user_id: r for r in cls.objects.all()}
+
+        # Assign to a temporary offset first so the unique `rank` constraint
+        # doesn't collide while rows are being renumbered.
+        offset = len(profiles) + 1
+        to_update = []
+        to_create = []
+        for index, user_id in enumerate(profiles, start=1):
+            ranking = existing.get(user_id)
+            if ranking is None:
+                to_create.append(cls(user_id=user_id, rank=index + offset))
+            else:
+                ranking.rank = index + offset
+                to_update.append(ranking)
+
+        with transaction.atomic():
+            cls.objects.bulk_update(to_update, ['rank'])
+            cls.objects.bulk_create(to_create)
+            # Second pass: shift everyone down to their real rank.
+            all_rankings = list(cls.objects.order_by('rank'))
+            for real_rank, ranking in enumerate(all_rankings, start=1):
+                ranking.rank = real_rank
+            cls.objects.bulk_update(all_rankings, ['rank'])
 
 
 # =========================================================
