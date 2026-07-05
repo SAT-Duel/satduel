@@ -1,7 +1,11 @@
 from unittest.mock import patch
+from datetime import timedelta
+from types import SimpleNamespace
 
 from django.contrib.auth.models import User
+from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
@@ -334,6 +338,119 @@ class PracticeTierTests(APITestCase):
             PracticeAttempt.objects.create(user=self.user, question=q, correct=True)
         resp = self.client.get('/api/practice/next/')
         self.assertEqual(resp.data['question']['id'], self.questions[4].id)
+
+
+class BillingViewsTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='subscriber', email='sub@example.com')
+        self.profile = Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+
+    @override_settings(
+        STRIPE_SECRET_KEY='stripe_secret_mock',
+        STRIPE_PREMIUM_PRICE_ID='price_mock',
+        STRIPE_API_VERSION='2026-06-24.dahlia',
+        FRONTEND_URL='https://satduel.com',
+        STRIPE_AUTOMATIC_TAX=False,
+    )
+    @patch('api.views.billing_views.stripe.checkout.Session.create')
+    @patch('api.views.billing_views.stripe.Customer.create')
+    def test_checkout_session_uses_subscription_checkout(self, mock_customer_create, mock_session_create):
+        mock_customer_create.return_value = SimpleNamespace(id='cus_mock')
+        mock_session_create.return_value = SimpleNamespace(url='https://checkout.stripe.test/session')
+
+        resp = self.client.post(reverse('billing_create_checkout_session'), {}, format='json')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['url'], 'https://checkout.stripe.test/session')
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.stripe_customer_id, 'cus_mock')
+
+        _, kwargs = mock_session_create.call_args
+        self.assertEqual(kwargs['mode'], 'subscription')
+        self.assertEqual(kwargs['customer'], 'cus_mock')
+        self.assertEqual(kwargs['line_items'][0]['price'], 'price_mock')
+        self.assertNotIn('payment_method_types', kwargs)
+
+    @override_settings(STRIPE_SECRET_KEY='', STRIPE_PREMIUM_PRICE_ID='')
+    def test_checkout_requires_stripe_config(self):
+        resp = self.client.post(reverse('billing_create_checkout_session'), {}, format='json')
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.data['error'], 'stripe_not_configured')
+        self.assertIn('STRIPE_SECRET_KEY', resp.data['missing'])
+        self.assertIn('STRIPE_PREMIUM_PRICE_ID', resp.data['missing'])
+
+    @override_settings(
+        STRIPE_SECRET_KEY='stripe_secret_mock',
+        STRIPE_WEBHOOK_SECRET='webhook_secret_mock',
+        STRIPE_API_VERSION='2026-06-24.dahlia',
+    )
+    @patch('api.views.billing_views.stripe.Subscription.retrieve')
+    @patch('api.views.billing_views.stripe.Webhook.construct_event')
+    def test_checkout_webhook_grants_premium(self, mock_construct_event, mock_subscription_retrieve):
+        period_end = int((timezone.now() + timedelta(days=30)).timestamp())
+        mock_construct_event.return_value = {
+            'type': 'checkout.session.completed',
+            'data': {'object': {
+                'mode': 'subscription',
+                'client_reference_id': str(self.user.id),
+                'customer': 'cus_mock',
+                'subscription': 'sub_mock',
+            }},
+        }
+        mock_subscription_retrieve.return_value = {
+            'id': 'sub_mock',
+            'customer': 'cus_mock',
+            'status': 'active',
+            'current_period_end': period_end,
+            'items': {'data': [{'price': {'id': 'price_mock'}}]},
+        }
+
+        resp = self.client.post(
+            reverse('stripe_webhook'),
+            data='{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_mock',
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.is_premium)
+        self.assertEqual(self.profile.stripe_customer_id, 'cus_mock')
+        self.assertEqual(self.profile.stripe_subscription_id, 'sub_mock')
+        self.assertEqual(self.profile.stripe_price_id, 'price_mock')
+
+    @override_settings(
+        STRIPE_SECRET_KEY='stripe_secret_mock',
+        STRIPE_WEBHOOK_SECRET='webhook_secret_mock',
+        STRIPE_API_VERSION='2026-06-24.dahlia',
+    )
+    @patch('api.views.billing_views.stripe.Webhook.construct_event')
+    def test_subscription_deleted_webhook_revokes_premium(self, mock_construct_event):
+        self.profile.is_premium = True
+        self.profile.stripe_customer_id = 'cus_mock'
+        self.profile.stripe_subscription_id = 'sub_mock'
+        self.profile.save()
+        mock_construct_event.return_value = {
+            'type': 'customer.subscription.deleted',
+            'data': {'object': {
+                'id': 'sub_mock',
+                'customer': 'cus_mock',
+                'status': 'canceled',
+            }},
+        }
+
+        resp = self.client.post(
+            reverse('stripe_webhook'),
+            data='{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_mock',
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.is_premium)
 
 
 class TournamentHistoryTests(APITestCase):

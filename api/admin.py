@@ -17,7 +17,10 @@ from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, 
 class ProfileInline(admin.StackedInline):
     model = Profile
     can_delete = False
-    fields = ['role', 'grade', 'country', 'elo_rating', 'sp_elo_rating', 'problems_solved']
+    fields = [
+        'role', 'grade', 'country', 'elo_rating', 'sp_elo_rating', 'problems_solved',
+        'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
+    ]
     extra = 0
 
 
@@ -74,9 +77,12 @@ class QuestionAdmin(admin.ModelAdmin):
 
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'role', 'grade', 'elo_rating', 'problems_solved', 'is_premium', 'premium_until']
+    list_display = [
+        'user', 'role', 'grade', 'elo_rating', 'problems_solved',
+        'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
+    ]
     list_filter = ['role', 'grade', 'is_premium']
-    search_fields = ['user__username', 'user__email']
+    search_fields = ['user__username', 'user__email', 'stripe_customer_id', 'stripe_subscription_id']
 
 
 @admin.register(PracticeAttempt)
