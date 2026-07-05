@@ -92,6 +92,15 @@ class Pet(models.Model):
 
 class Profile(models.Model):
     """Extended user profile with additional attributes and game statistics."""
+    AVATAR_CHOICES = [
+        ('violet', 'Violet'),
+        ('sky', 'Sky'),
+        ('emerald', 'Emerald'),
+        ('amber', 'Amber'),
+        ('rose', 'Rose'),
+        ('slate', 'Slate'),
+    ]
+
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     biography = models.TextField(blank=True, null=True)
     grade = models.CharField(
@@ -110,6 +119,7 @@ class Profile(models.Model):
     sp_elo_rating = models.IntegerField(default=1200)
     problems_solved = models.IntegerField(default=0)
     country = models.CharField(max_length=2, default='US')
+    avatar = models.CharField(max_length=32, choices=AVATAR_CHOICES, default='violet')
     max_streak = models.IntegerField(default=0)
     pets = models.ManyToManyField('api.Pet', related_name='owners', blank=True)
     goal = models.CharField(max_length=255,
@@ -122,6 +132,16 @@ class Profile(models.Model):
         default='UTC',
         choices=[(tz, tz) for tz in pytz.all_timezones]
     )
+    # Premium tier: flag + optional expiry. A null premium_until means
+    # "until manually revoked" (e.g. lifetime or admin-granted).
+    is_premium = models.BooleanField(default=False)
+    premium_until = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def has_premium(self):
+        if not self.is_premium:
+            return False
+        return self.premium_until is None or self.premium_until > timezone.now()
 
     def sigma(self, r, kappa, s=400):
         """
@@ -529,6 +549,27 @@ class OnlineUser(models.Model):
 
     def __str__(self):
         return self.user.username
+
+
+class PracticeAttempt(models.Model):
+    """One infinite-practice answer submission.
+
+    The source of truth for the daily free-tier quota and for "only the first
+    attempt at a question moves Elo".
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_attempts')
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='practice_attempts')
+    correct = models.BooleanField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user', 'created_at']),   # daily quota lookups
+            models.Index(fields=['user', 'question']),      # first-attempt checks
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - Q{self.question_id} - {'✓' if self.correct else '✗'}"
 
 
 # =========================================================

@@ -150,90 +150,69 @@ def update_user_quest_progress(user, answer_is_correct):
 
 @api_view(['POST'])
 def check_answer(request):
-    """Check if the submitted answer is correct."""
-    try:
-        data = request.data
-        question_id = data.get('question_id')
-        selected_choice = data.get('selected_choice')
+    """Grade a submitted answer.
 
-        if not question_id or not selected_choice:
-            return Response(
-                {'error': 'Missing question_id or selected_choice'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    mode='practice' (authenticated): counts toward the daily free-tier quota,
+    records a PracticeAttempt, and moves Elo on the user's first attempt at
+    the question. Other calls (practice tests, diagnostic, review) just grade —
+    they no longer batter the practice rating.
+    """
+    from api.models import PracticeAttempt
+    from api.views.practice_views import apply_practice_elo, quota_payload
 
-        try:
-            question = Question.objects.get(id=question_id)
-        except Question.DoesNotExist:
-            return Response(
-                {'error': 'Question does not exist'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+    data = request.data
+    question_id = data.get('question_id')
+    selected_choice = data.get('selected_choice')
+    mode = data.get('mode', '')
 
-        correct = (question.answer_text == selected_choice)
-
-        # If the user is authenticated, update user statistics
-        if request.user.is_authenticated:
-            user = request.user
-            user_stats, created = UserStatistics.objects.get_or_create(user=user)
-            update_singleplayer_elo(user.profile, question, correct)
-
-            if correct:
-                user_stats.correct_number = F('correct_number') + 1
-                user_stats.current_streak = F('current_streak') + 1
-                # Update quest progress only for correct answers
-                update_user_quest_progress(user, correct)
-            else:
-                user_stats.incorrect_number = F('incorrect_number') + 1
-                user_stats.current_streak = 0
-
-            user_stats.save()
-            user_stats.refresh_from_db()
-
-        return Response({
-            'result': 'correct' if correct else 'incorrect',
-            'status': status.HTTP_200_OK
-        })
-
-    except Exception as e:
+    if not question_id or not selected_choice:
         return Response(
-            {'error': 'Internal server error'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            {'error': 'Missing question_id or selected_choice'},
+            status=status.HTTP_400_BAD_REQUEST
         )
 
+    try:
+        question = Question.objects.get(id=question_id)
+    except Question.DoesNotExist:
+        return Response(
+            {'error': 'Question does not exist'},
+            status=status.HTTP_404_NOT_FOUND
+        )
 
-def update_singleplayer_elo(user_profile: Profile, question: Question, user_correct: bool):
-    """
-    Update both the user's singleplayer Elo (sp_elo_rating)
-    and the question's Elo (sp_elo_rating) based on whether the user
-    got the question correct (user_correct=True) or not.
-    """
+    correct = (question.answer_text == selected_choice)
+    is_practice = mode == 'practice' and request.user.is_authenticated
+    payload = {'result': 'correct' if correct else 'incorrect', 'status': status.HTTP_200_OK}
 
-    # user Elo BEFORE
-    user_elo_before = user_profile.sp_elo_rating
-    # question Elo BEFORE
-    question_elo_before = question.sp_elo_rating
+    if is_practice:
+        quota = quota_payload(request.user)
+        if quota['remaining'] is not None and quota['remaining'] <= 0:
+            return Response(
+                {'error': 'daily_limit', 'quota': quota},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        rated = apply_practice_elo(request.user, question, correct)
+        PracticeAttempt.objects.create(user=request.user, question=question, correct=correct)
+        payload['rated'] = rated
+        payload['quota'] = quota_payload(request.user)
+        payload['sp_elo_rating'] = request.user.profile.sp_elo_rating
 
-    # Use your Elo-Davidson or standard Elo formula:
-    # result for user = 1 if correct, else 0
-    user_result = 1.0 if user_correct else 0.0
-    question_result = 1.0 - user_result  # If user is correct, question "loses"
+    # Aggregate statistics still update for any authenticated grading call.
+    if request.user.is_authenticated:
+        user = request.user
+        user_stats, created = UserStatistics.objects.get_or_create(user=user)
 
-    # We can reuse your existing f(...) function:
-    new_user_elo, new_question_elo = f(
-        result=user_result,
-        elo1=user_elo_before,
-        elo2=question_elo_before,
-        kappa=1,
-        k=16  # or your chosen K-factor
-    )
+        if correct:
+            user_stats.correct_number = F('correct_number') + 1
+            user_stats.current_streak = F('current_streak') + 1
+            # Update quest progress only for correct answers
+            update_user_quest_progress(user, correct)
+        else:
+            user_stats.incorrect_number = F('incorrect_number') + 1
+            user_stats.current_streak = 0
 
-    # Assign and save
-    user_profile.sp_elo_rating = int(new_user_elo)
-    user_profile.save()
+        user_stats.save()
 
-    question.sp_elo_rating = int(new_question_elo)
-    question.save()
+    return Response(payload)
 
 
 @api_view(['POST'])

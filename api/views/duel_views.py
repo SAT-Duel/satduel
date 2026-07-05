@@ -187,34 +187,27 @@ def cancel_match(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def get_match_history(request, user_id=None):
+    """Ended duels for a user, newest first. Was defined twice with an N+1
+    on the nested user serializers; now single, select_related, capped."""
     if user_id:
         try:
             user = User.objects.get(id=user_id)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
-        rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
     else:
         user = request.user
-        rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
 
-    serializer = RoomSerializer(rooms, many=True)
-    return Response(serializer.data)
+    try:
+        limit = min(100, max(1, int(request.GET.get('limit', 20))))
+    except ValueError:
+        limit = 20
 
-
-@api_view(['GET'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def get_match_history(request, user_id=None):
-    if user_id:
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
-        rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
-    else:
-        user = request.user
-        rooms = Room.objects.filter(Q(user1=user) | Q(user2=user), status='Ended').order_by('-created_at')
-
+    rooms = (
+        Room.objects
+        .filter(Q(user1=user) | Q(user2=user), status='Ended')
+        .select_related('user1', 'user2', 'winner')
+        .order_by('-created_at')[:limit]
+    )
     serializer = RoomSerializer(rooms, many=True)
     return Response(serializer.data)
 
