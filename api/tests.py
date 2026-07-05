@@ -231,6 +231,157 @@ class CleanupUnverifiedUsersTests(APITestCase):
         self.assertTrue(User.objects.filter(username='staff').exists())
 
 
+class PracticeTierTests(APITestCase):
+    """Free-vs-premium quota, topic gating, and the revised Elo rules."""
+
+    def setUp(self):
+        from api.models import Question
+        self.user = User.objects.create_user(username='practicer', email='p@e.com')
+        self.profile = Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+        self.questions = [
+            Question.objects.create(
+                question=f'Q{i}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='B', difficulty=3, question_type='Transitions',
+            )
+            for i in range(5)
+        ]
+
+    def _answer(self, q, choice='b', mode='practice'):
+        return self.client.post('/api/check_answer/', {
+            'question_id': q.id, 'selected_choice': choice, 'mode': mode,
+        }, format='json')
+
+    def test_next_question_returns_question_and_quota(self):
+        resp = self.client.get('/api/practice/next/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('question', resp.data)
+        self.assertEqual(resp.data['quota']['limit'], 25)
+        self.assertFalse(resp.data['quota']['is_premium'])
+
+    def test_topic_selection_requires_premium(self):
+        resp = self.client.get('/api/practice/next/', {'type': 'Transitions'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.data['error'], 'premium_required')
+
+    def test_premium_can_select_topic(self):
+        self.profile.is_premium = True
+        self.profile.save()
+        resp = self.client.get('/api/practice/next/', {'type': 'Transitions'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['question']['question_type'], 'Transitions')
+        self.assertIsNone(resp.data['quota']['limit'])
+
+    def test_expired_premium_is_free_tier(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        self.profile.is_premium = True
+        self.profile.premium_until = timezone.now() - timedelta(days=1)
+        self.profile.save()
+        resp = self.client.get('/api/practice/next/', {'type': 'Transitions'})
+        self.assertEqual(resp.status_code, 403)
+
+    def test_daily_limit_blocks_after_quota(self):
+        from api.models import PracticeAttempt
+        # Simulate having used the full quota today
+        for i in range(25):
+            PracticeAttempt.objects.create(
+                user=self.user, question=self.questions[i % 5], correct=True,
+            )
+        next_resp = self.client.get('/api/practice/next/')
+        self.assertEqual(next_resp.status_code, 429)
+        answer_resp = self._answer(self.questions[0])
+        self.assertEqual(answer_resp.status_code, 429)
+        self.assertEqual(answer_resp.data['error'], 'daily_limit')
+
+    def test_practice_answer_records_attempt_and_updates_elo(self):
+        before = self.profile.sp_elo_rating
+        resp = self._answer(self.questions[0], 'b')  # correct
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.data['rated'])
+        self.assertEqual(resp.data['quota']['used'], 1)
+        self.profile.refresh_from_db()
+        self.assertGreater(self.profile.sp_elo_rating, before)
+
+    def test_repeat_attempt_does_not_move_elo(self):
+        self._answer(self.questions[0], 'b')
+        self.profile.refresh_from_db()
+        rating_after_first = self.profile.sp_elo_rating
+        resp = self._answer(self.questions[0], 'b')
+        self.assertFalse(resp.data['rated'])
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.sp_elo_rating, rating_after_first)
+
+    def test_non_practice_mode_does_not_move_elo_or_quota(self):
+        before = self.profile.sp_elo_rating
+        resp = self._answer(self.questions[0], 'b', mode='')
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn('rated', resp.data)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.sp_elo_rating, before)
+        from api.models import PracticeAttempt
+        self.assertEqual(PracticeAttempt.objects.count(), 0)
+
+    def test_wrong_answer_lowers_rating(self):
+        before = self.profile.sp_elo_rating
+        self._answer(self.questions[0], 'a')  # incorrect
+        self.profile.refresh_from_db()
+        self.assertLess(self.profile.sp_elo_rating, before)
+
+    def test_next_prefers_unattempted_questions(self):
+        from api.models import PracticeAttempt
+        for q in self.questions[:4]:
+            PracticeAttempt.objects.create(user=self.user, question=q, correct=True)
+        resp = self.client.get('/api/practice/next/')
+        self.assertEqual(resp.data['question']['id'], self.questions[4].id)
+
+
+class TournamentHistoryTests(APITestCase):
+    def setUp(self):
+        from api.models import Tournament, TournamentParticipation, Question
+        from django.utils import timezone
+        self.user = User.objects.create_user(username='hist', email='h@e.com')
+        Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+        q = Question.objects.create(
+            question='Q?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='A', difficulty=2, question_type='Transitions',
+        )
+        for i in range(15):
+            t = Tournament.objects.create(
+                name=f'T{i}', description='d', start_time=timezone.now(),
+            )
+            t.questions.add(q)
+            TournamentParticipation.objects.create(
+                user=self.user, tournament=t, status='Completed',
+                start_time=timezone.now(), score=i,
+            )
+
+    def test_history_is_paginated(self):
+        resp = self.client.get('/api/tournaments/get_history/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data), 10)  # default page size
+        self.assertEqual(resp['X-Total-Count'], '15')
+        page2 = self.client.get('/api/tournaments/get_history/', {'page': 2})
+        self.assertEqual(len(page2.data), 5)
+
+    def test_history_shape_is_backward_compatible(self):
+        resp = self.client.get('/api/tournaments/get_history/')
+        entry = resp.data[0]
+        self.assertIn('tournament', entry)
+        self.assertIn('participantNumber', entry['tournament'])
+        self.assertIn('questionNumber', entry['tournament'])
+        self.assertEqual(entry['tournament']['participantNumber'], 1)
+
+    def test_history_query_count_is_constant(self):
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get('/api/tournaments/get_history/')
+        # Must not grow with the number of participations (was 2N+1).
+        self.assertLess(len(ctx), 10)
+
+
 class QuestionAnswerLeakTests(APITestCase):
     def setUp(self):
         from api.models import Question

@@ -53,6 +53,8 @@ def _user_payload(user, is_first_login):
         'is_admin': user.is_staff,
         'is_first_login': is_first_login,
         'role': profile.role if profile else 'STUDENT',
+        'is_premium': bool(profile and profile.has_premium),
+        'avatar': profile.avatar if profile else 'violet',
     }
 
 

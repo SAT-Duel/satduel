@@ -230,16 +230,68 @@ def create_tournament_admin(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def tournament_history(request, id=None):
-    if id:
-        user = User.objects.get(id=id)
-        participations = TournamentParticipation.objects.filter(user=user, status="Completed").order_by('-start_time')
-        serializer = TournamentParticipationSerializer(participations, many=True)
-        return Response(serializer.data)
-    else:
-        user = request.user
-        participations = TournamentParticipation.objects.filter(user=user, status="Completed").order_by('-start_time')
-        serializer = TournamentParticipationSerializer(participations, many=True)
-        return Response(serializer.data)
+    """Paginated, N+1-free tournament history.
+
+    The old version serialized every participation with a nested
+    TournamentSerializer whose participantNumber/questionNumber properties
+    each ran an extra COUNT query per row — 2N+1 queries total. This fetches
+    everything in one annotated queryset and paginates.
+    """
+    from django.db.models import Count
+
+    user = User.objects.get(id=id) if id else request.user
+
+    try:
+        page = max(1, int(request.GET.get('page', 1)))
+        page_size = min(50, max(1, int(request.GET.get('page_size', 10))))
+    except ValueError:
+        page, page_size = 1, 10
+
+    participations = (
+        TournamentParticipation.objects
+        .filter(user=user, status="Completed")
+        .select_related('tournament')
+        .annotate(
+            participant_count=Count('tournament__tournamentparticipation', distinct=True),
+            question_count=Count('tournament__questions', distinct=True),
+        )
+        .order_by('-start_time')
+    )
+    total = participations.count()
+    offset = (page - 1) * page_size
+
+    results = [
+        {
+            'id': p.id,
+            'user': p.user_id,
+            'tournament': {
+                'id': p.tournament.id,
+                'name': p.tournament.name,
+                'description': p.tournament.description,
+                'duration': str(p.tournament.duration),
+                'start_time': p.tournament.start_time,
+                'end_time': p.tournament.end_time,
+                'participantNumber': p.participant_count,
+                'questionNumber': p.question_count,
+                'private': p.tournament.private,
+                'join_code': p.tournament.join_code,
+            },
+            'start_time': p.start_time,
+            'end_time': p.end_time,
+            'score': p.score,
+            'last_correct_submission': p.last_correct_submission,
+            'status': p.status,
+        }
+        for p in participations[offset:offset + page_size]
+    ]
+
+    # Plain list responses stay backward-compatible with existing consumers;
+    # pagination metadata rides along in headers.
+    response = Response(results)
+    response['X-Total-Count'] = str(total)
+    response['X-Page'] = str(page)
+    response['X-Page-Size'] = str(page_size)
+    return response
 
 
 @api_view(['POST'])

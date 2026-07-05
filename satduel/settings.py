@@ -58,6 +58,7 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_EXPOSE_HEADERS = ['X-Total-Count', 'X-Page', 'X-Page-Size']
 # Application definition
 
 INSTALLED_APPS = [
@@ -223,6 +224,9 @@ SOCIALACCOUNT_PROVIDERS = {
         }
     }
 }
+
+# Free-tier practice: graded answers allowed per day (premium is unlimited)
+FREE_DAILY_LIMIT = int(os.environ.get('FREE_DAILY_LIMIT', 25))
 
 # Google OAuth client ID used to verify id_tokens from the frontend.
 # Public value (safe to ship); overridable via env. Must match the client ID

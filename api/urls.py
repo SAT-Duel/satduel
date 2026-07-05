@@ -4,7 +4,7 @@ from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, inventory_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
-from api.views import onlineuser_views, quests_views, auth_views
+from api.views import onlineuser_views, quests_views, auth_views, practice_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -103,6 +103,10 @@ urlpatterns = [
     path('online_users/', onlineuser_views.get_online_users, name='get_online_users'),
     path('update_online_status/', onlineuser_views.update_online_status, name='update_online_status'),
     path('remove_online_user/', onlineuser_views.remove_online_user, name='remove_online_user'),
+
+    # Adaptive practice (quota-enforced)
+    path('practice/next/', practice_views.next_question, name='practice_next'),
+    path('practice/status/', practice_views.practice_status, name='practice_status'),
 
     # Quest endpoints
     path('quests/', quests_views.get_user_quests, name='get_user_quests'),

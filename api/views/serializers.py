@@ -36,10 +36,15 @@ class UserSerializer(serializers.ModelSerializer):
 
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
-    
+    is_premium = serializers.SerializerMethodField()
+
     class Meta:
         model = Profile
-        fields = ['id', 'user', 'biography', 'grade', 'country', 'avatar', 'elo_rating', 'sp_elo_rating']
+        fields = ['id', 'user', 'biography', 'grade', 'country', 'avatar', 'elo_rating', 'sp_elo_rating',
+                  'is_premium', 'max_streak', 'problems_solved']
+
+    def get_is_premium(self, obj):
+        return obj.has_premium
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
