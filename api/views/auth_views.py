@@ -55,6 +55,7 @@ def _user_payload(user, is_first_login):
         'role': profile.role if profile else 'STUDENT',
         'is_premium': bool(profile and profile.has_premium),
         'avatar': profile.avatar if profile else 'violet',
+        'avatar_icon': profile.avatar_icon if profile else 'initial',
     }
 
 

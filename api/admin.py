@@ -19,7 +19,7 @@ class ProfileInline(admin.StackedInline):
     can_delete = False
     fields = [
         'role', 'grade', 'country', 'elo_rating', 'sp_elo_rating', 'problems_solved',
-        'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
+        'avatar', 'avatar_icon', 'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
     ]
     extra = 0
 
@@ -78,7 +78,7 @@ class QuestionAdmin(admin.ModelAdmin):
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = [
-        'user', 'role', 'grade', 'elo_rating', 'problems_solved',
+        'user', 'role', 'grade', 'avatar', 'avatar_icon', 'elo_rating', 'problems_solved',
         'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
     ]
     list_filter = ['role', 'grade', 'is_premium']

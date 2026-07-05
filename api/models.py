@@ -100,6 +100,21 @@ class Profile(models.Model):
         ('rose', 'Rose'),
         ('slate', 'Slate'),
     ]
+    AVATAR_ICON_CHOICES = [
+        ('initial', 'Initial'),
+        ('nova-quill', 'Nova Quill'),
+        ('ember-abacus', 'Ember Abacus'),
+        ('cipher-lantern', 'Cipher Lantern'),
+        ('prism-page', 'Prism Page'),
+        ('orbit-scout', 'Orbit Scout'),
+        ('inkcap-alchemist', 'Inkcap Alchemist'),
+        ('bloom-circuit', 'Bloom Circuit'),
+        ('echo-fencer', 'Echo Fencer'),
+        ('slate-sentinel', 'Slate Sentinel'),
+        ('mira-mnemonic', 'Mira Mnemonic'),
+        ('pixel-pathfinder', 'Pixel Pathfinder'),
+        ('margin-warden', 'Margin Warden'),
+    ]
 
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     biography = models.TextField(blank=True, null=True)
@@ -120,6 +135,7 @@ class Profile(models.Model):
     problems_solved = models.IntegerField(default=0)
     country = models.CharField(max_length=2, default='US')
     avatar = models.CharField(max_length=32, choices=AVATAR_CHOICES, default='violet')
+    avatar_icon = models.CharField(max_length=32, choices=AVATAR_ICON_CHOICES, default='initial')
     max_streak = models.IntegerField(default=0)
     pets = models.ManyToManyField('api.Pet', related_name='owners', blank=True)
     goal = models.CharField(max_length=255,
