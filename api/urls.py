@@ -28,6 +28,7 @@ urlpatterns = [
     path('profile/view_profile/<int:user_id>/', profile_views.view_profile, name='view_profile'),
     path('infinite_questions_profile/', profile_views.infinite_questions_profile_view, name='infinite_questions_profile'),
     path('profile/update_first_login/', profile_views.update_first_login, name='update_first_login'),
+    path('leaderboard/', profile_views.leaderboard_view, name='leaderboard'),
 
     path('login/', user_views.login_view, name='login'),
     path('logout/', user_views.logout_view, name='logout'),
