@@ -147,8 +147,8 @@ def create_checkout_session(request):
 
     profile = request.user.profile
     _configure_stripe()
-    success_url = f"{settings.FRONTEND_URL.rstrip('/')}/settings?checkout=success&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{settings.FRONTEND_URL.rstrip('/')}/settings?checkout=cancelled"
+    success_url = f"{settings.FRONTEND_URL.rstrip('/')}/pricing?checkout=success&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{settings.FRONTEND_URL.rstrip('/')}/pricing?checkout=cancelled"
 
     try:
         customer_id = _get_or_create_customer(profile)
@@ -199,10 +199,14 @@ def create_portal_session(request):
 
     _configure_stripe()
     try:
-        session = stripe.billing_portal.Session.create(
-            customer=profile.stripe_customer_id,
-            return_url=f"{settings.FRONTEND_URL.rstrip('/')}/settings",
-        )
+        session_params = {
+            'customer': profile.stripe_customer_id,
+            'return_url': f"{settings.FRONTEND_URL.rstrip('/')}/settings",
+        }
+        if settings.STRIPE_PORTAL_CONFIGURATION_ID:
+            session_params['configuration'] = settings.STRIPE_PORTAL_CONFIGURATION_ID
+
+        session = stripe.billing_portal.Session.create(**session_params)
     except StripeError as exc:
         logger.exception('Stripe portal session creation failed')
         return Response(
