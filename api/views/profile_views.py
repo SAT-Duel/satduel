@@ -175,9 +175,7 @@ def view_profile(request, user_id):
         user = User.objects.get(id=user_id)
         profile = Profile.objects.get(user=user)
 
-        statistics = None
-        if user.infinitequestionstatistics:
-            statistics = UserStatistics.objects.get(user=user)
+        statistics = UserStatistics.objects.filter(user=user).first()
 
         # Aggregate all data
         data = {

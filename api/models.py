@@ -92,6 +92,15 @@ class Pet(models.Model):
 
 class Profile(models.Model):
     """Extended user profile with additional attributes and game statistics."""
+    AVATAR_CHOICES = [
+        ('violet', 'Violet'),
+        ('sky', 'Sky'),
+        ('emerald', 'Emerald'),
+        ('amber', 'Amber'),
+        ('rose', 'Rose'),
+        ('slate', 'Slate'),
+    ]
+
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     biography = models.TextField(blank=True, null=True)
     grade = models.CharField(
@@ -110,6 +119,7 @@ class Profile(models.Model):
     sp_elo_rating = models.IntegerField(default=1200)
     problems_solved = models.IntegerField(default=0)
     country = models.CharField(max_length=2, default='US')
+    avatar = models.CharField(max_length=32, choices=AVATAR_CHOICES, default='violet')
     max_streak = models.IntegerField(default=0)
     pets = models.ManyToManyField('api.Pet', related_name='owners', blank=True)
     goal = models.CharField(max_length=255,
