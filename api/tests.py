@@ -199,6 +199,54 @@ class RankingUpdateTests(APITestCase):
         self.assertEqual(Ranking.objects.get(user=u).rank, 1)
 
 
+class LeaderboardViewTests(APITestCase):
+    def setUp(self):
+        self.users = []
+        rows = [
+            ('nova', 1700, 1310, 8, 24),
+            ('ember', 1540, 1480, 15, 42),
+            ('cipher', 1810, 1220, 3, 12),
+            ('mira', 1360, 1660, 6, 31),
+        ]
+        for username, duel_elo, practice_elo, streak, solved in rows:
+            user = User.objects.create_user(username=username, email=f'{username}@e.com')
+            Profile.objects.create(
+                user=user,
+                elo_rating=duel_elo,
+                sp_elo_rating=practice_elo,
+                max_streak=streak,
+                problems_solved=solved,
+            )
+            self.users.append(user)
+        self.client.force_authenticate(user=self.users[1])
+
+    def test_duel_leaderboard_orders_by_duel_rating(self):
+        resp = self.client.get(reverse('leaderboard'), {'metric': 'duel'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([entry['user']['username'] for entry in resp.data['entries']], [
+            'cipher', 'nova', 'ember', 'mira',
+        ])
+        self.assertEqual(resp.data['current_user']['user']['username'], 'ember')
+        self.assertEqual(resp.data['current_user']['rank'], 3)
+
+    def test_practice_leaderboard_orders_by_practice_rating(self):
+        resp = self.client.get(reverse('leaderboard'), {'metric': 'practice', 'limit': 2})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([entry['user']['username'] for entry in resp.data['entries']], ['mira', 'ember'])
+        self.assertEqual(resp.data['current_user']['rank'], 2)
+        self.assertEqual(resp.data['total_users'], 4)
+
+    def test_streak_leaderboard_orders_by_max_streak(self):
+        resp = self.client.get(reverse('leaderboard'), {'metric': 'streak'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['entries'][0]['user']['username'], 'ember')
+        self.assertEqual(resp.data['entries'][0]['metric_value'], 15)
+
+    def test_invalid_metric_is_rejected(self):
+        resp = self.client.get(reverse('leaderboard'), {'metric': 'coins'})
+        self.assertEqual(resp.status_code, 400)
+
+
 class CleanupUnverifiedUsersTests(APITestCase):
     def setUp(self):
         from django.utils import timezone

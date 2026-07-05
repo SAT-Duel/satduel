@@ -11,6 +11,52 @@ from api.views.serializers import ProfileSerializer, \
 from ..models import UserStatistics
 from rest_framework import status
 
+LEADERBOARD_METRICS = {
+    'duel': {
+        'field': 'elo_rating',
+        'ordering': ('-elo_rating', '-sp_elo_rating', '-problems_solved', 'user__username'),
+    },
+    'practice': {
+        'field': 'sp_elo_rating',
+        'ordering': ('-sp_elo_rating', '-problems_solved', '-elo_rating', 'user__username'),
+    },
+    'streak': {
+        'field': 'max_streak',
+        'ordering': ('-max_streak', '-sp_elo_rating', '-elo_rating', 'user__username'),
+    },
+}
+
+
+def _leaderboard_entry(profile, rank, metric):
+    field = LEADERBOARD_METRICS[metric]['field']
+    return {
+        'rank': rank,
+        'metric': metric,
+        'metric_value': getattr(profile, field),
+        'user': {
+            'id': profile.user.id,
+            'username': profile.user.username,
+            'first_name': profile.user.first_name,
+            'last_name': profile.user.last_name,
+        },
+        'country': profile.country,
+        'grade': profile.grade,
+        'avatar': profile.avatar,
+        'avatar_icon': profile.avatar_icon,
+        'elo_rating': profile.elo_rating,
+        'sp_elo_rating': profile.sp_elo_rating,
+        'max_streak': profile.max_streak,
+        'problems_solved': profile.problems_solved,
+        'is_premium': profile.has_premium,
+    }
+
+
+def _leaderboard_limit(value):
+    try:
+        return min(max(int(value), 1), 100)
+    except (TypeError, ValueError):
+        return 50
+
 
 @api_view(['GET', 'PATCH'])
 @authentication_classes([JWTAuthentication])
@@ -32,6 +78,36 @@ def profile_view(request):
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def leaderboard_view(request):
+    metric = request.query_params.get('metric', 'duel')
+    if metric not in LEADERBOARD_METRICS:
+        return Response({'error': 'Invalid leaderboard metric.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    limit = _leaderboard_limit(request.query_params.get('limit'))
+    ordering = LEADERBOARD_METRICS[metric]['ordering']
+    ranked_profiles = list(Profile.objects.select_related('user').order_by(*ordering))
+
+    current_entry = None
+    entries = []
+    for rank, profile in enumerate(ranked_profiles, start=1):
+        entry = _leaderboard_entry(profile, rank, metric)
+        if rank <= limit:
+            entries.append(entry)
+        if profile.user_id == request.user.id:
+            current_entry = entry
+
+    return Response({
+        'metric': metric,
+        'entries': entries,
+        'current_user': current_entry,
+        'total_users': len(ranked_profiles),
+        'limit': limit,
+    })
 
 
 @api_view(['PATCH'])
