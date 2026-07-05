@@ -136,6 +136,9 @@ class Profile(models.Model):
     # "until manually revoked" (e.g. lifetime or admin-granted).
     is_premium = models.BooleanField(default=False)
     premium_until = models.DateTimeField(null=True, blank=True)
+    stripe_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
+    stripe_price_id = models.CharField(max_length=255, blank=True, null=True)
 
     @property
     def has_premium(self):

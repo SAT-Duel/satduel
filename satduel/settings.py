@@ -207,6 +207,14 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://satduel.com')
 PASSWORD_RESET_TIMEOUT = 60 * 60 * 24  # 1 day, in seconds
 CSRF_COOKIE_HTTPONLY = False
 
+# Stripe Billing / Checkout. Keep all secret values in env vars or Heroku
+# config vars; never commit real keys.
+STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
+STRIPE_PREMIUM_PRICE_ID = os.environ.get('STRIPE_PREMIUM_PRICE_ID', '')
+STRIPE_API_VERSION = os.environ.get('STRIPE_API_VERSION', '2026-06-24.dahlia')
+STRIPE_AUTOMATIC_TAX = os.environ.get('STRIPE_AUTOMATIC_TAX', 'False') == 'True'
+
 # Production security (Heroku terminates TLS at its router)
 if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
