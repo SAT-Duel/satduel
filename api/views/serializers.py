@@ -1,7 +1,6 @@
 from django.contrib.auth.models import User
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
-    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, \
-    QuestTemplate, PersonalizedQuest
+    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
 from allauth.account.utils import setup_user_email
@@ -201,40 +200,3 @@ class TPSubmitAnswerSerializer(serializers.ModelSerializer):
         return TournamentQuestionSerializer(questions, many=True).data
 
 
-class QuestTemplateSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = QuestTemplate
-        fields = ['id', 'goal_type', 'period_type', 'base_target']
-
-
-class PersonalizedQuestSerializer(serializers.ModelSerializer):
-    template = QuestTemplateSerializer()
-    completion_percentage = serializers.SerializerMethodField()
-    time_remaining = serializers.SerializerMethodField()
-
-    class Meta:
-        model = PersonalizedQuest
-        fields = [
-            'id',
-            'template',
-            'target',
-            'reward_coins',
-            'start_time',
-            'end_time',
-            'progress',
-            'completed',
-            'reward_claimed',
-            'completion_percentage',
-            'time_remaining'
-        ]
-
-    def get_completion_percentage(self, obj):
-        if obj.target == 0:
-            return 0
-        return min(100, int((obj.progress / obj.target) * 100))
-
-    def get_time_remaining(self, obj):
-        now = timezone.now()
-        if now > obj.end_time:
-            return 0
-        return int((obj.end_time - now).total_seconds())

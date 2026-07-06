@@ -194,10 +194,146 @@ def next_question(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def practice_status(request):
-    """Quota + tier + rating snapshot for the practice page header."""
+    """Quota + tier + rating + day-streak snapshot for practice surfaces."""
     profile = getattr(request.user, 'profile', None)
     return Response({
         'quota': quota_payload(request.user),
         'sp_elo_rating': profile.sp_elo_rating if profile else None,
         'topics': DEFAULT_QUESTION_TYPES,
+        'daily': daily_snapshot(request.user),
     })
+
+
+# ---------------------------------------------------------------------------
+# Day streak (practice-completion based)
+#
+# Completing DAILY_PRACTICE_GOAL practice answers within the user's LOCAL day
+# extends the streak. Updated at answer-time and evaluated lazily at read-time,
+# so no midnight cron job is needed: a missed day simply reads as a streak of 0.
+# ---------------------------------------------------------------------------
+import datetime
+
+import pytz
+
+
+def _user_tz(profile):
+    try:
+        return pytz.timezone(profile.timezone) if profile else pytz.UTC
+    except Exception:
+        return pytz.UTC
+
+
+def _local_today(profile):
+    return timezone.now().astimezone(_user_tz(profile)).date()
+
+
+def _local_day_bounds_utc(profile, local_date):
+    """UTC datetimes spanning the given local calendar day."""
+    tz = _user_tz(profile)
+    start = tz.localize(datetime.datetime.combine(local_date, datetime.time.min))
+    end = start + datetime.timedelta(days=1)
+    return start.astimezone(pytz.UTC), end.astimezone(pytz.UTC)
+
+
+def _attempts_on(user, profile, local_date):
+    start, end = _local_day_bounds_utc(profile, local_date)
+    return PracticeAttempt.objects.filter(
+        user=user, created_at__gte=start, created_at__lt=end,
+    ).count()
+
+
+def effective_streak(profile, today=None):
+    """Stored streak counts only if the last completion was today or yesterday."""
+    if profile is None or profile.last_practice_completed is None:
+        return 0
+    today = today or _local_today(profile)
+    if profile.last_practice_completed >= today - datetime.timedelta(days=1):
+        return profile.practice_streak
+    return 0
+
+
+def update_daily_streak(user):
+    """Called after each practice attempt. Extends the streak the moment the
+    user's answer count for their local day reaches the goal."""
+    profile = getattr(user, 'profile', None)
+    goal = settings.DAILY_PRACTICE_GOAL
+    if profile is None:
+        return {'count': 0, 'goal': goal, 'completed_today': False,
+                'streak': 0, 'longest': 0, 'streak_extended': False}
+
+    today = _local_today(profile)
+    count = _attempts_on(user, profile, today)
+    completed = count >= goal
+    extended = False
+
+    if completed and profile.last_practice_completed != today:
+        yesterday = today - datetime.timedelta(days=1)
+        if profile.last_practice_completed == yesterday:
+            profile.practice_streak += 1
+        else:
+            profile.practice_streak = 1
+        profile.longest_practice_streak = max(
+            profile.longest_practice_streak, profile.practice_streak,
+        )
+        profile.last_practice_completed = today
+        profile.save(update_fields=[
+            'practice_streak', 'longest_practice_streak', 'last_practice_completed',
+        ])
+        extended = True
+
+    return {
+        'count': count,
+        'goal': goal,
+        'completed_today': profile.last_practice_completed == today,
+        'streak': effective_streak(profile, today),
+        'longest': profile.longest_practice_streak,
+        'streak_extended': extended,
+    }
+
+
+def week_strip(user, profile):
+    """Last 7 local days, oldest first: which days hit the goal."""
+    today = _local_today(profile)
+    goal = settings.DAILY_PRACTICE_GOAL
+    start_date = today - datetime.timedelta(days=6)
+    start_utc, _ = _local_day_bounds_utc(profile, start_date)
+
+    tz = _user_tz(profile)
+    counts = {}
+    stamps = PracticeAttempt.objects.filter(
+        user=user, created_at__gte=start_utc,
+    ).values_list('created_at', flat=True)
+    for stamp in stamps:
+        local_date = stamp.astimezone(tz).date()
+        counts[local_date] = counts.get(local_date, 0) + 1
+
+    days = []
+    for offset in range(7):
+        d = start_date + datetime.timedelta(days=offset)
+        days.append({
+            'date': d.isoformat(),
+            'weekday': d.strftime('%a'),
+            'count': counts.get(d, 0),
+            'completed': counts.get(d, 0) >= goal,
+            'is_today': d == today,
+        })
+    return days
+
+
+def daily_snapshot(user):
+    """Full streak block for dashboards: today's progress + week strip."""
+    profile = getattr(user, 'profile', None)
+    goal = settings.DAILY_PRACTICE_GOAL
+    if profile is None:
+        return {'count': 0, 'goal': goal, 'completed_today': False,
+                'streak': 0, 'longest': 0, 'week': []}
+    today = _local_today(profile)
+    count = _attempts_on(user, profile, today)
+    return {
+        'count': count,
+        'goal': goal,
+        'completed_today': profile.last_practice_completed == today,
+        'streak': effective_streak(profile, today),
+        'longest': profile.longest_practice_streak,
+        'week': week_strip(user, profile),
+    }

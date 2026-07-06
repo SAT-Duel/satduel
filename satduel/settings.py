@@ -237,6 +237,10 @@ SOCIALACCOUNT_PROVIDERS = {
 # Free-tier practice: graded answers allowed per day (premium is unlimited)
 FREE_DAILY_LIMIT = int(os.environ.get('FREE_DAILY_LIMIT', 25))
 
+# Practice answers needed in a (user-local) day to complete the daily goal
+# and extend the day streak.
+DAILY_PRACTICE_GOAL = int(os.environ.get('DAILY_PRACTICE_GOAL', 10))
+
 # Google OAuth client ID used to verify id_tokens from the frontend.
 # Public value (safe to ship); overridable via env. Must match the client ID
 # the frontend uses to mint the token, or verification fails.
