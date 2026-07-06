@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
-from api.models import Profile, Ranking
+from api.models import Profile, Question, Ranking, Room
 
 
 class PasswordLoginTests(APITestCase):
@@ -247,6 +247,45 @@ class LeaderboardViewTests(APITestCase):
         self.assertEqual(resp.status_code, 400)
 
 
+class DuelEloTests(APITestCase):
+    def test_ended_room_only_applies_elo_and_solved_once(self):
+        user1 = User.objects.create_user(username='duelist1', email='d1@e.com')
+        user2 = User.objects.create_user(username='duelist2', email='d2@e.com')
+        profile1 = Profile.objects.create(user=user1, elo_rating=1500)
+        profile2 = Profile.objects.create(user=user2, elo_rating=1500)
+        question = Question.objects.create(
+            question='2 + 2?',
+            choice_a='3',
+            choice_b='4',
+            choice_c='5',
+            choice_d='6',
+            answer='B',
+            difficulty=3,
+            question_type='Transitions',
+        )
+        room = Room.objects.create(
+            user1=user1,
+            user2=user2,
+            status='Battling',
+            user1_score=7,
+            user2_score=3,
+        )
+        room.questions.set([question])
+
+        room.status = 'Ended'
+        room.save()
+        profile1.refresh_from_db()
+        profile2.refresh_from_db()
+        first_profile1 = (profile1.elo_rating, profile1.problems_solved)
+        first_profile2 = (profile2.elo_rating, profile2.problems_solved)
+
+        room.save()
+        profile1.refresh_from_db()
+        profile2.refresh_from_db()
+        self.assertEqual((profile1.elo_rating, profile1.problems_solved), first_profile1)
+        self.assertEqual((profile2.elo_rating, profile2.problems_solved), first_profile2)
+
+
 class CleanupUnverifiedUsersTests(APITestCase):
     def setUp(self):
         from django.utils import timezone
@@ -351,7 +390,11 @@ class PracticeTierTests(APITestCase):
         resp = self._answer(self.questions[0], 'b')  # correct
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.data['rated'])
+        self.assertEqual(resp.data['sp_elo_rating_previous'], before)
+        self.assertGreater(resp.data['sp_elo_rating'], before)
+        self.assertGreater(resp.data['sp_elo_rating_delta'], 0)
         self.assertEqual(resp.data['quota']['used'], 1)
+        self.assertEqual(resp.data['practice_stats']['answered'], 1)
         self.profile.refresh_from_db()
         self.assertGreater(self.profile.sp_elo_rating, before)
 
@@ -361,6 +404,7 @@ class PracticeTierTests(APITestCase):
         rating_after_first = self.profile.sp_elo_rating
         resp = self._answer(self.questions[0], 'b')
         self.assertFalse(resp.data['rated'])
+        self.assertEqual(resp.data['sp_elo_rating_delta'], 0)
         self.profile.refresh_from_db()
         self.assertEqual(self.profile.sp_elo_rating, rating_after_first)
 

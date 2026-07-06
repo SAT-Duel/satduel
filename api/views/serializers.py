@@ -76,7 +76,7 @@ class InfiniteQuestionsSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserStatistics
-        fields = ['id', 'user', 'xp', 'level', 'coins', 'total_multiplier', 'correct_number', 'incorrect_number',
+        fields = ['id', 'user', 'coins', 'total_multiplier', 'correct_number', 'incorrect_number',
                   'current_streak']
 
     def get_total_multiplier(self, obj):
