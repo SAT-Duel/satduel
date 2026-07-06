@@ -4,7 +4,7 @@ from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, inventory_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
-from api.views import onlineuser_views, quests_views, auth_views, practice_views, billing_views
+from api.views import onlineuser_views, auth_views, practice_views, billing_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -114,8 +114,5 @@ urlpatterns = [
     path('billing/create_portal_session/', billing_views.create_portal_session, name='billing_create_portal_session'),
     path('billing/webhook/', billing_views.stripe_webhook, name='stripe_webhook'),
 
-    # Quest endpoints
-    path('quests/', quests_views.get_user_quests, name='get_user_quests'),
-    path('quests/claim_reward/', quests_views.claim_quest_reward, name='claim_quest_reward'),
     path('user_streak/', views.get_user_streak, name='user-streak'),
 ]

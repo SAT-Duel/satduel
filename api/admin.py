@@ -7,7 +7,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, Game, GameQuestion, PersonalizedQuest, QuestTemplate, PracticeAttempt
+    Pet, Game, GameQuestion, PracticeAttempt
 
 
 # ---------------------------------------------------------------------------
@@ -106,5 +106,3 @@ admin.site.register(Ranking)
 admin.site.register(Pet)
 admin.site.register(Game)
 admin.site.register(GameQuestion)
-admin.site.register(PersonalizedQuest)
-admin.site.register(QuestTemplate)

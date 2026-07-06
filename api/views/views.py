@@ -3,7 +3,7 @@ from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
-from api.models import Profile, PersonalizedQuest
+from api.models import Profile
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -124,30 +124,6 @@ def get_question(request, question_id):
     return Response(serializer.data)
 
 
-def update_user_quest_progress(user, answer_is_correct):
-    """Update quest progress when user answers a question correctly."""
-    if not answer_is_correct:
-        return
-
-    # Get all active, uncompleted quests
-    active_quests = PersonalizedQuest.objects.filter(
-        user=user,
-        completed=False,
-        reward_claimed=False,
-        end_time__gt=timezone.now()
-    )
-
-    for quest in active_quests:
-        quest.progress += 1
-
-        # Check if quest is completed
-        if quest.progress >= quest.target:
-            quest.progress = quest.target
-            quest.completed = True
-
-        quest.save()
-
-
 @api_view(['POST'])
 def check_answer(request):
     """Grade a submitted answer.
@@ -190,6 +166,7 @@ def check_answer(request):
                 {'error': 'daily_limit', 'quota': quota},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
+        from api.views.practice_views import update_daily_streak
         rating_update = apply_practice_elo(request.user, question, correct)
         PracticeAttempt.objects.create(user=request.user, question=question, correct=correct)
         payload['rated'] = rating_update['rated']
@@ -197,6 +174,9 @@ def check_answer(request):
         payload['sp_elo_rating'] = rating_update['new_rating']
         payload['sp_elo_rating_previous'] = rating_update['previous_rating']
         payload['sp_elo_rating_delta'] = rating_update['delta']
+        # Daily-goal streak: answering DAILY_PRACTICE_GOAL questions in a local
+        # day completes it and extends the flame.
+        payload['daily'] = update_daily_streak(request.user)
 
     # Aggregate statistics still update for any authenticated grading call.
     if request.user.is_authenticated:
@@ -207,8 +187,6 @@ def check_answer(request):
         if correct:
             user_stats.correct_number = F('correct_number') + 1
             user_stats.current_streak = F('current_streak') + 1
-            # Update quest progress only for correct answers
-            update_user_quest_progress(user, correct)
         else:
             user_stats.incorrect_number = F('incorrect_number') + 1
             user_stats.current_streak = 0
@@ -326,10 +304,6 @@ def get_new_elo(result, elo1, elo2):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def get_user_streak(request):
-    user = request.user
-    try:
-        user_statistics = UserStatistics.objects.get(user=user)
-        login_streak = user_statistics.login_streak
-        return Response({"login_streak": login_streak})
-    except UserStatistics.DoesNotExist:
-        return Response({"error": "User statistics not found."}, status=404)
+    """Day-streak snapshot (practice-completion based, not logins)."""
+    from api.views.practice_views import daily_snapshot
+    return Response(daily_snapshot(request.user))

@@ -156,6 +156,13 @@ class Profile(models.Model):
     stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     stripe_price_id = models.CharField(max_length=255, blank=True, null=True)
 
+    # Day streak: completing the daily practice goal (DAILY_PRACTICE_GOAL
+    # answers in the user's local day) extends it. Evaluated lazily — a missed
+    # day reads as 0 without any scheduled job (see practice_views).
+    practice_streak = models.IntegerField(default=0)
+    longest_practice_streak = models.IntegerField(default=0)
+    last_practice_completed = models.DateField(null=True, blank=True)
+
     @property
     def has_premium(self):
         if not self.is_premium:
@@ -597,67 +604,3 @@ class PracticeAttempt(models.Model):
         return f"{self.user.username} - Q{self.question_id} - {'✓' if self.correct else '✗'}"
 
 
-# =========================================================
-# Quest System Models
-# =========================================================
-
-class QuestTemplate(models.Model):
-    """Base template for generating personalized quests."""
-    GOAL_TYPES = [
-        ('beginner', 'Beginner'),
-        ('intermediate', 'Intermediate'),
-        ('advanced', 'Advanced'),
-        ('expert', 'Expert')
-    ]
-
-    PERIOD_TYPES = [
-        ('daily', 'Daily'),
-        ('weekly', 'Weekly')
-    ]
-
-    goal_type = models.CharField(max_length=20, choices=GOAL_TYPES)
-    period_type = models.CharField(max_length=10, choices=PERIOD_TYPES)
-    base_target = models.IntegerField(help_text="Base number of questions to complete")
-    min_coins = models.IntegerField(help_text="Minimum coin reward")
-    max_coins = models.IntegerField(help_text="Maximum coin reward")
-
-    class Meta:
-        unique_together = ['goal_type', 'period_type']
-
-    def generate_target(self):
-        """Generate personalized target based on goal type."""
-        return self.base_target
-
-    def generate_reward(self):
-        """Generate random reward within range."""
-        return random.randint(self.min_coins, self.max_coins)
-
-    def __str__(self):
-        return f"{self.goal_type}-{self.period_type}-{self.base_target}"
-
-
-class PersonalizedQuest(models.Model):
-    """Individual user quests generated from templates."""
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    template = models.ForeignKey(QuestTemplate, on_delete=models.CASCADE)
-    target = models.IntegerField()
-    reward_coins = models.IntegerField()
-    start_time = models.DateTimeField()
-    end_time = models.DateTimeField()
-    progress = models.IntegerField(default=0)
-    completed = models.BooleanField(default=False)
-    reward_claimed = models.BooleanField(default=False)
-
-    def is_active(self):
-        now = timezone.now()
-        return self.start_time <= now <= self.end_time and not self.completed
-
-    def update_progress(self, amount=1):
-        self.progress += amount
-        if self.progress >= self.target:
-            self.progress = self.target
-            self.completed = True
-        self.save()
-
-    def __str__(self):
-        return f"{self.user.username} - {self.template.goal_type}  - {self.template.period_type} - {self.progress}/{self.target}"

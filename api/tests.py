@@ -650,3 +650,111 @@ class GetAnswerLockdownTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         resp = self.client.post('/api/get_answer/', {'question_id': self.q.id}, format='json')
         self.assertEqual(resp.status_code, 200)
+
+
+class PracticeStreakTests(APITestCase):
+    """Day streak: 10 practice answers in a local day extend the flame."""
+
+    def setUp(self):
+        from api.models import Question
+        self.user = User.objects.create_user(username='streaker', email='s@e.com')
+        self.profile = Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+        self.questions = [
+            Question.objects.create(
+                question=f'SQ{i}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='A', difficulty=3, question_type='Transitions',
+            )
+            for i in range(12)
+        ]
+
+    def _answer(self, q):
+        return self.client.post('/api/check_answer/', {
+            'question_id': q.id, 'selected_choice': 'a', 'mode': 'practice',
+        }, format='json')
+
+    def _backdate_attempts(self, days_ago, n=10):
+        """Create n attempts on a past day (UTC profile default)."""
+        from api.models import PracticeAttempt
+        from django.utils import timezone as djtz
+        from datetime import timedelta
+        when = djtz.now() - timedelta(days=days_ago)
+        for i in range(n):
+            a = PracticeAttempt.objects.create(
+                user=self.user, question=self.questions[i], correct=True,
+            )
+            PracticeAttempt.objects.filter(pk=a.pk).update(created_at=when)
+
+    def test_streak_extends_on_goal_completion(self):
+        for i in range(9):
+            resp = self._answer(self.questions[i])
+            self.assertFalse(resp.data['daily']['completed_today'])
+            self.assertFalse(resp.data['daily']['streak_extended'])
+        resp = self._answer(self.questions[9])  # 10th answer
+        self.assertTrue(resp.data['daily']['completed_today'])
+        self.assertTrue(resp.data['daily']['streak_extended'])
+        self.assertEqual(resp.data['daily']['streak'], 1)
+
+    def test_no_double_extension_same_day(self):
+        for i in range(10):
+            self._answer(self.questions[i])
+        resp = self._answer(self.questions[10])  # 11th
+        self.assertFalse(resp.data['daily']['streak_extended'])
+        self.assertEqual(resp.data['daily']['streak'], 1)
+
+    def test_consecutive_days_increment(self):
+        from api.views.practice_views import update_daily_streak
+        import datetime
+        # Simulate: completed yesterday with streak 3
+        self.profile.practice_streak = 3
+        self.profile.longest_practice_streak = 3
+        self.profile.last_practice_completed = (
+            datetime.date.today() - datetime.timedelta(days=1)
+        )
+        self.profile.save()
+        for i in range(10):
+            self._answer(self.questions[i])
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.practice_streak, 4)
+        self.assertEqual(self.profile.longest_practice_streak, 4)
+
+    def test_gap_resets_to_one(self):
+        import datetime
+        self.profile.practice_streak = 7
+        self.profile.longest_practice_streak = 7
+        self.profile.last_practice_completed = (
+            datetime.date.today() - datetime.timedelta(days=3)
+        )
+        self.profile.save()
+        for i in range(10):
+            self._answer(self.questions[i])
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.practice_streak, 1)
+        self.assertEqual(self.profile.longest_practice_streak, 7)  # record kept
+
+    def test_effective_streak_zero_after_missed_day(self):
+        import datetime
+        self.profile.practice_streak = 5
+        self.profile.last_practice_completed = (
+            datetime.date.today() - datetime.timedelta(days=2)
+        )
+        self.profile.save()
+        resp = self.client.get('/api/practice/status/')
+        self.assertEqual(resp.data['daily']['streak'], 0)
+        self.assertEqual(resp.data['daily']['longest'], 0)
+
+    def test_status_includes_week_strip(self):
+        self._backdate_attempts(days_ago=1, n=10)
+        resp = self.client.get('/api/practice/status/')
+        week = resp.data['daily']['week']
+        self.assertEqual(len(week), 7)
+        self.assertTrue(week[5]['completed'])   # yesterday hit the goal
+        self.assertTrue(week[6]['is_today'])
+        self.assertFalse(week[6]['completed'])
+
+    def test_user_streak_endpoint_returns_practice_streak(self):
+        resp = self.client.get('/api/user_streak/')
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn('streak', resp.data)
+        self.assertIn('goal', resp.data)
+        self.assertIn('week', resp.data)
