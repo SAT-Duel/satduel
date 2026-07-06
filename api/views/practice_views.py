@@ -87,9 +87,16 @@ def apply_practice_elo(user, question, correct):
     """First-attempt-only rating update between a user and a question."""
     already_attempted = PracticeAttempt.objects.filter(user=user, question=question).exists()
     if already_attempted:
-        return False
+        profile = Profile.objects.get(user=user)
+        return {
+            'rated': False,
+            'previous_rating': profile.sp_elo_rating,
+            'new_rating': profile.sp_elo_rating,
+            'delta': 0,
+        }
 
     profile = Profile.objects.get(user=user)
+    previous_rating = profile.sp_elo_rating
     total_attempts = PracticeAttempt.objects.filter(user=user).count()
     user_k = USER_K_PROVISIONAL if total_attempts < PROVISIONAL_ATTEMPTS else USER_K_STABLE
 
@@ -101,7 +108,12 @@ def apply_practice_elo(user, question, correct):
 
     question.sp_elo_rating = _clamp(question.sp_elo_rating - QUESTION_K * (result - expected))
     question.save(update_fields=['sp_elo_rating'])
-    return True
+    return {
+        'rated': True,
+        'previous_rating': previous_rating,
+        'new_rating': profile.sp_elo_rating,
+        'delta': profile.sp_elo_rating - previous_rating,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -243,8 +243,6 @@ class UserStatistics(models.Model):
     correct_number = models.IntegerField(default=0)
     incorrect_number = models.IntegerField(default=0)
     current_streak = models.IntegerField(default=0)
-    xp = models.IntegerField(default=0)
-    level = models.IntegerField(default=0)
     coins = models.IntegerField(default=0)
     normal_multiplier = models.FloatField(default=1.00)
     user_pet_levels = models.JSONField(default=dict)
@@ -388,6 +386,9 @@ class Room(models.Model):
         return f"Room {self.id} by {self.user1.username} and {self.user2.username if self.user2 else 'empty'}"
 
     def end_battle(self):
+        if not self.user2:
+            return
+
         if self.user1_score > self.user2_score:
             self.winner = self.user1
             result_user1, result_user2 = 1, 0
@@ -404,19 +405,24 @@ class Room(models.Model):
         # Update ELO ratings
         user1_profile = self.user1.profile
         user2_profile = self.user2.profile
-        user1_profile.update_elo(user2_profile.elo_rating, result_user1)
-        user2_profile.update_elo(user1_profile.elo_rating, result_user2)
+        user1_start = user1_profile.elo_rating
+        user2_start = user2_profile.elo_rating
+        user1_profile.update_elo(user2_start, result_user1)
+        user2_profile.update_elo(user1_start, result_user2)
 
         # Update problems solved
         user1_profile.problems_solved += self.questions.count()
         user2_profile.problems_solved += self.questions.count()
-        user1_profile.save()
-        user2_profile.save()
+        user1_profile.save(update_fields=['problems_solved'])
+        user2_profile.save(update_fields=['problems_solved'])
 
     def save(self, *args, **kwargs):
+        previous_status = None
+        if self.pk:
+            previous_status = Room.objects.filter(pk=self.pk).values_list('status', flat=True).first()
+
         super().save(*args, **kwargs)
-        if self.status == 'Ended' and not hasattr(self, '_battle_ended'):
-            self._battle_ended = True
+        if self.status == 'Ended' and previous_status != 'Ended':
             self.end_battle()
         if not self.questions.exists() and self.user1 and self.user2:
             self.questions.set(Question.get_random_questions(10))

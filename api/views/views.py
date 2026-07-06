@@ -190,16 +190,19 @@ def check_answer(request):
                 {'error': 'daily_limit', 'quota': quota},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
-        rated = apply_practice_elo(request.user, question, correct)
+        rating_update = apply_practice_elo(request.user, question, correct)
         PracticeAttempt.objects.create(user=request.user, question=question, correct=correct)
-        payload['rated'] = rated
+        payload['rated'] = rating_update['rated']
         payload['quota'] = quota_payload(request.user)
-        payload['sp_elo_rating'] = request.user.profile.sp_elo_rating
+        payload['sp_elo_rating'] = rating_update['new_rating']
+        payload['sp_elo_rating_previous'] = rating_update['previous_rating']
+        payload['sp_elo_rating_delta'] = rating_update['delta']
 
     # Aggregate statistics still update for any authenticated grading call.
     if request.user.is_authenticated:
         user = request.user
         user_stats, created = UserStatistics.objects.get_or_create(user=user)
+        profile = getattr(user, 'profile', None)
 
         if correct:
             user_stats.correct_number = F('correct_number') + 1
@@ -211,6 +214,18 @@ def check_answer(request):
             user_stats.current_streak = 0
 
         user_stats.save()
+        user_stats.refresh_from_db()
+
+        if profile and user_stats.current_streak > profile.max_streak:
+            profile.max_streak = user_stats.current_streak
+            profile.save(update_fields=['max_streak'])
+
+        payload['practice_stats'] = {
+            'correct_number': user_stats.correct_number,
+            'incorrect_number': user_stats.incorrect_number,
+            'current_streak': user_stats.current_streak,
+            'answered': user_stats.correct_number + user_stats.incorrect_number,
+        }
 
     return Response(payload)
 
@@ -318,4 +333,3 @@ def get_user_streak(request):
         return Response({"login_streak": login_streak})
     except UserStatistics.DoesNotExist:
         return Response({"error": "User statistics not found."}, status=404)
-

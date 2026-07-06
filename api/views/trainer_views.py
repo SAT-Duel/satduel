@@ -26,13 +26,10 @@ def get_infinite_question_stats(request):
 def set_infinite_question_stats(request):
     user = request.user
     data = request.data
-    print(data)
     try:
         correct = int(data.get('correct_number', 0))
         incorrect = int(data.get('incorrect', 0))
         current_streak = int(data.get('current_streak', 0))
-        xp = int(data.get('xp', 0))
-        level = int(data.get('level', 0))
         coins = int(data.get('coins', 0))
         # Don't get the multiplier from the data, calculate the total multiplier instead
     except ValueError:
@@ -45,8 +42,6 @@ def set_infinite_question_stats(request):
             'correct_number': correct,
             'incorrect_number': incorrect,
             'current_streak': current_streak,
-            'xp': xp,
-            'level': level,
             'coins': coins,
         }
     )

@@ -14,11 +14,11 @@ from rest_framework import status
 LEADERBOARD_METRICS = {
     'duel': {
         'field': 'elo_rating',
-        'ordering': ('-elo_rating', '-sp_elo_rating', '-problems_solved', 'user__username'),
+        'ordering': ('-elo_rating', '-sp_elo_rating', 'user__username'),
     },
     'practice': {
         'field': 'sp_elo_rating',
-        'ordering': ('-sp_elo_rating', '-problems_solved', '-elo_rating', 'user__username'),
+        'ordering': ('-sp_elo_rating', '-elo_rating', 'user__username'),
     },
     'streak': {
         'field': 'max_streak',
@@ -27,8 +27,12 @@ LEADERBOARD_METRICS = {
 }
 
 
-def _leaderboard_entry(profile, rank, metric):
+def _leaderboard_entry(profile, rank, metric, stats=None):
     field = LEADERBOARD_METRICS[metric]['field']
+    questions_answered = 0
+    if stats:
+        questions_answered = stats.correct_number + stats.incorrect_number
+
     return {
         'rank': rank,
         'metric': metric,
@@ -47,6 +51,7 @@ def _leaderboard_entry(profile, rank, metric):
         'sp_elo_rating': profile.sp_elo_rating,
         'max_streak': profile.max_streak,
         'problems_solved': profile.problems_solved,
+        'questions_answered': questions_answered,
         'is_premium': profile.has_premium,
     }
 
@@ -91,11 +96,15 @@ def leaderboard_view(request):
     limit = _leaderboard_limit(request.query_params.get('limit'))
     ordering = LEADERBOARD_METRICS[metric]['ordering']
     ranked_profiles = list(Profile.objects.select_related('user').order_by(*ordering))
+    stats_by_user_id = {
+        stats.user_id: stats
+        for stats in UserStatistics.objects.filter(user_id__in=[profile.user_id for profile in ranked_profiles])
+    }
 
     current_entry = None
     entries = []
     for rank, profile in enumerate(ranked_profiles, start=1):
-        entry = _leaderboard_entry(profile, rank, metric)
+        entry = _leaderboard_entry(profile, rank, metric, stats_by_user_id.get(profile.user_id))
         if rank <= limit:
             entries.append(entry)
         if profile.user_id == request.user.id:
