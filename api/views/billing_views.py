@@ -48,6 +48,30 @@ def _metadata_get(obj, key, default=None):
     return _get(metadata, key, default)
 
 
+def _is_resource_missing_error(exc):
+    message = str(exc).lower()
+    return (
+        getattr(exc, 'code', None) == 'resource_missing'
+        or 'no such customer' in message
+        or 'no such subscription' in message
+    )
+
+
+def _clear_billing_state(profile):
+    profile.stripe_customer_id = None
+    profile.stripe_subscription_id = None
+    profile.stripe_price_id = None
+    profile.is_premium = False
+    profile.premium_until = timezone.now()
+    profile.save(update_fields=[
+        'stripe_customer_id',
+        'stripe_subscription_id',
+        'stripe_price_id',
+        'is_premium',
+        'premium_until',
+    ])
+
+
 def _timestamp_to_datetime(timestamp):
     if not timestamp:
         return None
@@ -121,7 +145,14 @@ def _apply_subscription(profile, subscription):
 
 def _get_or_create_customer(profile):
     if profile.stripe_customer_id:
-        return profile.stripe_customer_id
+        try:
+            customer = stripe.Customer.retrieve(profile.stripe_customer_id)
+            if not _get(customer, 'deleted', False):
+                return profile.stripe_customer_id
+        except Exception as exc:
+            if not _is_resource_missing_error(exc):
+                raise
+        _clear_billing_state(profile)
 
     user = profile.user
     customer = stripe.Customer.create(
@@ -132,6 +163,23 @@ def _get_or_create_customer(profile):
     profile.stripe_customer_id = customer.id
     profile.save(update_fields=['stripe_customer_id'])
     return customer.id
+
+
+def _verified_portal_customer_id(profile):
+    if not profile.stripe_customer_id:
+        return None
+
+    try:
+        customer = stripe.Customer.retrieve(profile.stripe_customer_id)
+        if _get(customer, 'deleted', False):
+            _clear_billing_state(profile)
+            return None
+        return profile.stripe_customer_id
+    except Exception as exc:
+        if not _is_resource_missing_error(exc):
+            raise
+        _clear_billing_state(profile)
+        return None
 
 
 @api_view(['POST'])
@@ -191,16 +239,17 @@ def create_portal_session(request):
         )
 
     profile = request.user.profile
-    if not profile.stripe_customer_id:
+    _configure_stripe()
+    customer_id = _verified_portal_customer_id(profile)
+    if not customer_id:
         return Response(
             {'error': 'stripe_customer_missing', 'detail': 'Start checkout before opening the billing portal.'},
             status=status.HTTP_404_NOT_FOUND,
         )
 
-    _configure_stripe()
     try:
         session_params = {
-            'customer': profile.stripe_customer_id,
+            'customer': customer_id,
             'return_url': f"{settings.FRONTEND_URL.rstrip('/')}/settings",
         }
         if settings.STRIPE_PORTAL_CONFIGURATION_ID:

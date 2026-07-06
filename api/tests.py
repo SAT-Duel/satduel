@@ -464,6 +464,39 @@ class BillingViewsTests(APITestCase):
         self.assertEqual(kwargs['line_items'][0]['price'], 'price_mock')
         self.assertNotIn('payment_method_types', kwargs)
 
+    @override_settings(
+        STRIPE_SECRET_KEY='stripe_secret_mock',
+        STRIPE_PREMIUM_PRICE_ID='price_mock',
+        STRIPE_API_VERSION='2026-06-24.dahlia',
+        FRONTEND_URL='https://satduel.com',
+        STRIPE_AUTOMATIC_TAX=False,
+    )
+    @patch('api.views.billing_views.stripe.checkout.Session.create')
+    @patch('api.views.billing_views.stripe.Customer.create')
+    @patch('api.views.billing_views.stripe.Customer.retrieve')
+    def test_checkout_recovers_from_stale_stripe_customer(self, mock_customer_retrieve, mock_customer_create, mock_session_create):
+        missing_customer = Exception('No such customer: cus_test_old')
+        missing_customer.code = 'resource_missing'
+        mock_customer_retrieve.side_effect = missing_customer
+        mock_customer_create.return_value = SimpleNamespace(id='cus_live_new')
+        mock_session_create.return_value = SimpleNamespace(url='https://checkout.stripe.live/session')
+        self.profile.stripe_customer_id = 'cus_test_old'
+        self.profile.stripe_subscription_id = 'sub_test_old'
+        self.profile.stripe_price_id = 'price_test_old'
+        self.profile.is_premium = True
+        self.profile.save()
+
+        resp = self.client.post(reverse('billing_create_checkout_session'), {}, format='json')
+
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertEqual(self.profile.stripe_customer_id, 'cus_live_new')
+        self.assertIsNone(self.profile.stripe_subscription_id)
+        self.assertIsNone(self.profile.stripe_price_id)
+        self.assertFalse(self.profile.is_premium)
+        _, kwargs = mock_session_create.call_args
+        self.assertEqual(kwargs['customer'], 'cus_live_new')
+
     @override_settings(STRIPE_SECRET_KEY='', STRIPE_PREMIUM_PRICE_ID='')
     def test_checkout_requires_stripe_config(self):
         resp = self.client.post(reverse('billing_create_checkout_session'), {}, format='json')
