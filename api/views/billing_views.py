@@ -57,6 +57,14 @@ def _is_resource_missing_error(exc):
     )
 
 
+def _is_portal_configuration_missing_error(exc):
+    message = str(exc).lower()
+    return (
+        getattr(exc, 'code', None) == 'resource_missing'
+        and ('no such configuration' in message or 'billing portal configuration' in message)
+    )
+
+
 def _clear_billing_state(profile):
     profile.stripe_customer_id = None
     profile.stripe_subscription_id = None
@@ -182,6 +190,29 @@ def _verified_portal_customer_id(profile):
         return None
 
 
+def _create_portal_session(customer_id, return_url):
+    session_params = {
+        'customer': customer_id,
+        'return_url': return_url,
+    }
+
+    if settings.STRIPE_PORTAL_CONFIGURATION_ID:
+        try:
+            return stripe.billing_portal.Session.create(
+                **session_params,
+                configuration=settings.STRIPE_PORTAL_CONFIGURATION_ID,
+            )
+        except StripeError as exc:
+            if not _is_portal_configuration_missing_error(exc):
+                raise
+            logger.warning(
+                'Stripe portal configuration %s is missing; retrying with the account default.',
+                settings.STRIPE_PORTAL_CONFIGURATION_ID,
+            )
+
+    return stripe.billing_portal.Session.create(**session_params)
+
+
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -248,14 +279,10 @@ def create_portal_session(request):
         )
 
     try:
-        session_params = {
-            'customer': customer_id,
-            'return_url': f"{settings.FRONTEND_URL.rstrip('/')}/settings",
-        }
-        if settings.STRIPE_PORTAL_CONFIGURATION_ID:
-            session_params['configuration'] = settings.STRIPE_PORTAL_CONFIGURATION_ID
-
-        session = stripe.billing_portal.Session.create(**session_params)
+        session = _create_portal_session(
+            customer_id,
+            f"{settings.FRONTEND_URL.rstrip('/')}/settings",
+        )
     except StripeError as exc:
         logger.exception('Stripe portal session creation failed')
         return Response(
