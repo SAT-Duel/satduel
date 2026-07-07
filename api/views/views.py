@@ -160,6 +160,14 @@ def check_answer(request):
     payload = {'result': 'correct' if correct else 'incorrect', 'status': status.HTTP_200_OK}
 
     if is_practice:
+        profile = getattr(request.user, 'profile', None)
+        if profile and profile.active_practice_question_id and profile.active_practice_question_id != question.id:
+            return Response(
+                {'error': 'active_question_required',
+                 'detail': 'Answer your current practice question before moving on.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         quota = quota_payload(request.user)
         if quota['remaining'] is not None and quota['remaining'] <= 0:
             return Response(
@@ -177,6 +185,9 @@ def check_answer(request):
         # Daily-goal streak: answering DAILY_PRACTICE_GOAL questions in a local
         # day completes it and extends the flame.
         payload['daily'] = update_daily_streak(request.user)
+        if profile and profile.active_practice_question_id == question.id:
+            profile.active_practice_question = None
+            profile.save(update_fields=['active_practice_question'])
 
     # Aggregate statistics still update for any authenticated grading call.
     if request.user.is_authenticated:

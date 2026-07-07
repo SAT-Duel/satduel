@@ -350,6 +350,24 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(resp.data['quota']['limit'], 25)
         self.assertFalse(resp.data['quota']['is_premium'])
 
+    def test_next_question_reuses_active_until_answered(self):
+        first = self.client.get('/api/practice/next/')
+        second = self.client.get('/api/practice/next/')
+        self.assertEqual(first.data['question']['id'], second.data['question']['id'])
+
+        question = Question.objects.get(id=first.data['question']['id'])
+        resp = self._answer(question, 'b')
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertIsNone(self.profile.active_practice_question_id)
+
+    def test_practice_must_answer_active_question(self):
+        first = self.client.get('/api/practice/next/')
+        other = next(q for q in self.questions if q.id != first.data['question']['id'])
+        resp = self._answer(other, 'b')
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.data['error'], 'active_question_required')
+
     def test_topic_selection_requires_premium(self):
         resp = self.client.get('/api/practice/next/', {'type': 'Transitions'})
         self.assertEqual(resp.status_code, 403)
