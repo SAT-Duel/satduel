@@ -59,7 +59,7 @@ def generation_generate(request):
     except (TypeError, ValueError):
         return Response({'error': 'Invalid difficulty or count'}, status=status.HTTP_400_BAD_REQUEST)
 
-    prompt = generation.build_prompt(skill, difficulty, count, variant=data.get('variant') or None)
+    prompt = generation.build_prompt(skill, difficulty, count)
     payload = {'prompt': prompt, 'api_status': generation.api_status()}
 
     try:
