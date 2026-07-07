@@ -134,7 +134,7 @@ def check_answer(request):
     they no longer batter the practice rating.
     """
     from api.models import PracticeAttempt
-    from api.views.practice_views import apply_practice_elo, quota_payload
+    from api.views.practice_views import SUBJECTS, apply_practice_elo, quota_payload, subject_of
 
     data = request.data
     question_id = data.get('question_id')
@@ -161,7 +161,11 @@ def check_answer(request):
 
     if is_practice:
         profile = getattr(request.user, 'profile', None)
-        if profile and profile.active_practice_question_id and profile.active_practice_question_id != question.id:
+        # Only the same subject's lock gates this answer, so an English question
+        # in progress doesn't block answering a Math one (and vice versa).
+        active_field = SUBJECTS[subject_of(question)]['active_field']
+        active_id = getattr(profile, active_field + '_id') if profile else None
+        if active_id and active_id != question.id:
             return Response(
                 {'error': 'active_question_required',
                  'detail': 'Answer your current practice question before moving on.'},
@@ -185,9 +189,10 @@ def check_answer(request):
         # Daily-goal streak: answering DAILY_PRACTICE_GOAL questions in a local
         # day completes it and extends the flame.
         payload['daily'] = update_daily_streak(request.user)
-        if profile and profile.active_practice_question_id == question.id:
-            profile.active_practice_question = None
-            profile.save(update_fields=['active_practice_question'])
+        payload['subject'] = rating_update['subject']
+        if profile and getattr(profile, active_field + '_id') == question.id:
+            setattr(profile, active_field, None)
+            profile.save(update_fields=[active_field])
 
     # Aggregate statistics still update for any authenticated grading call.
     if request.user.is_authenticated:

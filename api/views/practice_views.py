@@ -29,6 +29,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from api import generation
 from api.models import PracticeAttempt, Profile, Question
 from api.views.serializers import QuestionSerializer
 
@@ -37,6 +38,34 @@ DEFAULT_QUESTION_TYPES = [
     'Rhetorical Synthesis', 'Transitions', 'Central Ideas and Details',
     'Command of Evidence', 'Inferences', 'Boundaries', 'Form, Structure, and Sense',
 ]
+
+# Math question_types are the official College Board skill names in the AI
+# generator's taxonomy — reused so the two never drift apart.
+MATH_QUESTION_TYPES = list(generation.SKILL_INDEX)
+
+# Everything subject-specific (which types, which Elo field, which locked
+# question) lives here so the endpoints stay subject-agnostic.
+SUBJECTS = {
+    'english': {
+        'types': DEFAULT_QUESTION_TYPES,
+        'elo_field': 'sp_elo_rating',
+        'active_field': 'active_practice_question',
+    },
+    'math': {
+        'types': MATH_QUESTION_TYPES,
+        'elo_field': 'math_elo_rating',
+        'active_field': 'active_math_question',
+    },
+}
+
+
+def resolve_subject(name):
+    return name if name in SUBJECTS else 'english'
+
+
+def subject_of(question):
+    """Which subject a question belongs to, from its question_type."""
+    return 'math' if question.question_type in MATH_QUESTION_TYPES else 'english'
 
 USER_K_PROVISIONAL = 32
 USER_K_STABLE = 16
@@ -84,35 +113,36 @@ def _clamp(rating):
 
 
 def apply_practice_elo(user, question, correct):
-    """First-attempt-only rating update between a user and a question."""
+    """First-attempt-only rating update between a user and a question. Moves the
+    Elo field for the question's subject (English or Math)."""
+    subject = subject_of(question)
+    elo_field = SUBJECTS[subject]['elo_field']
+    profile = Profile.objects.get(user=user)
+    previous_rating = getattr(profile, elo_field)
+
     already_attempted = PracticeAttempt.objects.filter(user=user, question=question).exists()
     if already_attempted:
-        profile = Profile.objects.get(user=user)
         return {
-            'rated': False,
-            'previous_rating': profile.sp_elo_rating,
-            'new_rating': profile.sp_elo_rating,
-            'delta': 0,
+            'rated': False, 'subject': subject,
+            'previous_rating': previous_rating, 'new_rating': previous_rating, 'delta': 0,
         }
 
-    profile = Profile.objects.get(user=user)
-    previous_rating = profile.sp_elo_rating
     total_attempts = PracticeAttempt.objects.filter(user=user).count()
     user_k = USER_K_PROVISIONAL if total_attempts < PROVISIONAL_ATTEMPTS else USER_K_STABLE
 
-    expected = _expected_score(profile.sp_elo_rating, question.sp_elo_rating)
+    expected = _expected_score(previous_rating, question.sp_elo_rating)
     result = 1.0 if correct else 0.0
 
-    profile.sp_elo_rating = _clamp(profile.sp_elo_rating + user_k * (result - expected))
-    profile.save(update_fields=['sp_elo_rating'])
+    new_rating = _clamp(previous_rating + user_k * (result - expected))
+    setattr(profile, elo_field, new_rating)
+    profile.save(update_fields=[elo_field])
 
     question.sp_elo_rating = _clamp(question.sp_elo_rating - QUESTION_K * (result - expected))
     question.save(update_fields=['sp_elo_rating'])
     return {
-        'rated': True,
-        'previous_rating': previous_rating,
-        'new_rating': profile.sp_elo_rating,
-        'delta': profile.sp_elo_rating - previous_rating,
+        'rated': True, 'subject': subject,
+        'previous_rating': previous_rating, 'new_rating': new_rating,
+        'delta': new_rating - previous_rating,
     }
 
 
@@ -120,16 +150,17 @@ def apply_practice_elo(user, question, correct):
 # Question selection
 # ---------------------------------------------------------------------------
 
-def pick_practice_question(user, question_type=None):
+def pick_practice_question(user, subject, question_type=None):
     """Pick a question near the user's rating, preferring ones never attempted."""
+    config = SUBJECTS[subject]
     profile = getattr(user, 'profile', None)
-    user_rating = profile.sp_elo_rating if profile else 1200
+    user_rating = getattr(profile, config['elo_field']) if profile else 1200
 
     base = Question.objects.all()
-    if question_type and question_type != 'any':
+    if question_type and question_type != 'any' and question_type in config['types']:
         base = base.filter(question_type=question_type)
     else:
-        base = base.filter(question_type__in=DEFAULT_QUESTION_TYPES)
+        base = base.filter(question_type__in=config['types'])
 
     attempted_ids = set(
         PracticeAttempt.objects.filter(user=user).values_list('question_id', flat=True)
@@ -164,6 +195,8 @@ def pick_practice_question(user, question_type=None):
 def next_question(request):
     """Serve the next adaptive practice question, enforcing tier rules."""
     question_type = request.GET.get('type')
+    subject = resolve_subject(request.GET.get('subject'))
+    active_field = SUBJECTS[subject]['active_field']
     quota = quota_payload(request.user)
     profile = getattr(request.user, 'profile', None)
 
@@ -181,23 +214,26 @@ def next_question(request):
             status=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
-    if profile and profile.active_practice_question_id:
+    # Each subject holds its own locked question, so switching subjects and back
+    # resumes where you left off.
+    active_question = getattr(profile, active_field) if profile else None
+    if active_question:
         return Response({
-            'question': QuestionSerializer(profile.active_practice_question).data,
-            'quota': quota,
+            'question': QuestionSerializer(active_question).data,
+            'quota': quota, 'subject': subject,
         })
 
-    question = pick_practice_question(request.user, question_type)
+    question = pick_practice_question(request.user, subject, question_type)
     if question is None:
         return Response({'error': 'No questions available.'}, status=status.HTTP_404_NOT_FOUND)
 
     if profile:
-        profile.active_practice_question = question
-        profile.save(update_fields=['active_practice_question'])
+        setattr(profile, active_field, question)
+        profile.save(update_fields=[active_field])
 
     return Response({
         'question': QuestionSerializer(question).data,
-        'quota': quota,
+        'quota': quota, 'subject': subject,
     })
 
 
@@ -210,7 +246,8 @@ def practice_status(request):
     return Response({
         'quota': quota_payload(request.user),
         'sp_elo_rating': profile.sp_elo_rating if profile else None,
-        'topics': DEFAULT_QUESTION_TYPES,
+        'math_elo_rating': profile.math_elo_rating if profile else None,
+        'topics': {'english': DEFAULT_QUESTION_TYPES, 'math': MATH_QUESTION_TYPES},
         'daily': daily_snapshot(request.user),
     })
 
