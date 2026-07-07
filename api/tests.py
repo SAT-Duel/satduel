@@ -515,6 +515,36 @@ class BillingViewsTests(APITestCase):
         _, kwargs = mock_session_create.call_args
         self.assertEqual(kwargs['customer'], 'cus_live_new')
 
+    @override_settings(
+        STRIPE_SECRET_KEY='stripe_secret_mock',
+        STRIPE_PORTAL_CONFIGURATION_ID='bpc_test_old',
+        STRIPE_API_VERSION='2026-06-24.dahlia',
+        FRONTEND_URL='https://satduel.com',
+    )
+    @patch('api.views.billing_views.StripeError', Exception)
+    @patch('api.views.billing_views.stripe.billing_portal.Session.create')
+    @patch('api.views.billing_views.stripe.Customer.retrieve')
+    def test_portal_retries_without_stale_configuration(self, mock_customer_retrieve, mock_session_create):
+        self.profile.stripe_customer_id = 'cus_live_mock'
+        self.profile.save(update_fields=['stripe_customer_id'])
+        mock_customer_retrieve.return_value = SimpleNamespace(id='cus_live_mock', deleted=False)
+        missing_configuration = Exception("No such configuration: 'bpc_test_old'")
+        missing_configuration.code = 'resource_missing'
+        mock_session_create.side_effect = [
+            missing_configuration,
+            SimpleNamespace(url='https://billing.stripe.test/session'),
+        ]
+
+        resp = self.client.post(reverse('billing_create_portal_session'), {}, format='json')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['url'], 'https://billing.stripe.test/session')
+        self.assertEqual(mock_session_create.call_count, 2)
+        first_call = mock_session_create.call_args_list[0].kwargs
+        second_call = mock_session_create.call_args_list[1].kwargs
+        self.assertEqual(first_call['configuration'], 'bpc_test_old')
+        self.assertNotIn('configuration', second_call)
+
     @override_settings(STRIPE_SECRET_KEY='', STRIPE_PREMIUM_PRICE_ID='')
     def test_checkout_requires_stripe_config(self):
         resp = self.client.post(reverse('billing_create_checkout_session'), {}, format='json')
