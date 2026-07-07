@@ -131,7 +131,8 @@ class Profile(models.Model):
     
     friends = models.ManyToManyField(User, related_name='friends', blank=True)
     elo_rating = models.IntegerField(default=1500)  # Starting ELO rating
-    sp_elo_rating = models.IntegerField(default=1200)
+    sp_elo_rating = models.IntegerField(default=1200)  # English practice Elo
+    math_elo_rating = models.IntegerField(default=1200)  # Math practice Elo
     problems_solved = models.IntegerField(default=0)
     country = models.CharField(max_length=2, default='US')
     avatar = models.CharField(max_length=32, choices=AVATAR_CHOICES, default='violet')
@@ -162,7 +163,16 @@ class Profile(models.Model):
     practice_streak = models.IntegerField(default=0)
     longest_practice_streak = models.IntegerField(default=0)
     last_practice_completed = models.DateField(null=True, blank=True)
+    # One locked-in-progress question per subject, so switching between English
+    # and Math keeps each subject's current question waiting.
     active_practice_question = models.ForeignKey(
+        'api.Question',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+    active_math_question = models.ForeignKey(
         'api.Question',
         null=True,
         blank=True,
