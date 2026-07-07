@@ -165,6 +165,7 @@ def next_question(request):
     """Serve the next adaptive practice question, enforcing tier rules."""
     question_type = request.GET.get('type')
     quota = quota_payload(request.user)
+    profile = getattr(request.user, 'profile', None)
 
     if question_type and question_type != 'any' and not quota['is_premium']:
         return Response(
@@ -180,9 +181,19 @@ def next_question(request):
             status=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
+    if profile and profile.active_practice_question_id:
+        return Response({
+            'question': QuestionSerializer(profile.active_practice_question).data,
+            'quota': quota,
+        })
+
     question = pick_practice_question(request.user, question_type)
     if question is None:
         return Response({'error': 'No questions available.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if profile:
+        profile.active_practice_question = question
+        profile.save(update_fields=['active_practice_question'])
 
     return Response({
         'question': QuestionSerializer(question).data,

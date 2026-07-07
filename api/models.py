@@ -162,6 +162,13 @@ class Profile(models.Model):
     practice_streak = models.IntegerField(default=0)
     longest_practice_streak = models.IntegerField(default=0)
     last_practice_completed = models.DateField(null=True, blank=True)
+    active_practice_question = models.ForeignKey(
+        'api.Question',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
 
     @property
     def has_premium(self):
@@ -602,5 +609,4 @@ class PracticeAttempt(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - Q{self.question_id} - {'✓' if self.correct else '✗'}"
-
 
