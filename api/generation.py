@@ -13,6 +13,7 @@ Rendering contract with the frontend (RenderWithMath.jsx):
 
 import json
 import os
+import random
 import re
 
 # ---------------------------------------------------------------------------
@@ -758,6 +759,27 @@ def call_llm(prompt):
         return resp.json()["choices"][0]["message"]["content"]
 
     return None
+
+
+CHOICE_FIELDS = ("choice_a", "choice_b", "choice_c", "choice_d")
+ANSWER_LETTERS = "ABCD"
+
+
+def shuffle_question_choices(question, rng=None):
+    """Return a copy with choices shuffled once and answer relabeled."""
+    rng = rng or random
+    answer = str(question["answer"]).upper()
+    answer_field = CHOICE_FIELDS[ANSWER_LETTERS.index(answer)]
+    choices = [(field, question[field]) for field in CHOICE_FIELDS]
+    rng.shuffle(choices)
+
+    shuffled = dict(question)
+    for field, (_, value) in zip(CHOICE_FIELDS, choices):
+        shuffled[field] = value
+    shuffled["answer"] = ANSWER_LETTERS[
+        next(i for i, (old_field, _) in enumerate(choices) if old_field == answer_field)
+    ]
+    return shuffled
 
 
 def parse_questions(raw):

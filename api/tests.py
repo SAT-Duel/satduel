@@ -3,13 +3,40 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from django.contrib.auth.models import User
-from django.test import override_settings
+from django.test import SimpleTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
+from api import generation
 from api.models import Profile, Question, Ranking, Room
+
+
+class GenerationChoiceShuffleTests(SimpleTestCase):
+    def test_shuffle_relabels_answer_without_losing_choices(self):
+        class ReverseRng:
+            @staticmethod
+            def shuffle(items):
+                items.reverse()
+
+        question = {
+            'question': 'Q?',
+            'choice_a': 'A text',
+            'choice_b': 'B text',
+            'choice_c': 'C text',
+            'choice_d': 'D text',
+            'answer': 'C',
+        }
+
+        shuffled = generation.shuffle_question_choices(question, rng=ReverseRng())
+
+        self.assertEqual(
+            [shuffled['choice_a'], shuffled['choice_b'], shuffled['choice_c'], shuffled['choice_d']],
+            ['D text', 'C text', 'B text', 'A text'],
+        )
+        self.assertEqual(shuffled['answer'], 'B')
+        self.assertEqual(question['answer'], 'C')
 
 
 class PasswordLoginTests(APITestCase):
