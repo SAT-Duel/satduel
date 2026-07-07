@@ -14,6 +14,35 @@ from django.utils import timezone
 from ..models import Question, UserStatistics
 from rest_framework import status
 
+ENGLISH_QUESTION_TYPES = [
+    'Cross-Text Connections', 'Text Structure and Purpose', 'Words in Context',
+    'Rhetorical Synthesis', 'Transitions', 'Central Ideas and Details',
+    'Command of Evidence', 'Inferences', 'Boundaries', 'Form, Structure, and Sense'
+]
+
+MATH_QUESTION_TYPES = [
+    'Linear equations in one variable',
+    'Linear functions',
+    'Linear equations in two variables',
+    'Systems of two linear equations in two variables',
+    'Linear inequalities in one or two variables',
+    'Equivalent expressions',
+    'Nonlinear equations in one variable and systems of equations in two variables',
+    'Nonlinear functions',
+    'Ratios, rates, proportional relationships, and units',
+    'Percentages',
+    'One-variable data: distributions and measures of center and spread',
+    'Two-variable data: models and scatterplots',
+    'Probability and conditional probability',
+    'Inference from sample statistics and margin of error',
+    'Evaluating statistical claims: observational studies and experiments',
+    'Area and volume',
+    'Lines, angles, and triangles',
+    'Right triangles and trigonometry',
+    'Circles',
+]
+
+
 @api_view(['GET'])
 def get_random_questions(request):
     try:
@@ -28,18 +57,14 @@ def get_random_questions(request):
 
 @api_view(['GET'])
 def list_questions(request):
+    subject = request.GET.get('subject', 'english').lower()
     question_type = request.GET.get('type', 'any')
     difficulty = request.GET.get('difficulty', 'any')
     page = int(request.GET.get('page', 1))
     page_size = int(request.GET.get('page_size', 15))
     random_flag = request.GET.get('random', 'false').lower() == 'true'
 
-    # Default question types if 'any' is selected
-    default_question_types = [
-        'Cross-Text Connections', 'Text Structure and Purpose', 'Words in Context',
-        'Rhetorical Synthesis', 'Transitions', 'Central Ideas and Details',
-        'Command of Evidence', 'Inferences', 'Boundaries', 'Form, Structure, and Sense'
-    ]
+    default_question_types = MATH_QUESTION_TYPES if subject == 'math' else ENGLISH_QUESTION_TYPES
 
     # Filter questions based on type and difficulty
     if question_type != 'any':

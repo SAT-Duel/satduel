@@ -58,6 +58,23 @@ class PasswordLoginTests(APITestCase):
         self.assertEqual(resp.status_code, 401)
 
 
+class QuestionFilterSubjectTests(APITestCase):
+    def test_any_type_can_filter_math_subject(self):
+        Question.objects.create(
+            question='English?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='A', difficulty=1, question_type='Words in Context',
+        )
+        math = Question.objects.create(
+            question='Math?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='A', difficulty=1, question_type='Linear functions',
+        )
+
+        resp = self.client.get(reverse('list_questions'), {'subject': 'math', 'type': 'any'})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([question['id'] for question in resp.data['questions']], [math.id])
+
+
 def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):
     return {
         'email': email,
