@@ -20,6 +20,10 @@ LEADERBOARD_METRICS = {
         'field': 'sp_elo_rating',
         'ordering': ('-sp_elo_rating', '-elo_rating', 'user__username'),
     },
+    'practice_math': {
+        'field': 'math_elo_rating',
+        'ordering': ('-math_elo_rating', '-elo_rating', 'user__username'),
+    },
     'streak': {
         'field': 'max_streak',
         'ordering': ('-max_streak', '-sp_elo_rating', '-elo_rating', 'user__username'),
@@ -49,6 +53,7 @@ def _leaderboard_entry(profile, rank, metric, stats=None):
         'avatar_icon': profile.avatar_icon,
         'elo_rating': profile.elo_rating,
         'sp_elo_rating': profile.sp_elo_rating,
+        'math_elo_rating': profile.math_elo_rating,
         'max_streak': profile.max_streak,
         'problems_solved': profile.problems_solved,
         'questions_answered': questions_answered,
