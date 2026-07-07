@@ -93,7 +93,6 @@ def generation_import(request):
     created = []
     for q in drafts:
         try:
-            q = generation.shuffle_question_choices(q)
             question = Question.objects.create(
                 question=q['question'],
                 choice_a=q['choice_a'],

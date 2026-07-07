@@ -3,40 +3,13 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from django.contrib.auth.models import User
-from django.test import SimpleTestCase, override_settings
+from django.test import override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
-from api import generation
 from api.models import Profile, Question, Ranking, Room
-
-
-class GenerationChoiceShuffleTests(SimpleTestCase):
-    def test_shuffle_relabels_answer_without_losing_choices(self):
-        class ReverseRng:
-            @staticmethod
-            def shuffle(items):
-                items.reverse()
-
-        question = {
-            'question': 'Q?',
-            'choice_a': 'A text',
-            'choice_b': 'B text',
-            'choice_c': 'C text',
-            'choice_d': 'D text',
-            'answer': 'C',
-        }
-
-        shuffled = generation.shuffle_question_choices(question, rng=ReverseRng())
-
-        self.assertEqual(
-            [shuffled['choice_a'], shuffled['choice_b'], shuffled['choice_c'], shuffled['choice_d']],
-            ['D text', 'C text', 'B text', 'A text'],
-        )
-        self.assertEqual(shuffled['answer'], 'B')
-        self.assertEqual(question['answer'], 'C')
 
 
 class PasswordLoginTests(APITestCase):
@@ -83,6 +56,23 @@ class PasswordLoginTests(APITestCase):
             'username': 'alice', 'password': 'wrong',
         }, format='json')
         self.assertEqual(resp.status_code, 401)
+
+
+class QuestionFilterSubjectTests(APITestCase):
+    def test_any_type_can_filter_math_subject(self):
+        Question.objects.create(
+            question='English?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='A', difficulty=1, question_type='Words in Context',
+        )
+        math = Question.objects.create(
+            question='Math?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='A', difficulty=1, question_type='Linear functions',
+        )
+
+        resp = self.client.get(reverse('list_questions'), {'subject': 'math', 'type': 'any'})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([question['id'] for question in resp.data['questions']], [math.id])
 
 
 def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):
