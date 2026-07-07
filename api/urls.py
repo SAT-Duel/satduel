@@ -4,7 +4,7 @@ from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, inventory_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
-from api.views import onlineuser_views, auth_views, practice_views, billing_views
+from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -113,6 +113,11 @@ urlpatterns = [
     path('billing/create_checkout_session/', billing_views.create_checkout_session, name='billing_create_checkout_session'),
     path('billing/create_portal_session/', billing_views.create_portal_session, name='billing_create_portal_session'),
     path('billing/webhook/', billing_views.stripe_webhook, name='stripe_webhook'),
+
+    # Admin: AI question generation
+    path('admin/generation/taxonomy/', generation_views.generation_taxonomy, name='generation_taxonomy'),
+    path('admin/generation/generate/', generation_views.generation_generate, name='generation_generate'),
+    path('admin/generation/import/', generation_views.generation_import, name='generation_import'),
 
     path('user_streak/', views.get_user_streak, name='user-streak'),
 ]

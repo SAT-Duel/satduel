@@ -28,3 +28,6 @@ cryptography==45.0.5
 
 # Google id_token verification for social login
 google-auth==2.40.3
+
+# AI question generation (admin tool; used only when ANTHROPIC_API_KEY is set)
+anthropic==0.116.0
