@@ -20,22 +20,53 @@ import re
 # ---------------------------------------------------------------------------
 
 DIFFICULTY_RUBRIC = """\
-Difficulty scale (this platform uses 1-5; College Board uses Easy/Medium/Hard):
-- 1 (Easy-): one-step problem, small integer coefficients and answers, direct
-  application of a single definition or operation, minimal reading.
-- 2 (Easy+): one or two steps, still friendly numbers, may require translating
-  one short sentence into an equation.
-- 3 (Medium): two or three steps, or one step wrapped in a realistic context;
-  may involve fractions/decimals, a parameter, or reading a value off a
-  table/figure before computing.
-- 4 (Hard-): multi-step reasoning, an unknown constant to solve for, a
-  structural insight (e.g. recognizing a useful factoring or substitution),
-  or combining two skills; distractors are near-misses.
-- 5 (Hard+): the hardest ~10% of real SAT questions. Requires an insight most
-  students miss: clever manipulation, discriminant/vertex reasoning, working
-  with expressions rather than solved values, or an unusual representation.
-  Still solvable in under ~3 minutes by a strong student without a calculator
-  trick — never require tedious arithmetic grinding or out-of-scope theory.
+DIFFICULTY SCALE (1-5). CRITICAL: this platform hosts ONLY hard SAT math. The
+whole scale is shifted UP — there are no easy warm-up items here. Even a
+difficulty-1 question should make a well-prepared student stop and think; the
+real SAT is trending harder every year, and this bank targets that upper end.
+
+These absolute anchors are authoritative. They OVERRIDE any numeric "difficulty
+knob" hints inside the per-skill notes below — those legacy notes used an
+easy-to-hard scale, so read them only for WHICH techniques a skill can draw on,
+never for how hard to pitch the item.
+
+- 1  Hard end of the standard SAT (a College Board "Hard"): genuine multi-step
+    reasoning or one non-obvious idea. Never a one-liner or a plug-and-chug.
+- 2  Among the hardest standard SAT items (~top 10% of the real test): needs a
+    real insight most students miss — a clever manipulation, reasoning about
+    expressions instead of solved values, or a non-obvious setup — plus clean
+    execution.
+- 3  At or just past the ceiling of what the real SAT asks: two ideas combined,
+    layered reasoning, or a slightly unusual representation. A strong student
+    must form a genuine plan before writing anything down.
+- 4  BEYOND the SAT — early-contest level (about AMC 10/12). Innovative, not a
+    known template. Solving hinges on spotting a non-standard idea: a
+    substitution, a symmetry, an invariant, a clever reframing. A prepared
+    student needs 30-60 seconds of thought just to SEE THE PATH before any
+    computation. There must be no textbook formula that maps straight to the
+    answer.
+- 5  The "prevent a perfect score" tier: mid-AMC to low-AIME level thinking,
+    adapted to stay inside SAT topic boundaries. Deeply non-trivial and
+    creative — the one-in-a-test stunner only the most experienced, best-prepared
+    students crack. Demands a real insight or a multi-idea chain. Hard because of
+    the IDEA required, never because of tedious arithmetic.
+
+RULES FOR DIFFICULTY 4 AND 5 (read carefully — most AI questions fail here):
+- Innovate. Do NOT take a standard SAT template and enlarge the numbers. Invent a
+  fresh setup that rewards insight over recall. Use real creativity and
+  imagination.
+- The solver must NOT be able to read the stem and immediately know the formula
+  to apply. If a well-drilled student can answer on autopilot, it is TOO EASY —
+  redesign it from a different angle.
+- Still fully solvable by hand in a few minutes, with no calculator trick, no
+  out-of-scope theorem, and no heavy computation. The difficulty lives in the
+  hidden idea, not in long algebra.
+- Stay inside the stated skill's topic area: an AMC-flavored problem that still
+  clearly belongs to this SAT skill (e.g. still recognizably "Circles" or
+  "Nonlinear functions"), an advanced version of it — not an unrelated olympiad
+  problem.
+- Difficulty 5 in particular should be the hardest thing on the platform. Aim
+  high; assume the audience is elite.
 """
 
 # ---------------------------------------------------------------------------
@@ -43,46 +74,79 @@ Difficulty scale (this platform uses 1-5; College Board uses Easy/Medium/Hard):
 # ---------------------------------------------------------------------------
 
 FORMAT_RULES = """\
-FORMATTING RULES (strict — the platform renders these exactly):
-- All math notation MUST be KaTeX inside dollar signs: inline $3x + 5 = 11$,
-  display $$y = 2x^2 - 4$$. Never write bare ASCII math like 3x+5=11 or x^2.
-- Fractions: $\\frac{2}{3}$. Exponents: $x^{2}$. Roots: $\\sqrt{3}$,
-  $\\sqrt[3]{x}$. Inequalities: $\\le$, $\\ge$, $\\ne$. Degrees: $40^\\circ$.
-  Pi: $\\pi$. Do not use unicode math symbols (×, ÷, ², √, π, ≤).
-- Tables MUST be KaTeX arrays in display math, e.g.
+FORMATTING RULES (STRICT — the website renders every field with a KaTeX + light
+markup renderer. Malformed formatting shows up broken to students, so follow
+these EXACTLY, in the question stem, all four choices, and the explanation.)
+
+MATH — always KaTeX inside dollar delimiters:
+- Inline math goes between single dollars: $3x + 5 = 11$. Display/centered math
+  goes between double dollars on its own line: $$y = 2x^2 - 4$$.
+- NEVER write bare ASCII or Unicode math. Not 3x+5=11, not x^2, not x², not
+  1/2, not sqrt(3), not <=, not pi, not ×/÷/√/π/≤/≥/≠/∞/°/±. Every one of these
+  must be KaTeX: $x^{2}$, $\\frac{1}{2}$, $\\sqrt{3}$, $\\le$, $\\pi$, $\\times$,
+  $\\div$, $\\ge$, $\\ne$, $\\infty$, $40^\\circ$, $\\pm$, $|x|$.
+- Fractions $\\frac{a}{b}$, exponents $x^{2}$ (always brace the exponent),
+  roots $\\sqrt{3}$ and $\\sqrt[3]{x}$, subscripts $x_{1}$.
+- Balance every delimiter: each $ has a closing $, each $$ a closing $$. An
+  unmatched dollar sign breaks the entire line. Do a final pass to check pairs.
+
+DOLLAR-SIGN / CURRENCY PITFALL (this breaks often — handle it deliberately):
+- A literal money "$" will be misread as a math delimiter and corrupt the text.
+- So write money as words — "48 dollars", "a price of 48 dollars" — OR as KaTeX
+  with an escaped dollar: $\\$48$ renders the characters "$48". NEVER type a raw
+  $48 in prose.
+
+MARKUP — the renderer only understands these; do NOT use Markdown:
+- Line break: use the two characters \\n (in the JSON string). Put each display
+  equation, each table, and each [svg] block on its own line with a \\n before
+  and after it.
+- Bold: $\\textbf{...}$ is NOT needed — use \\textbf{word} directly in text.
+  Italic: \\textit{word}. Underline: \\underline{word}. (Use these sparingly.)
+- Do NOT use Markdown syntax: no #, ##, no **bold**, no `backticks`, no Markdown
+  tables, no "- " or "1. " list markers. They render literally as ugly text.
+
+TABLES — a KaTeX array in display math (never a Markdown table):
   $$\\begin{array}{|c|c|} \\hline x & f(x) \\\\ \\hline 0 & 3 \\\\ \\hline 1 & 5 \\\\ \\hline \\end{array}$$
-- Figures (geometry diagrams, graphs, scatterplots, number lines) MUST be a
-  single self-contained SVG wrapped in [svg]...[/svg] on its own line inside
-  the question text. SVG requirements:
+
+FIGURES (geometry diagrams, graphs, scatterplots, number lines) — a single
+self-contained inline SVG wrapped in [svg]...[/svg], on its own line in the stem:
   * viewBox="0 0 340 H" with H <= 300; no width/height attributes.
-  * Stroke color #334155, light fills like #cbd5e1 or none; label text in
+  * Stroke color #334155; light fills like #cbd5e1 or none; label text with
     font-size="13" font-family="sans-serif" fill="#334155". Points as small
     filled circles r="3".
-  * Label everything a student needs (axis numbers, side lengths, angle marks,
-    point names). Keep it minimal and uncluttered like a real SAT figure.
-  * If the figure is deliberately not to scale, add the standard note
-    "Note: Figure not drawn to scale." as plain text after the [svg] block.
-  * NO <script>, <image>, <foreignObject>, <a>, event handlers, or external
-    references — plain shapes, paths, and text only.
-- Answer choices are plain text/KaTeX only — never put [svg] blocks in choices.
+  * Label everything the solver needs (axis numbers, side lengths, angle marks,
+    point names). Minimal and uncluttered, like a real SAT figure.
+  * If not to scale, add plain text "Note: Figure not drawn to scale." after it.
+  * NO <script>, <image>, <foreignObject>, <a>, event handlers, or external refs
+    — plain shapes, paths, and text only.
+  * NEVER put an [svg] block, a table, or a $$display$$ block inside an answer
+    choice; choices are short inline text/KaTeX only.
 
-STYLE RULES (match real digital SAT voice):
-- Neutral, precise, compact wording. Most stems are 1-3 sentences. Word
-  problems stay under ~80 words. No filler, no humor, no named brands.
-  Context names are diverse and realistic (e.g., Priya, Marcus, Yuki, a
-  biologist, a carpenter).
-- Standard SAT stem phrasings: "What is the value of x?", "Which of the
-  following is equivalent to ...?", "Which equation represents ...?",
-  "What is the solution set ...?", "... in terms of ...".
-- Exactly 4 answer choices. Exactly one is correct. Wrong choices must be
-  plausible DISTRACTORS derived from specific, predictable student errors
-  (sign slip, swapped slope/intercept, forgot to distribute, used radius for
-  diameter, answered for x when asked for 2x+1, etc.) — never random numbers.
-- Vary the correct letter across the set; keep choices in ascending numeric
-  order (or a natural logical order) when they are numbers.
-- The explanation must (1) show the efficient solution path step by step with
-  KaTeX, and (2) end with one short line per wrong choice naming the mistake
-  that produces it, formatted like "Choice B results from ...".
+STYLE (valid SAT-math voice, but creative — see the TASK section):
+- Precise, clear wording. Stems are typically 1-4 sentences; word problems stay
+  under ~90 words. No filler, no jokes, no real brand names. Use varied, realistic
+  names/contexts (Priya, Marcus, Yuki, a biologist, a machinist, ...).
+- Exactly 4 answer choices, exactly one correct. Wrong choices are PLAUSIBLE
+  distractors from specific predictable errors (sign slip, swapped
+  slope/intercept, forgot to distribute, radius-for-diameter, solved for x when
+  asked for 2x+1, ...) — never random filler numbers, and never two choices that
+  are secretly equal.
+- When choices are numeric, order them ascending (or in a natural logical order).
+
+ANSWER-KEY BALANCE (IMPORTANT — do not default to one letter):
+- Spread the correct answers across A, B, C, and D. Across a batch aim for a
+  roughly even split; do NOT let any letter dominate and do NOT habitually put
+  the answer at C (or B). For each single question the correct choice should be
+  equally likely to sit in any of the four slots — choose its position at random.
+- Before finalizing, scan your batch's answer key. If one letter appears much
+  more than the others, REORDER the choices of some questions to rebalance it.
+
+EXPLANATION:
+- Show the efficient solution path step by step in KaTeX (use \\n between steps,
+  and $$...$$ for a key line). For difficulty 4-5, first name the KEY INSIGHT
+  that unlocks the problem, then the steps.
+- End with one short line per wrong choice naming the mistake that produces it,
+  e.g. "Choice B results from ...".
 
 OUTPUT CONTRACT (strict):
 Return ONLY a JSON array — no markdown fences, no commentary. Each element:
@@ -99,11 +163,11 @@ parsed value is \\frac) and must not contain raw newlines — use \\n.
 """
 
 BASE_PROMPT = """\
-You are an expert SAT question writer for College Board's digital SAT Math
-section. You have written hundreds of operational items and know the exact
-style, difficulty calibration, notation, and distractor design of the official
-question bank. Generate original questions that are indistinguishable from
-real released items — but never copy a real item.
+You are an expert SAT Math item writer AND a competition-math problem composer
+(AMC/AIME background). You know the digital SAT's tested skills, notation, and
+distractor design cold, and you can also invent original, insight-driven
+problems that go well beyond routine test-prep. Write ORIGINAL questions — never
+copy a released item, and never just fill a familiar template with new numbers.
 
 {format_rules}
 
@@ -115,12 +179,22 @@ SKILL (use verbatim as "question_type"): {skill}
 ============================================================
 {spec}
 {variant_clause}
-TASK: Write {count} original multiple-choice question(s) for this skill at
-difficulty {difficulty} (per the rubric above). Each question must be
-independent and self-contained. Diversify contexts, numbers, and sub-variants
-across the set so no two questions feel alike. Double-check every answer by
-solving your own question before finalizing, and verify that no distractor
-accidentally also equals the correct value.
+TASK: Write {count} original, CREATIVE multiple-choice question(s) for the skill
+above, all at difficulty {difficulty} (use the absolute anchors in the DIFFICULTY
+SCALE — do not drift easier). Requirements:
+- Be genuinely creative and varied. Elaborate on the topic; invent fresh setups,
+  contexts, representations, and stem phrasings. MIX across the skill's
+  sub-topics (see the list above) so no two questions feel alike — even within a
+  single difficulty level, and even at difficulty 3. Do not grind the same
+  template. Do not imitate the exact phrasing of released SAT items.
+- Every item must still be a valid, self-contained, single-correct-answer
+  question that genuinely belongs to this skill's topic area.
+- Honor the difficulty anchor strictly. For 4-5, lead with a hidden insight and
+  make sure no textbook formula maps straight to the answer.
+Before finalizing: (1) solve each question yourself and confirm the keyed answer
+is correct AND unique; (2) confirm no distractor equals the correct value;
+(3) balance the answer key across A/B/C/D per ANSWER-KEY BALANCE, reordering
+choices where needed.
 """
 
 # ---------------------------------------------------------------------------
@@ -689,20 +763,18 @@ SKILL_INDEX = {
 }
 
 
-def build_prompt(skill_name, difficulty, count, variant=None):
-    """Assemble the full generation prompt for one skill/difficulty batch."""
+def build_prompt(skill_name, difficulty, count):
+    """Assemble the full generation prompt for one skill/difficulty batch.
+
+    Always mixed: the batch draws from all of the skill's sub-topics for variety
+    (there is no single-sub-variant mode)."""
     domain, skill = SKILL_INDEX[skill_name]
-    if variant:
-        variant_clause = (
-            "REQUIRED SUB-VARIANT: every question in this batch must be of this "
-            "sub-type: %s\n" % variant
-        )
-    else:
-        variants = "\n".join("- %s" % v for v in skill.get("variants", []))
-        variant_clause = (
-            "SUB-VARIANTS (rotate through these across the batch so the set is "
-            "diverse):\n%s\n" % variants if variants else ""
-        )
+    variants = "\n".join("- %s" % v for v in skill.get("variants", []))
+    variant_clause = (
+        "SUB-TOPICS to mix across this batch for variety (rotate freely; do not "
+        "stick to one, and feel free to invent fresh angles beyond this list):\n"
+        "%s\n" % variants if variants else ""
+    )
     return BASE_PROMPT.format(
         format_rules=FORMAT_RULES,
         difficulty_rubric=DIFFICULTY_RUBRIC,
