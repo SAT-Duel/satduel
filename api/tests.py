@@ -689,6 +689,41 @@ class TournamentHistoryTests(APITestCase):
         self.assertLess(len(ctx), 10)
 
 
+class TournamentCreateTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='host', email='host@example.com')
+        Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+
+    def test_user_created_private_tournament_is_saved_to_profile(self):
+        now = timezone.now()
+        resp = self.client.post('/api/tournaments/create/', {
+            'name': 'Study group round',
+            'description': 'Private practice',
+            'start_time': now.isoformat(),
+            'end_time': (now + timedelta(days=1)).isoformat(),
+            'duration': '00:15:00',
+            'private': True,
+            'questions': [{
+                'question': 'Q?',
+                'choice_a': 'a',
+                'choice_b': 'b',
+                'choice_c': 'c',
+                'choice_d': 'd',
+                'answer': 'A',
+                'difficulty': 1,
+                'question_type': 'Words in Context',
+                'explanation': 'Because.',
+            }],
+        }, format='json')
+
+        self.assertEqual(resp.status_code, 201)
+        self.assertTrue(resp.data['private'])
+        self.assertTrue(resp.data['join_code'])
+        self.assertEqual(resp.data['duration'], '00:15:00')
+        self.assertEqual(self.user.profile.my_tournaments.count(), 1)
+
+
 class QuestionAnswerLeakTests(APITestCase):
     def setUp(self):
         from api.models import Question

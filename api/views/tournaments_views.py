@@ -1,6 +1,6 @@
 import random
+from datetime import timedelta
 from django.contrib.auth.models import User
-from django.http import JsonResponse
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -11,7 +11,7 @@ import string
 
 from api.models import Tournament, TournamentParticipation, Question, TournamentQuestion, Profile
 from api.views.serializers import TournamentSerializer, TournamentParticipationSerializer, TournamentQuestionSerializer, \
-    ProfileSerializer, TPSubmitAnswerSerializer
+    TPSubmitAnswerSerializer
 
 
 @api_view(['GET', 'POST'])
@@ -164,6 +164,14 @@ def generate_unique_join_code():
         if not Tournament.objects.filter(join_code=join_code).exists():
             return join_code
 
+
+def parse_duration(value):
+    if isinstance(value, str) and ':' in value:
+        hours, minutes, seconds = [int(part) for part in value.split(':')]
+        return timedelta(hours=hours, minutes=minutes, seconds=seconds)
+    return timedelta(minutes=int(value or 30))
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def create_tournament(request):
@@ -177,6 +185,7 @@ def create_tournament(request):
         description=data['description'],
         start_time=data['start_time'],
         end_time=data['end_time'],
+        duration=parse_duration(data.get('duration')),
         private=data['private'],
         join_code=join_code,
     )
@@ -195,8 +204,7 @@ def create_tournament(request):
         )
         tournament.questions.add(question)
     tournament.save()
-    user = User.objects.get(id=request.user.id)
-    user.my_tournaments.add(tournament)
+    request.user.profile.my_tournaments.add(tournament)
     serializer = TournamentSerializer(tournament)
     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -215,7 +223,7 @@ def create_tournament_admin(request):
         start_time=data['start_time'],
         end_time=data['end_time'],
         private=data.get('private', False),
-        duration=data.get('duration', 30),
+        duration=parse_duration(data.get('duration')),
         join_code=join_code,
     )
 
@@ -225,7 +233,8 @@ def create_tournament_admin(request):
     tournament.save()
     profile = Profile.objects.get(user=request.user)
     profile.my_tournaments.add(tournament)
-    return JsonResponse({'join_code': tournament.join_code}, status=201)
+    serializer = TournamentSerializer(tournament)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
