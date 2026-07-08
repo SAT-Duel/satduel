@@ -149,7 +149,10 @@ EXPLANATION:
   e.g. "Choice B results from ...".
 
 OUTPUT CONTRACT (strict):
-Return ONLY a JSON array — no markdown fences, no commentary. Each element:
+Return ONLY a single copyable Markdown code block labeled json, with no text
+before or after it. The JSON array goes inside that block; do not output plain
+JSON outside a code block. This outer code block is the only Markdown allowed —
+inside JSON strings, follow the no-Markdown renderer rules above. Each element:
 {
   "question": "stem text with $KaTeX$ and optional [svg]...[/svg] / $$array$$ blocks",
   "choice_a": "...", "choice_b": "...", "choice_c": "...", "choice_d": "...",
