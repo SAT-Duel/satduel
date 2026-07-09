@@ -18,6 +18,7 @@ check_answer call from any surface):
 import random
 
 from django.conf import settings
+from django.db.models import Count, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (
@@ -66,6 +67,35 @@ def resolve_subject(name):
 def subject_of(question):
     """Which subject a question belongs to, from its question_type."""
     return 'math' if question.question_type in MATH_QUESTION_TYPES else 'english'
+
+
+def subject_filter(subject):
+    if subject == 'math':
+        return Q(question__question_type__in=MATH_QUESTION_TYPES)
+    return ~Q(question__question_type__in=MATH_QUESTION_TYPES)
+
+
+def practice_attempt_breakdown(user):
+    """Practice-only counts, split by SAT subject."""
+    stats = PracticeAttempt.objects.filter(user=user).aggregate(
+        math_answered=Count('id', filter=subject_filter('math')),
+        math_correct=Count('id', filter=subject_filter('math') & Q(correct=True)),
+        english_answered=Count('id', filter=subject_filter('english')),
+        english_correct=Count('id', filter=subject_filter('english') & Q(correct=True)),
+    )
+    stats['practice_answered'] = stats['math_answered'] + stats['english_answered']
+    stats['practice_correct'] = stats['math_correct'] + stats['english_correct']
+    stats['current_streak'] = practice_current_streak(user)
+    return stats
+
+
+def practice_current_streak(user):
+    streak = 0
+    for correct in PracticeAttempt.objects.filter(user=user).order_by('-created_at').values_list('correct', flat=True):
+        if not correct:
+            break
+        streak += 1
+    return streak
 
 USER_K_PROVISIONAL = 32
 USER_K_STABLE = 16
@@ -127,7 +157,7 @@ def apply_practice_elo(user, question, correct):
             'previous_rating': previous_rating, 'new_rating': previous_rating, 'delta': 0,
         }
 
-    total_attempts = PracticeAttempt.objects.filter(user=user).count()
+    total_attempts = PracticeAttempt.objects.filter(user=user).filter(subject_filter(subject)).count()
     user_k = USER_K_PROVISIONAL if total_attempts < PROVISIONAL_ATTEMPTS else USER_K_STABLE
 
     expected = _expected_score(previous_rating, question.sp_elo_rating)
@@ -247,6 +277,7 @@ def practice_status(request):
         'quota': quota_payload(request.user),
         'sp_elo_rating': profile.sp_elo_rating if profile else None,
         'math_elo_rating': profile.math_elo_rating if profile else None,
+        'stats': practice_attempt_breakdown(request.user),
         'topics': {'english': DEFAULT_QUESTION_TYPES, 'math': MATH_QUESTION_TYPES},
         'daily': daily_snapshot(request.user),
     })
