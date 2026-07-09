@@ -610,6 +610,12 @@ class PracticeAttempt(models.Model):
     """
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_attempts')
     question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='practice_attempts')
+    subject = models.CharField(
+        max_length=10,
+        choices=[('english', 'English'), ('math', 'Math')],
+        default='english',
+        db_index=True,
+    )
     correct = models.BooleanField()
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -617,6 +623,7 @@ class PracticeAttempt(models.Model):
         indexes = [
             models.Index(fields=['user', 'created_at']),   # daily quota lookups
             models.Index(fields=['user', 'question']),      # first-attempt checks
+            models.Index(fields=['user', 'subject']),       # profile + leaderboard splits
         ]
 
     def __str__(self):
