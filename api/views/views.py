@@ -207,7 +207,12 @@ def check_answer(request):
             )
         from api.views.practice_views import update_daily_streak
         rating_update = apply_practice_elo(request.user, question, correct)
-        PracticeAttempt.objects.create(user=request.user, question=question, correct=correct)
+        PracticeAttempt.objects.create(
+            user=request.user,
+            question=question,
+            correct=correct,
+            subject=rating_update['subject'],
+        )
         payload['rated'] = rating_update['rated']
         payload['quota'] = quota_payload(request.user)
         payload['sp_elo_rating'] = rating_update['new_rating']

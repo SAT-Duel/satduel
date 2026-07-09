@@ -260,6 +260,29 @@ class LeaderboardViewTests(APITestCase):
         self.assertEqual(resp.data['entries'][0]['user']['username'], 'ember')
         self.assertEqual(resp.data['entries'][0]['metric_value'], 1740)
 
+    def test_leaderboard_counts_stored_subject_attempts_for_every_user(self):
+        from api.models import PracticeAttempt
+        from api.views.practice_views import MATH_QUESTION_TYPES
+        english = Question.objects.create(
+            question='English?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type='Transitions',
+        )
+        math = Question.objects.create(
+            question='Math?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type=MATH_QUESTION_TYPES[0],
+        )
+        PracticeAttempt.objects.create(user=self.users[0], question=english, subject='english', correct=True)
+        PracticeAttempt.objects.create(user=self.users[0], question=math, subject='math', correct=False)
+        PracticeAttempt.objects.create(user=self.users[1], question=math, subject='math', correct=True)
+
+        resp = self.client.get(reverse('leaderboard'), {'metric': 'practice'})
+
+        by_name = {entry['user']['username']: entry for entry in resp.data['entries']}
+        self.assertEqual(by_name['nova']['english_answered'], 1)
+        self.assertEqual(by_name['nova']['math_answered'], 1)
+        self.assertEqual(by_name['nova']['questions_answered'], 2)
+        self.assertEqual(by_name['ember']['math_answered'], 1)
+
     def test_streak_leaderboard_orders_by_max_streak(self):
         resp = self.client.get(reverse('leaderboard'), {'metric': 'streak'})
         self.assertEqual(resp.status_code, 200)
@@ -471,6 +494,31 @@ class PracticeTierTests(APITestCase):
         self.profile.refresh_from_db()
         self.assertEqual(self.profile.sp_elo_rating, english_before)
         self.assertGreater(self.profile.math_elo_rating, math_before)
+
+    def test_other_user_profile_returns_subject_attempt_counts(self):
+        from api.models import PracticeAttempt
+        from api.views.practice_views import MATH_QUESTION_TYPES
+        other = User.objects.create_user(username='other-practicer', email='other@e.com')
+        Profile.objects.create(user=other)
+        math_question = Question.objects.create(
+            question='Solve y + 2 = 5.',
+            choice_a='1',
+            choice_b='2',
+            choice_c='3',
+            choice_d='4',
+            answer='C',
+            difficulty=3,
+            question_type=MATH_QUESTION_TYPES[0],
+        )
+        PracticeAttempt.objects.create(user=other, question=self.questions[0], subject='english', correct=True)
+        PracticeAttempt.objects.create(user=other, question=math_question, subject='math', correct=False)
+
+        resp = self.client.get(f'/api/profile/view_profile/{other.id}/')
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['statistics']['english_answered'], 1)
+        self.assertEqual(resp.data['statistics']['math_answered'], 1)
+        self.assertEqual(resp.data['statistics']['practice_answered'], 2)
 
     def test_repeat_attempt_does_not_move_elo(self):
         self._answer(self.questions[0], 'b')

@@ -70,9 +70,7 @@ def subject_of(question):
 
 
 def subject_filter(subject):
-    if subject == 'math':
-        return Q(question__question_type__in=MATH_QUESTION_TYPES)
-    return ~Q(question__question_type__in=MATH_QUESTION_TYPES)
+    return Q(subject=resolve_subject(subject))
 
 
 def practice_attempt_breakdown(user):
@@ -91,7 +89,7 @@ def practice_attempt_breakdown(user):
 
 def practice_current_streak(user):
     streak = 0
-    for correct in PracticeAttempt.objects.filter(user=user).order_by('-created_at').values_list('correct', flat=True):
+    for correct in PracticeAttempt.objects.filter(user=user).order_by('-created_at', '-id').values_list('correct', flat=True):
         if not correct:
             break
         streak += 1
