@@ -159,7 +159,9 @@ def check_answer(request):
     they no longer batter the practice rating.
     """
     from api.models import PracticeAttempt
-    from api.views.practice_views import SUBJECTS, apply_practice_elo, quota_payload, subject_of
+    from api.views.practice_views import (
+        SUBJECTS, apply_practice_elo, practice_attempt_breakdown, quota_payload, subject_of,
+    )
 
     data = request.data
     question_id = data.get('question_id')
@@ -239,11 +241,13 @@ def check_answer(request):
             profile.max_streak = user_stats.current_streak
             profile.save(update_fields=['max_streak'])
 
+        practice_stats = practice_attempt_breakdown(user)
         payload['practice_stats'] = {
-            'correct_number': user_stats.correct_number,
-            'incorrect_number': user_stats.incorrect_number,
-            'current_streak': user_stats.current_streak,
-            'answered': user_stats.correct_number + user_stats.incorrect_number,
+            'correct_number': practice_stats['practice_correct'],
+            'incorrect_number': practice_stats['practice_answered'] - practice_stats['practice_correct'],
+            'current_streak': practice_stats['current_streak'],
+            'answered': practice_stats['practice_answered'],
+            **practice_stats,
         }
 
     return Response(payload)

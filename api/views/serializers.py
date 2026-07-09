@@ -40,7 +40,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Profile
         fields = ['id', 'user', 'biography', 'grade', 'country', 'avatar', 'avatar_icon', 'elo_rating', 'sp_elo_rating',
-                  'math_elo_rating', 'is_premium', 'max_streak', 'problems_solved']
+                  'math_elo_rating', 'is_premium', 'max_streak']
 
     def get_is_premium(self, obj):
         return obj.has_premium
@@ -198,5 +198,4 @@ class TPSubmitAnswerSerializer(serializers.ModelSerializer):
         # Retrieve and order the questions by ID
         questions = obj.tournamentquestion_set.all().order_by('id')
         return TournamentQuestionSerializer(questions, many=True).data
-
 

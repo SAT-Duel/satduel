@@ -1,7 +1,8 @@
 from venv import logger
 from django.contrib.auth.models import User
+from django.db.models import Count
 from rest_framework.response import Response
-from api.models import Profile, FriendRequest
+from api.models import Profile, FriendRequest, PracticeAttempt
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -10,6 +11,7 @@ from api.views.serializers import ProfileSerializer, \
     InfiniteQuestionsSerializer
 from ..models import UserStatistics
 from rest_framework import status
+from api.views.practice_views import practice_attempt_breakdown, subject_filter
 
 LEADERBOARD_METRICS = {
     'duel': {
@@ -31,11 +33,22 @@ LEADERBOARD_METRICS = {
 }
 
 
-def _leaderboard_entry(profile, rank, metric, stats=None):
+def _practice_statistics_payload(user, statistics=None):
+    data = dict(InfiniteQuestionsSerializer(statistics).data) if statistics else {
+        'correct_number': 0,
+        'incorrect_number': 0,
+        'current_streak': 0,
+    }
+    breakdown = practice_attempt_breakdown(user)
+    data.update(breakdown)
+    data['correct_number'] = breakdown['practice_correct']
+    data['incorrect_number'] = breakdown['practice_answered'] - breakdown['practice_correct']
+    return data
+
+
+def _leaderboard_entry(profile, rank, metric, counts=None):
     field = LEADERBOARD_METRICS[metric]['field']
-    questions_answered = 0
-    if stats:
-        questions_answered = stats.correct_number + stats.incorrect_number
+    counts = counts or {}
 
     return {
         'rank': rank,
@@ -55,8 +68,9 @@ def _leaderboard_entry(profile, rank, metric, stats=None):
         'sp_elo_rating': profile.sp_elo_rating,
         'math_elo_rating': profile.math_elo_rating,
         'max_streak': profile.max_streak,
-        'problems_solved': profile.problems_solved,
-        'questions_answered': questions_answered,
+        'questions_answered': counts.get('practice_answered', 0),
+        'english_answered': counts.get('english_answered', 0),
+        'math_answered': counts.get('math_answered', 0),
         'is_premium': profile.has_premium,
     }
 
@@ -101,15 +115,24 @@ def leaderboard_view(request):
     limit = _leaderboard_limit(request.query_params.get('limit'))
     ordering = LEADERBOARD_METRICS[metric]['ordering']
     ranked_profiles = list(Profile.objects.select_related('user').order_by(*ordering))
-    stats_by_user_id = {
-        stats.user_id: stats
-        for stats in UserStatistics.objects.filter(user_id__in=[profile.user_id for profile in ranked_profiles])
+    count_rows = PracticeAttempt.objects.filter(
+        user_id__in=[profile.user_id for profile in ranked_profiles],
+    ).values('user_id').annotate(
+        math_answered=Count('id', filter=subject_filter('math')),
+        english_answered=Count('id', filter=subject_filter('english')),
+    )
+    counts_by_user_id = {
+        row['user_id']: {
+            **row,
+            'practice_answered': row['math_answered'] + row['english_answered'],
+        }
+        for row in count_rows
     }
 
     current_entry = None
     entries = []
     for rank, profile in enumerate(ranked_profiles, start=1):
-        entry = _leaderboard_entry(profile, rank, metric, stats_by_user_id.get(profile.user_id))
+        entry = _leaderboard_entry(profile, rank, metric, counts_by_user_id.get(profile.user_id))
         if rank <= limit:
             entries.append(entry)
         if profile.user_id == request.user.id:
@@ -270,7 +293,7 @@ def view_profile(request, user_id):
         # Aggregate all data
         data = {
             'profile': ProfileSerializer(profile).data,
-            'statistics': InfiniteQuestionsSerializer(statistics).data if statistics else None,
+            'statistics': _practice_statistics_payload(user, statistics),
         }
 
         return Response(data)
@@ -295,8 +318,7 @@ def infinite_questions_profile_view(request):
     alcumus_profile, created = UserStatistics.objects.get_or_create(user=user)
 
     if request.method == 'GET':
-        serializer = InfiniteQuestionsSerializer(alcumus_profile)
-        return Response(serializer.data)
+        return Response(_practice_statistics_payload(user, alcumus_profile))
     elif request.method == 'POST':
         serializer = InfiniteQuestionsSerializer(alcumus_profile, data=request.data)
         if serializer.is_valid():

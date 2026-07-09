@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.models import UserStatistics, PowerSprintStatistics, SurvivalStatistics
+from api.views.practice_views import practice_attempt_breakdown
 from api.views.serializers import InfiniteQuestionsSerializer, PowerSprintStatisticsSerializer, \
     SurvivalStatisticsSerializer
 
@@ -15,7 +16,11 @@ def get_infinite_question_stats(request):
     stats, created = UserStatistics.objects.get_or_create(user=user)
 
     # Use the total multiplier, which includes both the default and pet multipliers
-    stats_data = InfiniteQuestionsSerializer(stats).data
+    stats_data = dict(InfiniteQuestionsSerializer(stats).data)
+    breakdown = practice_attempt_breakdown(user)
+    stats_data.update(breakdown)
+    stats_data['correct_number'] = breakdown['practice_correct']
+    stats_data['incorrect_number'] = breakdown['practice_answered'] - breakdown['practice_correct']
     stats_data['multiplier'] = stats.total_multiplier()  # Set the total multiplier
 
     return Response(stats_data)

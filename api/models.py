@@ -252,6 +252,8 @@ class Profile(models.Model):
         # Initialize sp_elo_rating if it's missing or zero
         if self.sp_elo_rating == 0:
             self.sp_elo_rating = 1200  # Default starting SP Elo
+        if self.math_elo_rating == 0:
+            self.math_elo_rating = 1200
 
         super().save(*args, **kwargs)
 
@@ -619,4 +621,3 @@ class PracticeAttempt(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - Q{self.question_id} - {'✓' if self.correct else '✗'}"
-
