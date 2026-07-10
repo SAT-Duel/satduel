@@ -1,5 +1,6 @@
 from random import sample
 from django.core.paginator import Paginator
+from django.utils import timezone
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
@@ -202,20 +203,29 @@ def check_answer(request):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
         from api.views.practice_views import practice_current_streak, update_daily_streak
-        rating_update = apply_practice_elo(request.user, question, correct)
-        record_practice_answer(request.user, question, correct, subject)
+        # Serve-to-answer time, from the clock next_question started. Answers
+        # without a running clock (e.g. legacy locks) just record no time.
+        time_taken = None
+        if subject_stats.active_question_id == question.id and subject_stats.active_question_served_at:
+            time_taken = (timezone.now() - subject_stats.active_question_served_at).total_seconds()
+
+        rating_update = apply_practice_elo(request.user, question, correct, time_taken=time_taken)
+        record_practice_answer(request.user, question, correct, subject, time_taken=time_taken)
         payload['rated'] = rating_update['rated']
         payload['quota'] = quota_payload(request.user)
         payload['sp_elo_rating'] = rating_update['new_rating']
         payload['sp_elo_rating_previous'] = rating_update['previous_rating']
         payload['sp_elo_rating_delta'] = rating_update['delta']
+        payload['speed_bonus'] = rating_update['speed_bonus']
+        payload['time_taken'] = round(time_taken) if time_taken is not None else None
         # Daily-goal streak: answering DAILY_PRACTICE_GOAL questions in a local
         # day completes it and extends the flame.
         payload['daily'] = update_daily_streak(request.user)
         payload['subject'] = subject
         if subject_stats.active_question_id == question.id:
             subject_stats.active_question = None
-            subject_stats.save(update_fields=['active_question'])
+            subject_stats.active_question_served_at = None
+            subject_stats.save(update_fields=['active_question', 'active_question_served_at'])
 
         # Best correct-answer run, shown on the streak leaderboard.
         profile = getattr(request.user, 'profile', None)
