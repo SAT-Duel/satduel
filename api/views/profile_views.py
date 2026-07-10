@@ -1,54 +1,66 @@
 from venv import logger
 from django.contrib.auth.models import User
-from django.db.models import Count
+from django.db.models import IntegerField, OuterRef, Subquery
+from django.db.models.functions import Coalesce
 from rest_framework.response import Response
-from api.models import Profile, FriendRequest, PracticeAttempt
+from api.models import Profile, FriendRequest, PracticeStats
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import ProfileSerializer, \
-    ProfileBiographySerializer, UserSerializer, FriendRequestSerializer, \
-    InfiniteQuestionsSerializer
-from ..models import UserStatistics
+    ProfileBiographySerializer, UserSerializer, FriendRequestSerializer
 from rest_framework import status
-from api.views.practice_views import practice_attempt_breakdown, subject_filter
+from api.views.practice_views import practice_stats_breakdown
 
 LEADERBOARD_METRICS = {
     'duel': {
         'field': 'elo_rating',
-        'ordering': ('-elo_rating', '-sp_elo_rating', 'user__username'),
+        'ordering': ('-elo_rating', '-english_elo', 'user__username'),
     },
     'practice': {
-        'field': 'sp_elo_rating',
-        'ordering': ('-sp_elo_rating', '-elo_rating', 'user__username'),
+        'field': 'english_elo',
+        'ordering': ('-english_elo', '-elo_rating', 'user__username'),
     },
     'practice_math': {
-        'field': 'math_elo_rating',
-        'ordering': ('-math_elo_rating', '-elo_rating', 'user__username'),
+        'field': 'math_elo',
+        'ordering': ('-math_elo', '-elo_rating', 'user__username'),
     },
     'streak': {
         'field': 'max_streak',
-        'ordering': ('-max_streak', '-sp_elo_rating', '-elo_rating', 'user__username'),
+        'ordering': ('-max_streak', '-english_elo', '-elo_rating', 'user__username'),
     },
 }
 
 
-def _practice_statistics_payload(user, statistics=None):
-    data = dict(InfiniteQuestionsSerializer(statistics).data) if statistics else {
-        'correct_number': 0,
-        'incorrect_number': 0,
-        'current_streak': 0,
-    }
-    breakdown = practice_attempt_breakdown(user)
-    data.update(breakdown)
-    data['correct_number'] = breakdown['practice_correct']
-    data['incorrect_number'] = breakdown['practice_answered'] - breakdown['practice_correct']
-    return data
+def _stats_subquery(field, subject, default):
+    return Coalesce(
+        Subquery(
+            PracticeStats.objects.filter(user=OuterRef('user_id'), subject=subject).values(field)[:1],
+            output_field=IntegerField(),
+        ),
+        default,
+    )
 
 
-def _leaderboard_entry(profile, rank, metric, counts=None):
+def _annotated_profiles():
+    """Profiles with per-subject practice stats attached for ranking/display."""
+    return Profile.objects.select_related('user').annotate(
+        english_elo=_stats_subquery('elo', 'english', 1200),
+        math_elo=_stats_subquery('elo', 'math', 1200),
+        english_answered_count=_stats_subquery('answered', 'english', 0),
+        math_answered_count=_stats_subquery('answered', 'math', 0),
+    )
+
+
+def _practice_statistics_payload(user):
+    breakdown = practice_stats_breakdown(user)
+    breakdown['correct_number'] = breakdown['practice_correct']
+    breakdown['incorrect_number'] = breakdown['practice_answered'] - breakdown['practice_correct']
+    return breakdown
+
+
+def _leaderboard_entry(profile, rank, metric):
     field = LEADERBOARD_METRICS[metric]['field']
-    counts = counts or {}
 
     return {
         'rank': rank,
@@ -65,12 +77,12 @@ def _leaderboard_entry(profile, rank, metric, counts=None):
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
         'elo_rating': profile.elo_rating,
-        'sp_elo_rating': profile.sp_elo_rating,
-        'math_elo_rating': profile.math_elo_rating,
+        'sp_elo_rating': profile.english_elo,
+        'math_elo_rating': profile.math_elo,
         'max_streak': profile.max_streak,
-        'questions_answered': counts.get('practice_answered', 0),
-        'english_answered': counts.get('english_answered', 0),
-        'math_answered': counts.get('math_answered', 0),
+        'questions_answered': profile.english_answered_count + profile.math_answered_count,
+        'english_answered': profile.english_answered_count,
+        'math_answered': profile.math_answered_count,
         'is_premium': profile.has_premium,
     }
 
@@ -114,25 +126,12 @@ def leaderboard_view(request):
 
     limit = _leaderboard_limit(request.query_params.get('limit'))
     ordering = LEADERBOARD_METRICS[metric]['ordering']
-    ranked_profiles = list(Profile.objects.select_related('user').order_by(*ordering))
-    count_rows = PracticeAttempt.objects.filter(
-        user_id__in=[profile.user_id for profile in ranked_profiles],
-    ).values('user_id').annotate(
-        math_answered=Count('id', filter=subject_filter('math')),
-        english_answered=Count('id', filter=subject_filter('english')),
-    )
-    counts_by_user_id = {
-        row['user_id']: {
-            **row,
-            'practice_answered': row['math_answered'] + row['english_answered'],
-        }
-        for row in count_rows
-    }
+    ranked_profiles = list(_annotated_profiles().order_by(*ordering))
 
     current_entry = None
     entries = []
     for rank, profile in enumerate(ranked_profiles, start=1):
-        entry = _leaderboard_entry(profile, rank, metric, counts_by_user_id.get(profile.user_id))
+        entry = _leaderboard_entry(profile, rank, metric)
         if rank <= limit:
             entries.append(entry)
         if profile.user_id == request.user.id:
@@ -288,12 +287,9 @@ def view_profile(request, user_id):
         user = User.objects.get(id=user_id)
         profile = Profile.objects.get(user=user)
 
-        statistics = UserStatistics.objects.filter(user=user).first()
-
-        # Aggregate all data
         data = {
             'profile': ProfileSerializer(profile).data,
-            'statistics': _practice_statistics_payload(user, statistics),
+            'statistics': _practice_statistics_payload(user),
         }
 
         return Response(data)
@@ -310,21 +306,11 @@ def view_profile(request, user_id):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-@api_view(['GET', 'POST'])
+@api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def infinite_questions_profile_view(request):
-    user = request.user
-    alcumus_profile, created = UserStatistics.objects.get_or_create(user=user)
-
-    if request.method == 'GET':
-        return Response(_practice_statistics_payload(user, alcumus_profile))
-    elif request.method == 'POST':
-        serializer = InfiniteQuestionsSerializer(alcumus_profile, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=200)
-        return Response(serializer.errors, status=400)
+    return Response(_practice_statistics_payload(request.user))
 
 
 @api_view(['POST'])

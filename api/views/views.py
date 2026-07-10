@@ -3,15 +3,12 @@ from django.core.paginator import Paginator
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
-from api.models import Profile
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import QuestionSerializer, QuestionAdminSerializer
 from django.db import models
-from django.db.models import F
-from django.utils import timezone
-from ..models import Question, UserStatistics
+from ..models import Question
 from rest_framework import status
 
 ENGLISH_QUESTION_TYPES = [
@@ -158,9 +155,9 @@ def check_answer(request):
     the question. Other calls (practice tests, diagnostic, review) just grade —
     they no longer batter the practice rating.
     """
-    from api.models import PracticeAttempt
     from api.views.practice_views import (
-        SUBJECTS, apply_practice_elo, practice_attempt_breakdown, quota_payload, subject_of,
+        apply_practice_elo, get_practice_stats, practice_stats_breakdown,
+        quota_payload, record_practice_answer, subject_of,
     )
 
     data = request.data
@@ -187,12 +184,11 @@ def check_answer(request):
     payload = {'result': 'correct' if correct else 'incorrect', 'status': status.HTTP_200_OK}
 
     if is_practice:
-        profile = getattr(request.user, 'profile', None)
+        subject = subject_of(question)
         # Only the same subject's lock gates this answer, so an English question
         # in progress doesn't block answering a Math one (and vice versa).
-        active_field = SUBJECTS[subject_of(question)]['active_field']
-        active_id = getattr(profile, active_field + '_id') if profile else None
-        if active_id and active_id != question.id:
+        subject_stats = get_practice_stats(request.user, subject)
+        if subject_stats.active_question_id and subject_stats.active_question_id != question.id:
             return Response(
                 {'error': 'active_question_required',
                  'detail': 'Answer your current practice question before moving on.'},
@@ -205,14 +201,9 @@ def check_answer(request):
                 {'error': 'daily_limit', 'quota': quota},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
-        from api.views.practice_views import update_daily_streak
+        from api.views.practice_views import practice_current_streak, update_daily_streak
         rating_update = apply_practice_elo(request.user, question, correct)
-        PracticeAttempt.objects.create(
-            user=request.user,
-            question=question,
-            correct=correct,
-            subject=rating_update['subject'],
-        )
+        record_practice_answer(request.user, question, correct, subject)
         payload['rated'] = rating_update['rated']
         payload['quota'] = quota_payload(request.user)
         payload['sp_elo_rating'] = rating_update['new_rating']
@@ -221,38 +212,26 @@ def check_answer(request):
         # Daily-goal streak: answering DAILY_PRACTICE_GOAL questions in a local
         # day completes it and extends the flame.
         payload['daily'] = update_daily_streak(request.user)
-        payload['subject'] = rating_update['subject']
-        if profile and getattr(profile, active_field + '_id') == question.id:
-            setattr(profile, active_field, None)
-            profile.save(update_fields=[active_field])
+        payload['subject'] = subject
+        if subject_stats.active_question_id == question.id:
+            subject_stats.active_question = None
+            subject_stats.save(update_fields=['active_question'])
 
-    # Aggregate statistics still update for any authenticated grading call.
+        # Best correct-answer run, shown on the streak leaderboard.
+        profile = getattr(request.user, 'profile', None)
+        if correct and profile:
+            streak = practice_current_streak(request.user)
+            if streak > profile.max_streak:
+                profile.max_streak = streak
+                profile.save(update_fields=['max_streak'])
+
     if request.user.is_authenticated:
-        user = request.user
-        user_stats, created = UserStatistics.objects.get_or_create(user=user)
-        profile = getattr(user, 'profile', None)
-
-        if correct:
-            user_stats.correct_number = F('correct_number') + 1
-            user_stats.current_streak = F('current_streak') + 1
-        else:
-            user_stats.incorrect_number = F('incorrect_number') + 1
-            user_stats.current_streak = 0
-
-        user_stats.save()
-        user_stats.refresh_from_db()
-
-        if profile and user_stats.current_streak > profile.max_streak:
-            profile.max_streak = user_stats.current_streak
-            profile.save(update_fields=['max_streak'])
-
-        practice_stats = practice_attempt_breakdown(user)
+        stats = practice_stats_breakdown(request.user)
         payload['practice_stats'] = {
-            'correct_number': practice_stats['practice_correct'],
-            'incorrect_number': practice_stats['practice_answered'] - practice_stats['practice_correct'],
-            'current_streak': practice_stats['current_streak'],
-            'answered': practice_stats['practice_answered'],
-            **practice_stats,
+            'correct_number': stats['practice_correct'],
+            'incorrect_number': stats['practice_answered'] - stats['practice_correct'],
+            'answered': stats['practice_answered'],
+            **stats,
         }
 
     return Response(payload)

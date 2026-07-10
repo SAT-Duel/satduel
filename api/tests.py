@@ -218,23 +218,19 @@ class RankingUpdateTests(APITestCase):
 
 class LeaderboardViewTests(APITestCase):
     def setUp(self):
+        from api.models import PracticeStats
         self.users = []
         rows = [
-            ('nova', 1700, 1310, 1200, 8, 24),
-            ('ember', 1540, 1480, 1740, 15, 42),
-            ('cipher', 1810, 1220, 1330, 3, 12),
-            ('mira', 1360, 1660, 1410, 6, 31),
+            ('nova', 1700, 1310, 1200, 8),
+            ('ember', 1540, 1480, 1740, 15),
+            ('cipher', 1810, 1220, 1330, 3),
+            ('mira', 1360, 1660, 1410, 6),
         ]
-        for username, duel_elo, practice_elo, math_elo, streak, solved in rows:
+        for username, duel_elo, practice_elo, math_elo, streak in rows:
             user = User.objects.create_user(username=username, email=f'{username}@e.com')
-            Profile.objects.create(
-                user=user,
-                elo_rating=duel_elo,
-                sp_elo_rating=practice_elo,
-                math_elo_rating=math_elo,
-                max_streak=streak,
-                problems_solved=solved,
-            )
+            Profile.objects.create(user=user, elo_rating=duel_elo, max_streak=streak)
+            PracticeStats.objects.create(user=user, subject='english', elo=practice_elo)
+            PracticeStats.objects.create(user=user, subject='math', elo=math_elo)
             self.users.append(user)
         self.client.force_authenticate(user=self.users[1])
 
@@ -261,19 +257,10 @@ class LeaderboardViewTests(APITestCase):
         self.assertEqual(resp.data['entries'][0]['metric_value'], 1740)
 
     def test_leaderboard_counts_stored_subject_attempts_for_every_user(self):
-        from api.models import PracticeAttempt
-        from api.views.practice_views import MATH_QUESTION_TYPES
-        english = Question.objects.create(
-            question='English?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
-            answer='B', difficulty=3, question_type='Transitions',
-        )
-        math = Question.objects.create(
-            question='Math?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
-            answer='B', difficulty=3, question_type=MATH_QUESTION_TYPES[0],
-        )
-        PracticeAttempt.objects.create(user=self.users[0], question=english, subject='english', correct=True)
-        PracticeAttempt.objects.create(user=self.users[0], question=math, subject='math', correct=False)
-        PracticeAttempt.objects.create(user=self.users[1], question=math, subject='math', correct=True)
+        from api.models import PracticeStats
+        PracticeStats.objects.filter(user=self.users[0], subject='english').update(answered=1, correct=1)
+        PracticeStats.objects.filter(user=self.users[0], subject='math').update(answered=1, correct=0)
+        PracticeStats.objects.filter(user=self.users[1], subject='math').update(answered=1, correct=1)
 
         resp = self.client.get(reverse('leaderboard'), {'metric': 'practice'})
 
@@ -323,14 +310,14 @@ class DuelEloTests(APITestCase):
         room.save()
         profile1.refresh_from_db()
         profile2.refresh_from_db()
-        first_profile1 = (profile1.elo_rating, profile1.problems_solved)
-        first_profile2 = (profile2.elo_rating, profile2.problems_solved)
+        first_elo1 = profile1.elo_rating
+        first_elo2 = profile2.elo_rating
 
         room.save()
         profile1.refresh_from_db()
         profile2.refresh_from_db()
-        self.assertEqual((profile1.elo_rating, profile1.problems_solved), first_profile1)
-        self.assertEqual((profile2.elo_rating, profile2.problems_solved), first_profile2)
+        self.assertEqual(profile1.elo_rating, first_elo1)
+        self.assertEqual(profile2.elo_rating, first_elo2)
 
 
 class CleanupUnverifiedUsersTests(APITestCase):
@@ -390,6 +377,12 @@ class PracticeTierTests(APITestCase):
             'question_id': q.id, 'selected_choice': choice, 'mode': mode,
         }, format='json')
 
+    def _stats(self, subject='english', user=None):
+        from api.views.practice_views import get_practice_stats
+        stats = get_practice_stats(user or self.user, subject)
+        stats.refresh_from_db()
+        return stats
+
     def test_next_question_returns_question_and_quota(self):
         resp = self.client.get('/api/practice/next/')
         self.assertEqual(resp.status_code, 200)
@@ -405,8 +398,7 @@ class PracticeTierTests(APITestCase):
         question = Question.objects.get(id=first.data['question']['id'])
         resp = self._answer(question, 'b')
         self.assertEqual(resp.status_code, 200)
-        self.profile.refresh_from_db()
-        self.assertIsNone(self.profile.active_practice_question_id)
+        self.assertIsNone(self._stats('english').active_question_id)
 
     def test_practice_must_answer_active_question(self):
         first = self.client.get('/api/practice/next/')
@@ -451,7 +443,7 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(answer_resp.data['error'], 'daily_limit')
 
     def test_practice_answer_records_attempt_and_updates_elo(self):
-        before = self.profile.sp_elo_rating
+        before = self._stats('english').elo
         resp = self._answer(self.questions[0], 'b')  # correct
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.data['rated'])
@@ -461,15 +453,17 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(resp.data['quota']['used'], 1)
         self.assertEqual(resp.data['practice_stats']['answered'], 1)
         self.assertEqual(resp.data['practice_stats']['english_answered'], 1)
+        self.assertEqual(resp.data['practice_stats']['english_correct'], 1)
+        self.assertEqual(resp.data['practice_stats']['english_accuracy'], 100)
         self.assertEqual(resp.data['practice_stats']['math_answered'], 0)
-        self.profile.refresh_from_db()
-        self.assertGreater(self.profile.sp_elo_rating, before)
+        stats = self._stats('english')
+        self.assertGreater(stats.elo, before)
+        self.assertEqual((stats.answered, stats.correct), (1, 1))
 
     def test_math_practice_starts_fresh_from_its_own_elo_and_counts(self):
-        from api.models import PracticeAttempt
         from api.views.practice_views import MATH_QUESTION_TYPES
-        for q in self.questions:
-            PracticeAttempt.objects.create(user=self.user, question=q, correct=True)
+        for q in self.questions:  # 5 English answers through the real path
+            self._answer(q, 'b')
         math_question = Question.objects.create(
             question='Solve x + 1 = 3.',
             choice_a='1',
@@ -480,10 +474,11 @@ class PracticeTierTests(APITestCase):
             difficulty=3,
             question_type=MATH_QUESTION_TYPES[0],
         )
-        english_before = self.profile.sp_elo_rating
-        math_before = self.profile.math_elo_rating
+        english_before = self._stats('english').elo
+        math_before = self._stats('math').elo
+        self.assertEqual(math_before, 1200)
 
-        resp = self._answer(math_question, 'b')
+        resp = self._answer(math_question, '2')  # correct: choice_b's text
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['subject'], 'math')
@@ -491,27 +486,15 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(resp.data['sp_elo_rating_delta'], 16)
         self.assertEqual(resp.data['practice_stats']['english_answered'], 5)
         self.assertEqual(resp.data['practice_stats']['math_answered'], 1)
-        self.profile.refresh_from_db()
-        self.assertEqual(self.profile.sp_elo_rating, english_before)
-        self.assertGreater(self.profile.math_elo_rating, math_before)
+        self.assertEqual(self._stats('english').elo, english_before)
+        self.assertGreater(self._stats('math').elo, math_before)
 
     def test_other_user_profile_returns_subject_attempt_counts(self):
-        from api.models import PracticeAttempt
-        from api.views.practice_views import MATH_QUESTION_TYPES
+        from api.models import PracticeStats
         other = User.objects.create_user(username='other-practicer', email='other@e.com')
         Profile.objects.create(user=other)
-        math_question = Question.objects.create(
-            question='Solve y + 2 = 5.',
-            choice_a='1',
-            choice_b='2',
-            choice_c='3',
-            choice_d='4',
-            answer='C',
-            difficulty=3,
-            question_type=MATH_QUESTION_TYPES[0],
-        )
-        PracticeAttempt.objects.create(user=other, question=self.questions[0], subject='english', correct=True)
-        PracticeAttempt.objects.create(user=other, question=math_question, subject='math', correct=False)
+        PracticeStats.objects.create(user=other, subject='english', answered=1, correct=1)
+        PracticeStats.objects.create(user=other, subject='math', answered=1, correct=0)
 
         resp = self.client.get(f'/api/profile/view_profile/{other.id}/')
 
@@ -519,32 +502,36 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(resp.data['statistics']['english_answered'], 1)
         self.assertEqual(resp.data['statistics']['math_answered'], 1)
         self.assertEqual(resp.data['statistics']['practice_answered'], 2)
+        self.assertEqual(resp.data['statistics']['english_accuracy'], 100)
+        self.assertEqual(resp.data['statistics']['math_accuracy'], 0)
 
     def test_repeat_attempt_does_not_move_elo(self):
         self._answer(self.questions[0], 'b')
-        self.profile.refresh_from_db()
-        rating_after_first = self.profile.sp_elo_rating
+        rating_after_first = self._stats('english').elo
         resp = self._answer(self.questions[0], 'b')
         self.assertFalse(resp.data['rated'])
         self.assertEqual(resp.data['sp_elo_rating_delta'], 0)
-        self.profile.refresh_from_db()
-        self.assertEqual(self.profile.sp_elo_rating, rating_after_first)
+        self.assertEqual(self._stats('english').elo, rating_after_first)
+        # Counters still count the repeat attempt.
+        self.assertEqual(self._stats('english').answered, 2)
 
     def test_non_practice_mode_does_not_move_elo_or_quota(self):
-        before = self.profile.sp_elo_rating
+        before = self._stats('english').elo
         resp = self._answer(self.questions[0], 'b', mode='')
         self.assertEqual(resp.status_code, 200)
         self.assertNotIn('rated', resp.data)
-        self.profile.refresh_from_db()
-        self.assertEqual(self.profile.sp_elo_rating, before)
+        stats = self._stats('english')
+        self.assertEqual(stats.elo, before)
+        self.assertEqual(stats.answered, 0)
         from api.models import PracticeAttempt
         self.assertEqual(PracticeAttempt.objects.count(), 0)
 
     def test_wrong_answer_lowers_rating(self):
-        before = self.profile.sp_elo_rating
+        before = self._stats('english').elo
         self._answer(self.questions[0], 'a')  # incorrect
-        self.profile.refresh_from_db()
-        self.assertLess(self.profile.sp_elo_rating, before)
+        stats = self._stats('english')
+        self.assertLess(stats.elo, before)
+        self.assertEqual((stats.answered, stats.correct), (1, 0))
 
     def test_next_prefers_unattempted_questions(self):
         from api.models import PracticeAttempt

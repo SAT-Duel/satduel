@@ -130,10 +130,7 @@ class Profile(models.Model):
     )
     
     friends = models.ManyToManyField(User, related_name='friends', blank=True)
-    elo_rating = models.IntegerField(default=1500)  # Starting ELO rating
-    sp_elo_rating = models.IntegerField(default=1200)  # English practice Elo
-    math_elo_rating = models.IntegerField(default=1200)  # Math practice Elo
-    problems_solved = models.IntegerField(default=0)
+    elo_rating = models.IntegerField(default=1500)  # Duel ELO rating
     country = models.CharField(max_length=2, default='US')
     avatar = models.CharField(max_length=32, choices=AVATAR_CHOICES, default='violet')
     avatar_icon = models.CharField(max_length=32, choices=AVATAR_ICON_CHOICES, default='initial')
@@ -163,22 +160,6 @@ class Profile(models.Model):
     practice_streak = models.IntegerField(default=0)
     longest_practice_streak = models.IntegerField(default=0)
     last_practice_completed = models.DateField(null=True, blank=True)
-    # One locked-in-progress question per subject, so switching between English
-    # and Math keeps each subject's current question waiting.
-    active_practice_question = models.ForeignKey(
-        'api.Question',
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name='+',
-    )
-    active_math_question = models.ForeignKey(
-        'api.Question',
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name='+',
-    )
 
     @property
     def has_premium(self):
@@ -244,37 +225,56 @@ class Profile(models.Model):
         self.elo_rating = int(new_elo1)
         self.save()
 
-    def increment_problems_solved(self):
-        self.problems_solved += 1
-        self.save()
-
-    def save(self, *args, **kwargs):
-        # Initialize sp_elo_rating if it's missing or zero
-        if self.sp_elo_rating == 0:
-            self.sp_elo_rating = 1200  # Default starting SP Elo
-        if self.math_elo_rating == 0:
-            self.math_elo_rating = 1200
-
-        super().save(*args, **kwargs)
-
     def __str__(self):
         return f"{self.user.username}'s Profile"
 
 
+class PracticeStats(models.Model):
+    """Per-user, per-subject practice state: rating, lifetime counters, and the
+    locked in-progress question. One row per (user, subject), so adding a new
+    subject is a data change, not a schema change. Accuracy is derived
+    (correct / answered), never stored, so it can't drift."""
+    SUBJECT_CHOICES = [('english', 'English'), ('math', 'Math')]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_stats')
+    subject = models.CharField(max_length=10, choices=SUBJECT_CHOICES)
+    elo = models.IntegerField(default=1200)
+    answered = models.IntegerField(default=0)
+    correct = models.IntegerField(default=0)
+    active_question = models.ForeignKey(
+        'api.Question',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='+',
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'subject'], name='unique_practice_stats_per_subject'),
+        ]
+
+    @property
+    def accuracy(self):
+        return self.correct / self.answered if self.answered else None
+
+    def __str__(self):
+        return f"{self.user.username} {self.subject}: elo {self.elo}, {self.correct}/{self.answered}"
+
+
 class UserStatistics(models.Model):
-    """Tracks user's game statistics and achievements."""
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='infinitequestionstatistics')
-    login_streak = models.IntegerField(default=0)
-    last_login_date = models.DateField(null=True, blank=True)
-    correct_number = models.IntegerField(default=0)
-    incorrect_number = models.IntegerField(default=0)
-    current_streak = models.IntegerField(default=0)
+    """Shop economy state: coins and pet multipliers.
+
+    Practice counters used to live here too; they moved to PracticeStats
+    (per-subject), and duplicate rows were merged when this became OneToOne.
+    """
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='infinitequestionstatistics')
     coins = models.IntegerField(default=0)
     normal_multiplier = models.FloatField(default=1.00)
     user_pet_levels = models.JSONField(default=dict)
 
     def __str__(self):
-        return f"{self.user.username} - {self.correct_number}/{self.correct_number + self.incorrect_number}"
+        return f"{self.user.username} - {self.coins} coins"
 
     def total_multiplier(self):  # normal multiplier + pet multipliers
         total_multiplier = self.normal_multiplier
@@ -296,18 +296,6 @@ class UserStatistics(models.Model):
 
         return round(total_multiplier, 2)  # Return the total multiplier rounded to 2 decimal places
 
-    def increment_login_streak(self):
-        today = timezone.now().date()
-        if self.last_login_date == today:
-            return  # Streak already updated for today
-
-        if self.last_login_date == today - timezone.timedelta(days=1):
-            self.login_streak += 1  # Continue streak
-        else:
-            self.login_streak = 1  # Reset streak
-
-        self.last_login_date = today
-        self.save()
 
 
 class PowerSprintStatistics(models.Model):
@@ -436,12 +424,6 @@ class Room(models.Model):
         user1_profile.update_elo(user2_start, result_user1)
         user2_profile.update_elo(user1_start, result_user2)
 
-        # Update problems solved
-        user1_profile.problems_solved += self.questions.count()
-        user2_profile.problems_solved += self.questions.count()
-        user1_profile.save(update_fields=['problems_solved'])
-        user2_profile.save(update_fields=['problems_solved'])
-
     def save(self, *args, **kwargs):
         previous_status = None
         if self.pk:
@@ -561,7 +543,7 @@ class Ranking(models.Model):
     def update_rankings(cls):
         """Recompute every user's rank in bulk (was 2 queries per user)."""
         profiles = list(
-            Profile.objects.order_by('-elo_rating', '-problems_solved')
+            Profile.objects.order_by('-elo_rating', 'user_id')
             .values_list('user_id', flat=True)
         )
         existing = {r.user_id: r for r in cls.objects.all()}

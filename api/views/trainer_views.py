@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.models import UserStatistics, PowerSprintStatistics, SurvivalStatistics
-from api.views.practice_views import practice_attempt_breakdown
-from api.views.serializers import InfiniteQuestionsSerializer, PowerSprintStatisticsSerializer, \
+from api.views.practice_views import practice_stats_breakdown
+from api.views.serializers import PowerSprintStatisticsSerializer, \
     SurvivalStatisticsSerializer
 
 @api_view(['GET'])
@@ -13,49 +13,15 @@ from api.views.serializers import InfiniteQuestionsSerializer, PowerSprintStatis
 @permission_classes([IsAuthenticated])
 def get_infinite_question_stats(request):
     user = request.user
-    stats, created = UserStatistics.objects.get_or_create(user=user)
+    economy, _ = UserStatistics.objects.get_or_create(user=user)
 
-    # Use the total multiplier, which includes both the default and pet multipliers
-    stats_data = dict(InfiniteQuestionsSerializer(stats).data)
-    breakdown = practice_attempt_breakdown(user)
-    stats_data.update(breakdown)
-    stats_data['correct_number'] = breakdown['practice_correct']
-    stats_data['incorrect_number'] = breakdown['practice_answered'] - breakdown['practice_correct']
-    stats_data['multiplier'] = stats.total_multiplier()  # Set the total multiplier
+    stats_data = practice_stats_breakdown(user)
+    stats_data['correct_number'] = stats_data['practice_correct']
+    stats_data['incorrect_number'] = stats_data['practice_answered'] - stats_data['practice_correct']
+    stats_data['coins'] = economy.coins
+    stats_data['multiplier'] = economy.total_multiplier()
 
     return Response(stats_data)
-
-@api_view(['POST'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def set_infinite_question_stats(request):
-    user = request.user
-    data = request.data
-    try:
-        correct = int(data.get('correct_number', 0))
-        incorrect = int(data.get('incorrect', 0))
-        current_streak = int(data.get('current_streak', 0))
-        coins = int(data.get('coins', 0))
-        # Don't get the multiplier from the data, calculate the total multiplier instead
-    except ValueError:
-        return Response({'status': 'error', 'message': 'Invalid data types'}, status=400)
-
-    # Fetch the user's statistics and calculate the total multiplier
-    stats, created = UserStatistics.objects.update_or_create(
-        user=user,
-        defaults={
-            'correct_number': correct,
-            'incorrect_number': incorrect,
-            'current_streak': current_streak,
-            'coins': coins,
-        }
-    )
-
-    # Return only the status; lootbox logic is handled in the frontend
-    return Response({
-        'status': 'success',
-        'multiplier': round(stats.total_multiplier(), 2)  # Send the total multiplier in the response
-    }, status=200)
 
 @api_view(['GET'])
 def get_power_sprint_stats(request):
