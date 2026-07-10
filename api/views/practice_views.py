@@ -18,7 +18,7 @@ check_answer call from any surface):
 import random
 
 from django.conf import settings
-from django.db.models import F, Q
+from django.db.models import Avg, F, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (
@@ -89,6 +89,15 @@ def practice_stats_breakdown(user):
         round(payload['practice_correct'] / payload['practice_answered'] * 100)
         if payload['practice_answered'] else None
     )
+    avg_times = dict(
+        PracticeAttempt.objects
+        .filter(user=user, time_taken__isnull=False, time_taken__lte=AVG_TIME_CUTOFF_SECONDS)
+        .values_list('subject')
+        .annotate(avg=Avg('time_taken'))
+    )
+    for subject in SUBJECTS:
+        avg = avg_times.get(subject)
+        payload[f'{subject}_avg_time'] = round(avg) if avg is not None else None
     payload['current_streak'] = practice_current_streak(user)
     return payload
 
@@ -97,9 +106,11 @@ def practice_stats_breakdown(user):
 practice_attempt_breakdown = practice_stats_breakdown
 
 
-def record_practice_answer(user, question, correct, subject):
+def record_practice_answer(user, question, correct, subject, time_taken=None):
     """Log the attempt and bump the subject's lifetime counters atomically."""
-    PracticeAttempt.objects.create(user=user, question=question, correct=correct, subject=subject)
+    PracticeAttempt.objects.create(
+        user=user, question=question, correct=correct, subject=subject, time_taken=time_taken,
+    )
     stats = get_practice_stats(user, subject)
     stats.answered = F('answered') + 1
     if correct:
@@ -119,6 +130,16 @@ USER_K_PROVISIONAL = 32
 USER_K_STABLE = 16
 QUESTION_K = 8
 PROVISIONAL_ATTEMPTS = 30
+
+# Flat rating bonus for fast, correct, rated answers. Time is measured
+# server-side (serve -> answer), so reloading the page can't reset the clock;
+# fast wrong guesses already lose rating, so guessing for the bonus is net
+# negative and no further anti-abuse is needed.
+SPEED_BONUS_POINTS = 3
+SPEED_BONUS_SECONDS = {'english': 25, 'math': 45}
+# Answers slower than this are "walked away and came back", not answering
+# speed — they still record, but stay out of the average-time stat.
+AVG_TIME_CUTOFF_SECONDS = 600
 RATING_MIN, RATING_MAX = 100, 3000
 
 
@@ -160,9 +181,10 @@ def _clamp(rating):
     return max(RATING_MIN, min(RATING_MAX, int(rating)))
 
 
-def apply_practice_elo(user, question, correct):
+def apply_practice_elo(user, question, correct, time_taken=None):
     """First-attempt-only rating update between a user and a question. Moves the
-    rating on the subject's PracticeStats row."""
+    rating on the subject's PracticeStats row. Fast correct answers earn a flat
+    speed bonus on top of the Elo movement."""
     subject = subject_of(question)
     stats = get_practice_stats(user, subject)
     previous_rating = stats.elo
@@ -172,6 +194,7 @@ def apply_practice_elo(user, question, correct):
         return {
             'rated': False, 'subject': subject,
             'previous_rating': previous_rating, 'new_rating': previous_rating, 'delta': 0,
+            'speed_bonus': 0,
         }
 
     total_attempts = PracticeAttempt.objects.filter(user=user).filter(subject_filter(subject)).count()
@@ -180,7 +203,12 @@ def apply_practice_elo(user, question, correct):
     expected = _expected_score(previous_rating, question.sp_elo_rating)
     result = 1.0 if correct else 0.0
 
-    new_rating = _clamp(previous_rating + user_k * (result - expected))
+    speed_bonus = (
+        SPEED_BONUS_POINTS
+        if correct and time_taken is not None and time_taken <= SPEED_BONUS_SECONDS[subject]
+        else 0
+    )
+    new_rating = _clamp(previous_rating + user_k * (result - expected) + speed_bonus)
     stats.elo = new_rating
     stats.save(update_fields=['elo'])
 
@@ -190,6 +218,7 @@ def apply_practice_elo(user, question, correct):
         'rated': True, 'subject': subject,
         'previous_rating': previous_rating, 'new_rating': new_rating,
         'delta': new_rating - previous_rating,
+        'speed_bonus': speed_bonus,
     }
 
 
@@ -260,11 +289,17 @@ def next_question(request):
         )
 
     # Each subject holds its own locked question, so switching subjects and back
-    # resumes where you left off.
+    # resumes where you left off — with the clock still running.
     if stats.active_question:
+        if stats.active_question_served_at is None:
+            # Lock predates the serve-time clock; start it now.
+            stats.active_question_served_at = timezone.now()
+            stats.save(update_fields=['active_question_served_at'])
+        elapsed = (timezone.now() - stats.active_question_served_at).total_seconds()
         return Response({
             'question': QuestionSerializer(stats.active_question).data,
             'quota': quota, 'subject': subject,
+            'elapsed_seconds': int(elapsed),
         })
 
     question = pick_practice_question(request.user, subject, question_type)
@@ -272,11 +307,13 @@ def next_question(request):
         return Response({'error': 'No questions available.'}, status=status.HTTP_404_NOT_FOUND)
 
     stats.active_question = question
-    stats.save(update_fields=['active_question'])
+    stats.active_question_served_at = timezone.now()
+    stats.save(update_fields=['active_question', 'active_question_served_at'])
 
     return Response({
         'question': QuestionSerializer(question).data,
         'quota': quota, 'subject': subject,
+        'elapsed_seconds': 0,
     })
 
 

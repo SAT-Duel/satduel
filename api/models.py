@@ -248,6 +248,9 @@ class PracticeStats(models.Model):
         on_delete=models.SET_NULL,
         related_name='+',
     )
+    # When active_question was first served. Time-per-question is computed
+    # server-side from this, so quitting/reopening can't reset the clock.
+    active_question_served_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -599,6 +602,9 @@ class PracticeAttempt(models.Model):
         db_index=True,
     )
     correct = models.BooleanField()
+    # Seconds from serve to answer, measured server-side. Null on legacy rows
+    # and on answers submitted without an active-question clock.
+    time_taken = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
