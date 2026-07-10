@@ -58,8 +58,6 @@ urlpatterns = [
 
     path('trainer/infinite_question_stats/', trainer_view.get_infinite_question_stats,
          name='get_infinite_question_stats'),
-    path('trainer/set_infinite_question_stats/', trainer_view.set_infinite_question_stats,
-         name='set_infinite_question_stats'),
     path('trainer/power_sprint_stats/', trainer_view.get_power_sprint_stats, name='get_power_sprint_stats'),
     path('trainer/set_power_sprint_stats/', trainer_view.set_power_sprint_stats, name='set_power_sprint_stats'),
     path('trainer/survival_stats/', trainer_view.get_survival_stats, name='get_survival_stats'),

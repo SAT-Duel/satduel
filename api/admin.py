@@ -7,7 +7,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, Game, GameQuestion, PracticeAttempt
+    Pet, Game, GameQuestion, PracticeAttempt, PracticeStats
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ class ProfileInline(admin.StackedInline):
     model = Profile
     can_delete = False
     fields = [
-        'role', 'grade', 'country', 'elo_rating', 'sp_elo_rating', 'problems_solved',
+        'role', 'grade', 'country', 'elo_rating',
         'avatar', 'avatar_icon', 'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
     ]
     extra = 0
@@ -78,7 +78,7 @@ class QuestionAdmin(admin.ModelAdmin):
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = [
-        'user', 'role', 'grade', 'avatar', 'avatar_icon', 'elo_rating', 'problems_solved',
+        'user', 'role', 'grade', 'avatar', 'avatar_icon', 'elo_rating',
         'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
     ]
     list_filter = ['role', 'grade', 'is_premium']
@@ -87,10 +87,18 @@ class ProfileAdmin(admin.ModelAdmin):
 
 @admin.register(PracticeAttempt)
 class PracticeAttemptAdmin(admin.ModelAdmin):
-    list_display = ['user', 'question', 'correct', 'created_at']
-    list_filter = ['correct', 'created_at']
+    list_display = ['user', 'question', 'subject', 'correct', 'created_at']
+    list_filter = ['subject', 'correct', 'created_at']
     search_fields = ['user__username']
     raw_id_fields = ['user', 'question']
+
+
+@admin.register(PracticeStats)
+class PracticeStatsAdmin(admin.ModelAdmin):
+    list_display = ['user', 'subject', 'elo', 'answered', 'correct']
+    list_filter = ['subject']
+    search_fields = ['user__username']
+    raw_id_fields = ['user', 'active_question']
 
 
 admin.site.register(Room)

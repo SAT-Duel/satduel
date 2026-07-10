@@ -1,1 +1,2 @@
+release: python manage.py migrate --noinput
 web: gunicorn satduel.wsgi --workers 2 --threads 4 --log-file -

@@ -18,7 +18,7 @@ check_answer call from any surface):
 import random
 
 from django.conf import settings
-from django.db.models import Count, Q
+from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (
@@ -31,7 +31,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api import generation
-from api.models import PracticeAttempt, Profile, Question
+from api.models import PracticeAttempt, PracticeStats, Question
 from api.views.serializers import QuestionSerializer
 
 DEFAULT_QUESTION_TYPES = [
@@ -44,24 +44,15 @@ DEFAULT_QUESTION_TYPES = [
 # generator's taxonomy — reused so the two never drift apart.
 MATH_QUESTION_TYPES = list(generation.SKILL_INDEX)
 
-# Everything subject-specific (which types, which Elo field, which locked
-# question) lives here so the endpoints stay subject-agnostic.
-SUBJECTS = {
-    'english': {
-        'types': DEFAULT_QUESTION_TYPES,
-        'elo_field': 'sp_elo_rating',
-        'active_field': 'active_practice_question',
-    },
-    'math': {
-        'types': MATH_QUESTION_TYPES,
-        'elo_field': 'math_elo_rating',
-        'active_field': 'active_math_question',
-    },
+SUBJECT_TYPES = {
+    'english': DEFAULT_QUESTION_TYPES,
+    'math': MATH_QUESTION_TYPES,
 }
+SUBJECTS = list(SUBJECT_TYPES)
 
 
 def resolve_subject(name):
-    return name if name in SUBJECTS else 'english'
+    return name if name in SUBJECT_TYPES else 'english'
 
 
 def subject_of(question):
@@ -73,18 +64,47 @@ def subject_filter(subject):
     return Q(subject=resolve_subject(subject))
 
 
-def practice_attempt_breakdown(user):
-    """Practice-only counts, split by SAT subject."""
-    stats = PracticeAttempt.objects.filter(user=user).aggregate(
-        math_answered=Count('id', filter=subject_filter('math')),
-        math_correct=Count('id', filter=subject_filter('math') & Q(correct=True)),
-        english_answered=Count('id', filter=subject_filter('english')),
-        english_correct=Count('id', filter=subject_filter('english') & Q(correct=True)),
-    )
-    stats['practice_answered'] = stats['math_answered'] + stats['english_answered']
-    stats['practice_correct'] = stats['math_correct'] + stats['english_correct']
-    stats['current_streak'] = practice_current_streak(user)
+def get_practice_stats(user, subject):
+    """The user's per-subject stats row (rating, counters, active question)."""
+    stats, _ = PracticeStats.objects.get_or_create(user=user, subject=resolve_subject(subject))
     return stats
+
+
+def practice_stats_breakdown(user):
+    """Per-subject lifetime counters (includes legacy pre-PracticeAttempt
+    progress, which the migration folded into the English row)."""
+    rows = {row.subject: row for row in PracticeStats.objects.filter(user=user)}
+    payload = {}
+    for subject in SUBJECTS:
+        row = rows.get(subject)
+        answered = row.answered if row else 0
+        correct = row.correct if row else 0
+        payload[f'{subject}_answered'] = answered
+        payload[f'{subject}_correct'] = correct
+        payload[f'{subject}_accuracy'] = round(correct / answered * 100) if answered else None
+        payload[f'{subject}_elo'] = row.elo if row else 1200
+    payload['practice_answered'] = sum(payload[f'{s}_answered'] for s in SUBJECTS)
+    payload['practice_correct'] = sum(payload[f'{s}_correct'] for s in SUBJECTS)
+    payload['practice_accuracy'] = (
+        round(payload['practice_correct'] / payload['practice_answered'] * 100)
+        if payload['practice_answered'] else None
+    )
+    payload['current_streak'] = practice_current_streak(user)
+    return payload
+
+
+# Old name, kept so callers read naturally at both call sites.
+practice_attempt_breakdown = practice_stats_breakdown
+
+
+def record_practice_answer(user, question, correct, subject):
+    """Log the attempt and bump the subject's lifetime counters atomically."""
+    PracticeAttempt.objects.create(user=user, question=question, correct=correct, subject=subject)
+    stats = get_practice_stats(user, subject)
+    stats.answered = F('answered') + 1
+    if correct:
+        stats.correct = F('correct') + 1
+    stats.save(update_fields=['answered', 'correct'])
 
 
 def practice_current_streak(user):
@@ -142,11 +162,10 @@ def _clamp(rating):
 
 def apply_practice_elo(user, question, correct):
     """First-attempt-only rating update between a user and a question. Moves the
-    Elo field for the question's subject (English or Math)."""
+    rating on the subject's PracticeStats row."""
     subject = subject_of(question)
-    elo_field = SUBJECTS[subject]['elo_field']
-    profile = Profile.objects.get(user=user)
-    previous_rating = getattr(profile, elo_field)
+    stats = get_practice_stats(user, subject)
+    previous_rating = stats.elo
 
     already_attempted = PracticeAttempt.objects.filter(user=user, question=question).exists()
     if already_attempted:
@@ -162,8 +181,8 @@ def apply_practice_elo(user, question, correct):
     result = 1.0 if correct else 0.0
 
     new_rating = _clamp(previous_rating + user_k * (result - expected))
-    setattr(profile, elo_field, new_rating)
-    profile.save(update_fields=[elo_field])
+    stats.elo = new_rating
+    stats.save(update_fields=['elo'])
 
     question.sp_elo_rating = _clamp(question.sp_elo_rating - QUESTION_K * (result - expected))
     question.save(update_fields=['sp_elo_rating'])
@@ -180,15 +199,14 @@ def apply_practice_elo(user, question, correct):
 
 def pick_practice_question(user, subject, question_type=None):
     """Pick a question near the user's rating, preferring ones never attempted."""
-    config = SUBJECTS[subject]
-    profile = getattr(user, 'profile', None)
-    user_rating = getattr(profile, config['elo_field']) if profile else 1200
+    types = SUBJECT_TYPES[subject]
+    user_rating = get_practice_stats(user, subject).elo
 
     base = Question.objects.all()
-    if question_type and question_type != 'any' and question_type in config['types']:
+    if question_type and question_type != 'any' and question_type in types:
         base = base.filter(question_type=question_type)
     else:
-        base = base.filter(question_type__in=config['types'])
+        base = base.filter(question_type__in=types)
 
     attempted_ids = set(
         PracticeAttempt.objects.filter(user=user).values_list('question_id', flat=True)
@@ -224,9 +242,8 @@ def next_question(request):
     """Serve the next adaptive practice question, enforcing tier rules."""
     question_type = request.GET.get('type')
     subject = resolve_subject(request.GET.get('subject'))
-    active_field = SUBJECTS[subject]['active_field']
     quota = quota_payload(request.user)
-    profile = getattr(request.user, 'profile', None)
+    stats = get_practice_stats(request.user, subject)
 
     if question_type and question_type != 'any' and not quota['is_premium']:
         return Response(
@@ -244,10 +261,9 @@ def next_question(request):
 
     # Each subject holds its own locked question, so switching subjects and back
     # resumes where you left off.
-    active_question = getattr(profile, active_field) if profile else None
-    if active_question:
+    if stats.active_question:
         return Response({
-            'question': QuestionSerializer(active_question).data,
+            'question': QuestionSerializer(stats.active_question).data,
             'quota': quota, 'subject': subject,
         })
 
@@ -255,9 +271,8 @@ def next_question(request):
     if question is None:
         return Response({'error': 'No questions available.'}, status=status.HTTP_404_NOT_FOUND)
 
-    if profile:
-        setattr(profile, active_field, question)
-        profile.save(update_fields=[active_field])
+    stats.active_question = question
+    stats.save(update_fields=['active_question'])
 
     return Response({
         'question': QuestionSerializer(question).data,
@@ -270,13 +285,13 @@ def next_question(request):
 @permission_classes([IsAuthenticated])
 def practice_status(request):
     """Quota + tier + rating + day-streak snapshot for practice surfaces."""
-    profile = getattr(request.user, 'profile', None)
+    stats = practice_stats_breakdown(request.user)
     return Response({
         'quota': quota_payload(request.user),
-        'sp_elo_rating': profile.sp_elo_rating if profile else None,
-        'math_elo_rating': profile.math_elo_rating if profile else None,
-        'stats': practice_attempt_breakdown(request.user),
-        'topics': {'english': DEFAULT_QUESTION_TYPES, 'math': MATH_QUESTION_TYPES},
+        'sp_elo_rating': stats['english_elo'],
+        'math_elo_rating': stats['math_elo'],
+        'stats': stats,
+        'topics': SUBJECT_TYPES,
         'daily': daily_snapshot(request.user),
     })
 

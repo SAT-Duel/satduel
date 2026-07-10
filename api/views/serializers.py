@@ -36,6 +36,9 @@ class UserSerializer(serializers.ModelSerializer):
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
     is_premium = serializers.SerializerMethodField()
+    # Practice ratings live on PracticeStats; keep the old payload keys.
+    sp_elo_rating = serializers.SerializerMethodField()
+    math_elo_rating = serializers.SerializerMethodField()
 
     class Meta:
         model = Profile
@@ -44,6 +47,18 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     def get_is_premium(self, obj):
         return obj.has_premium
+
+    def _subject_elo(self, obj, subject):
+        for stats in obj.user.practice_stats.all():
+            if stats.subject == subject:
+                return stats.elo
+        return 1200
+
+    def get_sp_elo_rating(self, obj):
+        return self._subject_elo(obj, 'english')
+
+    def get_math_elo_rating(self, obj):
+        return self._subject_elo(obj, 'math')
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
@@ -75,8 +90,7 @@ class InfiniteQuestionsSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserStatistics
-        fields = ['id', 'user', 'coins', 'total_multiplier', 'correct_number', 'incorrect_number',
-                  'current_streak']
+        fields = ['id', 'user', 'coins', 'total_multiplier']
 
     def get_total_multiplier(self, obj):
         return obj.total_multiplier()
