@@ -1,14 +1,17 @@
-"""AI question generation: SAT Math taxonomy, prompt engineering, and LLM calls.
+"""AI question generation: SAT taxonomy, prompt engineering, and LLM calls.
 
-The taxonomy mirrors the College Board Digital SAT question bank exactly
-(4 content domains, 19 skills). Each skill carries a detailed spec that is
-spliced into a shared base prompt. English (Reading & Writing) domains can be
-added later as new entries in DOMAINS — everything downstream is domain-agnostic.
+The taxonomy mirrors the College Board Digital SAT question bank exactly:
+Math (4 content domains, 19 skills) and Reading & Writing (4 content domains,
+10 skills). Each skill carries a detailed spec that is spliced into a
+per-subject base prompt. The English skill names must stay verbatim-identical
+to the question_type values used across the site (practice filters etc.).
 
 Rendering contract with the frontend (RenderWithMath.jsx):
   - Inline math:  $...$          (KaTeX)
   - Block math:   $$...$$        (KaTeX; tables use \\begin{array}{|c|c|} inside)
   - Figures:      [svg]<svg ...>...</svg>[/svg]  (sanitized inline SVG)
+  - Text markup:  \\textit{..} \\textbf{..} \\underline{..}, \\n line breaks,
+    and bullet lines that start with *** (used for Rhetorical Synthesis notes)
 """
 
 import json
@@ -73,6 +76,33 @@ RULES FOR DIFFICULTY 4 AND 5 (read carefully — most AI questions fail here):
 # Shared formatting + output contract
 # ---------------------------------------------------------------------------
 
+SHARED_TAIL = """\
+ANSWER-KEY BALANCE (IMPORTANT — do not default to one letter):
+- Spread the correct answers across A, B, C, and D. Across a batch aim for a
+  roughly even split; do NOT let any letter dominate and do NOT habitually put
+  the answer at C (or B). For each single question the correct choice should be
+  equally likely to sit in any of the four slots — choose its position at random.
+- Before finalizing, scan your batch's answer key. If one letter appears much
+  more than the others, REORDER the choices of some questions to rebalance it.
+
+OUTPUT CONTRACT (strict):
+Return ONLY a single copyable Markdown code block labeled json, with no text
+before or after it. The JSON array goes inside that block; do not output plain
+JSON outside a code block. This outer code block is the only Markdown allowed —
+inside JSON strings, follow the no-Markdown renderer rules above. Each element:
+{
+  "question": "stem text using only the renderer markup described above",
+  "choice_a": "...", "choice_b": "...", "choice_c": "...", "choice_d": "...",
+  "answer": "A" | "B" | "C" | "D",
+  "difficulty": <int 1-5>,
+  "question_type": "<the skill name given below, verbatim>",
+  "explanation": "worked solution + distractor notes"
+}
+JSON strings must escape backslashes (write \\\\textit / \\\\frac in the JSON
+source so the parsed value is \\textit / \\frac) and must not contain raw
+newlines — use \\n.
+"""
+
 FORMAT_RULES = """\
 FORMATTING RULES (STRICT — the website renders every field with a KaTeX + light
 markup renderer. Malformed formatting shows up broken to students, so follow
@@ -133,14 +163,6 @@ STYLE (valid SAT-math voice, but creative — see the TASK section):
   are secretly equal.
 - When choices are numeric, order them ascending (or in a natural logical order).
 
-ANSWER-KEY BALANCE (IMPORTANT — do not default to one letter):
-- Spread the correct answers across A, B, C, and D. Across a batch aim for a
-  roughly even split; do NOT let any letter dominate and do NOT habitually put
-  the answer at C (or B). For each single question the correct choice should be
-  equally likely to sit in any of the four slots — choose its position at random.
-- Before finalizing, scan your batch's answer key. If one letter appears much
-  more than the others, REORDER the choices of some questions to rebalance it.
-
 EXPLANATION:
 - Show the efficient solution path step by step in KaTeX (use \\n between steps,
   and $$...$$ for a key line). For difficulty 4-5, first name the KEY INSIGHT
@@ -148,22 +170,7 @@ EXPLANATION:
 - End with one short line per wrong choice naming the mistake that produces it,
   e.g. "Choice B results from ...".
 
-OUTPUT CONTRACT (strict):
-Return ONLY a single copyable Markdown code block labeled json, with no text
-before or after it. The JSON array goes inside that block; do not output plain
-JSON outside a code block. This outer code block is the only Markdown allowed —
-inside JSON strings, follow the no-Markdown renderer rules above. Each element:
-{
-  "question": "stem text with $KaTeX$ and optional [svg]...[/svg] / $$array$$ blocks",
-  "choice_a": "...", "choice_b": "...", "choice_c": "...", "choice_d": "...",
-  "answer": "A" | "B" | "C" | "D",
-  "difficulty": <int 1-5>,
-  "question_type": "<the skill name given below, verbatim>",
-  "explanation": "worked solution + distractor notes"
-}
-JSON strings must escape backslashes (write \\\\frac in the JSON source so the
-parsed value is \\frac) and must not contain raw newlines — use \\n.
-"""
+""" + SHARED_TAIL
 
 BASE_PROMPT = """\
 You are an expert SAT Math item writer AND a competition-math problem composer
@@ -201,12 +208,184 @@ choices where needed.
 """
 
 # ---------------------------------------------------------------------------
-# The taxonomy: 4 official domains -> 19 official skills, each with a
+# English (Reading & Writing) prompt machinery. Same output contract as math,
+# but its own voice, formatting rules, and a descriptive difficulty scale —
+# R&W hardness has no numeric metric, so the bands are soft by design.
+# ---------------------------------------------------------------------------
+
+ENGLISH_DIFFICULTY_RUBRIC = """\
+DIFFICULTY SCALE (1-5). Reading & Writing difficulty has no clean numeric
+metric, so these are descriptive bands with deliberately smooth boundaries.
+Two levers control almost all of it: (a) TEXT DEMAND — the vocabulary, syntax,
+register, and era of the passage — and (b) CHOICE DISCRIMINATION — how fine
+the cut is between the credited answer and the best distractor. Raise
+difficulty by tightening those levers, NEVER by making the item ambiguous: at
+every level exactly one choice must be fully defensible from the text alone,
+and any two careful expert readers must agree on the key.
+
+- 1  Entry level, easily solved: a short, friendly passage in plain
+    contemporary prose; the answer is nearly explicit in the text, and the
+    three wrong choices are clearly wrong after one attentive read. A prepared
+    student answers quickly and gains confidence.
+- 2  Routine: one small interpretive step (a paraphrase, an obvious logical
+    link). Distractors recycle words from the passage but misuse them; one is
+    mildly tempting on a skim but collapses on a second look.
+- 3  Mid-band, the middle of a real module: denser academic or literary prose,
+    an answer that requires holding two parts of the text together, and at
+    least one distractor that is half right — correct topic, wrong claim.
+- 4  The hard end of a real SAT module: scholarly research summaries, older
+    literary prose, or verse; subtle inference and function questions.
+    Distractors are engineered from the classic wrong moves (too extreme, out
+    of scope, right detail wrong emphasis, reversed relationship). Students
+    who skim or who match keywords instead of logic get these wrong.
+- 5  Distinguishably harder than 4 — the item that separates a 780 from an
+    800. STACK several commonly-missed traps in a single question: the densest
+    still-defensible text (19th-century fiction, poetry, or a technical
+    research abstract), a fine-grained final cut where the best distractor
+    differs from the key by a single overreach (an "always" where the text
+    says "sometimes", a cause where it shows correlation, the author's view
+    swapped for a critic's the author cites), and a stem that punishes
+    autopilot answering. Still exactly one right answer, provable by pointing
+    at specific words in the text.
+"""
+
+ENGLISH_FORMAT_RULES = """\
+FORMATTING RULES (STRICT — the website renders every field with a light markup
+renderer. Malformed markup shows up broken to students, so follow these
+EXACTLY in the question stem, all four choices, and the explanation.)
+
+MARKUP the renderer understands (and NOTHING else — no Markdown):
+- Line break: the two characters \\n inside the JSON string. Separate the
+  passage from the question line with a blank line (\\n\\n).
+- Italics: \\textit{...} — use for titles of novels, plays, long poems, and
+  ships. Bold: \\textbf{...} (rarely needed). Underline: \\underline{...} —
+  REQUIRED around the target sentence in "function of the underlined
+  sentence" items.
+- Bulleted note line (Rhetorical Synthesis only): a line that starts with the
+  three characters *** renders as a bullet. One note per line:
+  \\n***Coral reefs shelter about a quarter of all marine species.\\n
+- Blank to be completed: the seven characters _______ exactly where the word,
+  phrase, or punctuation choice goes.
+- Do NOT use Markdown: no **bold**, no # headings, no "- " or "1." lists, no
+  backticks — they all render literally as ugly text.
+- A literal dollar sign starts math mode and corrupts the text: write money
+  as words ("48 dollars") or as $\\$48$, never a bare $48.
+
+DATA TABLES (Command of Evidence, quantitative variants) — a KaTeX array in
+display math on its own line (never a Markdown table), words wrapped in
+\\text{...}:
+  $$\\begin{array}{|l|c|c|} \\hline \\text{Site} & 2010 & 2020 \\\\ \\hline \\text{Reef A} & 34 & 12 \\\\ \\hline \\end{array}$$
+Keep tables small (at most 5 rows x 4 columns), introduce them with a plain
+sentence in the stem, and balance every delimiter.
+
+GRAPHS (Command of Evidence, quantitative variants) — a single self-contained
+bar or line chart as inline SVG wrapped in [svg]...[/svg], on its own line:
+  * viewBox="0 0 340 H" with H <= 300; no width/height attributes.
+  * Stroke #334155; bar fills #cbd5e1; text font-size="13"
+    font-family="sans-serif" fill="#334155". Points as filled circles r="3".
+  * Label everything the solver needs: axis titles with units, tick values,
+    category names, and the plotted values themselves.
+  * NO <script>, <image>, <foreignObject>, <a>, event handlers, or external
+    refs — plain shapes, paths, and text only.
+  * NEVER put an [svg] block, a table, or a $$...$$ block inside an answer
+    choice; choices are short inline text only.
+
+SAT READING & WRITING HOUSE STYLE:
+- ONE self-contained passage of 25-150 words per question, then the question
+  as its own final line. No shared passages across questions.
+- Literary excerpts open with an attribution line woven into the passage
+  field, e.g. "The following text is from Edith Wharton's 1905 novel
+  \\textit{The House of Mirth}." Research passages instead weave the actors
+  into the prose ("marine biologist Ana Osei and her colleagues...").
+- Poetry keeps its line breaks (\\n at each verse line).
+- Cross-Text items format as: Text 1\\n<passage>\\n\\nText 2\\n<passage>.
+- Exactly 4 answer choices, exactly one correct, all four parallel in form,
+  length, and grammatical fit (any choice must slot into the blank
+  grammatically — students eliminate on logic, never on grammar mismatch,
+  except in Standard English Conventions items where grammar IS the test).
+- Choices stay SHORT where the skill allows: single words for vocabulary and
+  transitions, one sentence elsewhere.
+
+EXPLANATION:
+- First prove the key: state why the credited choice is correct, quoting the
+  exact words of the passage (or the exact table/graph values) that make it
+  the only defensible answer. For Standard English Conventions, name the rule
+  being tested (comma splice, subject-verb agreement across an interrupting
+  phrase, dangling modifier, ...).
+- Then one short line per wrong choice naming the SPECIFIC trap it springs,
+  e.g. "Choice B is too extreme: the text says the effect 'can' occur, not
+  that it always does." Name the reusable reasoning move so a student who
+  missed the item learns something transferable.
+
+""" + SHARED_TAIL
+
+ENGLISH_BASE_PROMPT = """\
+You are an expert SAT Reading & Writing item writer with a College Board
+assessment-design background AND genuine literary range — equally at home in
+nineteenth-century fiction, contemporary science journalism, poetry, art
+history, and social-science research. Write ORIGINAL questions — never copy a
+released item, and never fill a familiar template with swapped nouns. Every
+question should reward close reading and leave the student knowing something
+they did not know before.
+
+PASSAGE SOURCING (this is where question quality is won — be creative):
+- Literary and poetry passages: use REAL public-domain texts (published before
+  1929), quoted or lightly adapted into a self-contained 25-150 word excerpt.
+  Range far beyond the overused canon — instead of the same Austen and Dickens
+  paragraphs, reach for Edith Wharton, Willa Cather, Charles Chesnutt, Zitkala-Sa,
+  Sui Sin Far, W. E. B. Du Bois, Elizabeth Gaskell, Christina Rossetti, Paul
+  Laurence Dunbar, or Turgenev, Chekhov, and Ibsen in translation. Name the
+  author, year, and title in the attribution line. NEVER misattribute: if you
+  are not certain of the exact source and wording, write an original passage in
+  period style and attribute it to no one (e.g. "The following text is from a
+  1902 short story.").
+- Informational passages (science, history, arts, social science): write an
+  original passage in College Board's neutral, information-dense register,
+  built around a specific and plausible study, artist, invention, or episode.
+  Mine genuinely interesting corners — underrated scientific findings,
+  non-Western art movements, overlooked inventors, surprising historical
+  reversals — so the passage itself is worth the student's attention.
+- Every passage must be fully self-contained: solvable with zero outside
+  knowledge, everything needed on the page, and nothing in the correct answer
+  that rewards prior familiarity with the topic.
+
+{format_rules}
+
+{difficulty_rubric}
+
+============================================================
+CONTENT DOMAIN: {domain}
+SKILL (use verbatim as "question_type"): {skill}
+============================================================
+{spec}
+{variant_clause}
+TASK: Write {count} original multiple-choice question(s) for the skill above,
+all at difficulty {difficulty} (use the descriptive bands in the DIFFICULTY
+SCALE — do not drift easier). Requirements:
+- Vary the batch widely: different subject areas (literature, natural science,
+  history, arts, social science), different passage styles, different named
+  people and places — no two items should feel alike. Rotate across the
+  sub-topics listed above and invent fresh angles beyond them.
+- Use the skill's EXACT standardized stem phrasing given in the spec: on the
+  real test the passage varies but the question wording is boilerplate.
+- Honor the difficulty band strictly. For 4-5, engineer the best distractor to
+  be the answer a keyword-matching or skimming student WOULD pick, and make
+  the cut between it and the key fine but airtight.
+Before finalizing: (1) re-read each passage cold and confirm the keyed answer
+is the ONLY defensible choice — if a smart student could argue for a second
+choice, tighten the passage or the choices until they cannot; (2) confirm each
+distractor is wrong for one specific, explainable reason; (3) balance the
+answer key across A/B/C/D per ANSWER-KEY BALANCE, reordering choices where
+needed.
+"""
+
+# ---------------------------------------------------------------------------
+# The math taxonomy: 4 official domains -> 19 official skills, each with a
 # hand-engineered spec. Variants break broad skills into sub-types while
 # keeping the official skill as the stored question_type.
 # ---------------------------------------------------------------------------
 
-DOMAINS = [
+MATH_DOMAINS = [
     {
         "name": "Algebra",
         "share": "~35% of the Math section (13-15 questions per test)",
@@ -759,6 +938,388 @@ doubling with inscribed angles.""",
     },
 ]
 
+# ---------------------------------------------------------------------------
+# The English taxonomy: 4 official R&W domains -> 10 official skills. Skill
+# names are verbatim the question_type values already used across the site.
+# ---------------------------------------------------------------------------
+
+ENGLISH_DOMAINS = [
+    {
+        "name": "Craft and Structure",
+        "share": "~28% of the Reading & Writing section (13-15 questions per test)",
+        "skills": [
+            {
+                "name": "Words in Context",
+                "blurb": "Choose the most logical and precise word/phrase for a blank, or gloss a word as used in a text.",
+                "figures": "never",
+                "variants": [
+                    "fill-in-the-blank vocabulary: the passage sets up a logical relationship (contrast, cause, illustration) that exactly one word satisfies",
+                    "meaning-in-context: a common word used in a secondary or figurative sense in a literary excerpt",
+                    "precision cut: all four words are rough synonyms; connotation, register, or intensity decides",
+                    "poetry or older prose where tone determines the word",
+                ],
+                "spec": """\
+WHAT IT TESTS: high-utility academic vocabulary AND precision — the credited
+word must satisfy the passage's logic, not merely its topic.
+STANDARDIZED STEMS (use verbatim):
+- Blank items: "Which choice completes the text with the most logical and
+  precise word or phrase?" (blank = _______ in the passage; choices are single
+  words or short phrases, same part of speech, all grammatically valid).
+- Gloss items: 'As used in the text, what does the word "X" most nearly mean?'
+PASSAGE: 25-100 words. Blank items are usually informational (a researcher's
+finding, an artist's method) where a signal phrase ("but", "in other words",
+"unlike") pins the blank's meaning. Gloss items usually quote literature.
+DIFFICULTY BANDS: low = everyday words (persistent, curious) with the signal
+adjacent to the blank. Mid = words like corroborate, ambivalent, negligible;
+the signal sits a sentence away. High = fine connotation splits (exacting vs
+punitive, novel vs anomalous), secondary senses of common words (the "economy"
+of a poem's language, to "entertain" a hypothesis), and literary passages
+where tone decides between two topically plausible words.
+DISTRACTOR TRAPS: right topic but wrong logical direction (the passage signals
+contrast, the word continues); near-synonym with the wrong connotation or
+intensity; a word that fits the sentence alone but contradicts the passage's
+larger claim; the PRIMARY meaning of a word the text uses in a secondary
+sense.""",
+            },
+            {
+                "name": "Text Structure and Purpose",
+                "blurb": "Analyze what a sentence or whole text does rhetorically — its function, purpose, or overall structure.",
+                "figures": "never",
+                "variants": [
+                    "function of the underlined sentence in the text as a whole (wrap the target in \\underline{...})",
+                    "main purpose of the text (informational or literary)",
+                    "overall structure of the text (e.g. presents a phenomenon, then evaluates two explanations)",
+                    "literary/poetic passages where the function is a rhetorical move (concede, qualify, ironize)",
+                ],
+                "spec": """\
+WHAT IT TESTS: rhetorical analysis — what a sentence or text DOES, as opposed
+to what it says. Choices are written in abstract function language ("It
+introduces a phenomenon that the rest of the text seeks to explain").
+STANDARDIZED STEMS (use verbatim):
+- "Which choice best describes the function of the underlined sentence in the
+  text as a whole?" (underline exactly one sentence with \\underline{...})
+- "Which choice best states the main purpose of the text?"
+- "Which choice best describes the overall structure of the text?"
+PASSAGE: 50-150 words with a genuine internal architecture (claim + evidence,
+phenomenon + explanation, expectation + reversal) so functions are real.
+DIFFICULTY BANDS: low = simple expository passage where the underlined
+sentence plainly defines, exemplifies, or states the finding. Mid = the
+function is relative to an argument (concedes a limitation, qualifies the
+previous claim, pivots to a rival account). High = literary or poetic
+passages with moves like ironic undercutting or reframing, and four choices
+that ALL use plausible rhetorical vocabulary, differing only in the verb or
+in what the move operates on.
+DISTRACTOR TRAPS: describes the sentence's CONTENT rather than its function;
+correctly describes a DIFFERENT sentence's function; right function verb aimed
+at the wrong object ("criticizes the methodology" vs "criticizes the
+conclusion"); whole-text purpose offered for a single sentence (or vice
+versa); function that overstates ("proves", "refutes") what the text merely
+suggests.""",
+            },
+            {
+                "name": "Cross-Text Connections",
+                "blurb": "Relate two short texts on the same topic: how one author would respond to the other.",
+                "figures": "never",
+                "variants": [
+                    "how would the author of Text 2 most likely respond to a specific claim in Text 1",
+                    "what both authors would agree on, despite differing emphases",
+                    "how Text 2 relates to Text 1 (narrows, challenges, reframes, provides a mechanism for it)",
+                    "scientist vs scientist over an interpretation; critic vs critic over a work",
+                ],
+                "spec": """\
+WHAT IT TESTS: holding two viewpoints at once and mapping their exact
+relationship — full disagreement is rare; the SAT prefers PARTIAL alignment
+(accepts the finding, disputes the interpretation; agrees but narrows scope).
+FORMAT: two labeled passages in the stem, each 40-90 words:
+Text 1\\n<passage>\\n\\nText 2\\n<passage>\\n\\n<question>
+STANDARDIZED STEMS (use verbatim):
+- "Based on the texts, how would the author of Text 2 most likely respond to
+  the [claim/argument/conclusion] in Text 1?"
+- "Based on the texts, both authors would most likely agree with which
+  statement?"
+DIFFICULTY BANDS: low = plainly opposed positions with explicit stance
+language. Mid = same evidence, different emphasis or confidence; the response
+is a qualified "yes, but". High = subtle relations — Text 2 accepts Text 1's
+data while disputing what it shows, or endorses the conclusion for a
+different reason; the best distractor flips WHICH author holds which view or
+overstates a mild reservation into rejection.
+DISTRACTOR TRAPS: extreme response (total rejection/endorsement) where the
+real relation is qualified; attributing Text 1's position to Text 2;
+agreement on a point neither text actually addresses; right attitude but
+wrong reason for it.""",
+            },
+        ],
+    },
+    {
+        "name": "Information and Ideas",
+        "share": "~26% of the Reading & Writing section (12-14 questions per test)",
+        "skills": [
+            {
+                "name": "Central Ideas and Details",
+                "blurb": "State the main idea of a text or retrieve what it directly says.",
+                "figures": "never",
+                "variants": [
+                    "main idea of an informational passage",
+                    "main idea of a literary excerpt or poem (assembled from figurative language)",
+                    "detail retrieval: 'According to the text, why/what/how ...?'",
+                    "'Based on the text, which statement is true about X?'",
+                ],
+                "spec": """\
+WHAT IT TESTS: literal comprehension — the credited answer restates what the
+text says, requiring no leap beyond the page.
+STANDARDIZED STEMS (use verbatim):
+- "Which choice best states the main idea of the text?"
+- "According to the text, [why/what/how] ...?"
+- "Based on the text, which choice best describes ...?"
+PASSAGE: 50-150 words. For main-idea items the passage needs one governing
+idea plus supporting material, so that "detail as main idea" is a live trap.
+DIFFICULTY BANDS: low = the answer is nearly verbatim in one sentence of a
+plain passage. Mid = the main idea must be assembled by paraphrasing across
+two or three sentences; literary passages with mild figuration. High = older
+literary prose or verse where the governing idea hides behind figurative
+statements and syntax (inversions, long periodic sentences), or a detail
+question whose answer sits inside a dense appositive a skimmer jumps over;
+the best distractor is a TRUE detail from the text that is not the main
+idea, or a near-paraphrase that silently drops a qualifier.
+DISTRACTOR TRAPS: a supporting detail promoted to main idea; a claim broader
+than the text supports; a paraphrase that contradicts a hedge ("some",
+"often", "in early trials"); an appealing fact the text never states
+(outside-knowledge bait).""",
+            },
+            {
+                "name": "Command of Evidence",
+                "blurb": "Pick the finding, quotation, or data point that best supports, illustrates, or weakens a claim.",
+                "figures": "often: a data table (KaTeX array) or a bar/line graph (SVG) — REQUIRED for quantitative variants",
+                "variants": [
+                    "textual — support: a hypothesis or claim, then 'Which finding, if true, would most directly support ...?'",
+                    "textual — weaken: same frame, 'most directly weaken/undermine' the claim",
+                    "textual — illustrate: a scholar's claim about a (real or invented) literary work, then 'Which quotation most effectively illustrates the claim?' with four quotation choices",
+                    "quantitative — TABLE: passage describes a study, a KaTeX array table carries the data, a concluding statement ends in a blank",
+                    "quantitative — GRAPH: same structure with a labeled SVG bar or line chart instead of a table",
+                ],
+                "spec": """\
+WHAT IT TESTS: evaluating the LINK between evidence and claim — the hardest
+wrong answers are accurate statements or correct data readings that simply do
+not bear on the claim.
+STANDARDIZED STEMS (use verbatim):
+- Textual: "Which finding, if true, would most directly support [the
+  researchers' hypothesis / the author's claim]?" (or "...weaken...")
+- Quotation: "Which quotation from [work] most effectively illustrates the
+  claim?"
+- Quantitative: "Which choice most effectively uses data from the [table/
+  graph] to complete the statement?" — the passage's final sentence ends in
+  _______ and the four choices each cite specific values.
+QUANTITATIVE ITEMS — YOU MUST GENERATE THE DATA YOURSELF: invent a small,
+realistic dataset and render it as a KaTeX array table or a fully labeled SVG
+bar/line chart per the formatting rules (roughly half of the batch's items
+should be quantitative). The displayed data must contain the exact values the
+correct choice cites, AND values that make each distractor checkable-but-wrong
+(a misread row, a true-but-irrelevant comparison). Keep numbers clean enough
+to compare by eye — the R&W section allows no calculator.
+DIFFICULTY BANDS: low = the support link is direct and the data read is a
+single cell or bar. Mid = weaken items; comparisons across two rows or a
+trend; quotation items where two quotes mention the right subject but only
+one exhibits the claimed quality. High = the credited choice must combine two
+cells or a trend AND match the claim's exact scope; the best distractor is a
+PERFECTLY ACCURATE data reading that fails to address the claim — the classic
+College Board killer — or a finding that supports a related-but-different
+hypothesis.
+DISTRACTOR TRAPS: true/accurate but irrelevant to the claim; misread rows,
+columns, or axes; evidence that supports when the item asks for weakening;
+a quotation that mentions the topic without exhibiting the claimed
+relationship; data cited with the wrong magnitude or year.""",
+            },
+            {
+                "name": "Inferences",
+                "blurb": "Complete a passage's final blank with the conclusion its logic demands.",
+                "figures": "never",
+                "variants": [
+                    "research chain: findings plus a complication, blank draws the warranted conclusion",
+                    "two-position setup: scholars disagree, new evidence arrives, blank states what it suggests",
+                    "historical or arts argument whose premises converge on the blank",
+                    "premises include a qualifier or exception the completion must respect",
+                ],
+                "spec": """\
+WHAT IT TESTS: drawing the one conclusion the premises license — no more, no
+less. The passage builds an argument and stops one step short.
+STANDARDIZED STEM (use verbatim): "Which choice most logically completes the
+text?" — the passage's last sentence ends with _______ (often after
+"suggesting that" / "which indicates that" / "therefore,").
+PASSAGE: 70-150 words of tight reasoning. Every premise must matter; the
+credited completion should follow from the premises the way a syllogism's
+conclusion does, hedged to exactly the strength the premises support.
+DIFFICULTY BANDS: low = two adjacent premises, conclusion nearly stated
+already. Mid = combine findings from two sentences; respect one hedge. High =
+premises carry a qualifier or an exception the completion must thread (a
+finding true only "in mature forests", a method that rules out one
+explanation but not another); the best distractor is what a careless reader
+EXPECTS a study like this to conclude, or the credited idea stated one notch
+too strongly.
+DISTRACTOR TRAPS: too strong (premises support "may", the choice says
+"will"); reverses cause and effect or direction of the relationship; a
+plausible real-world claim the premises never touch (outside-knowledge bait);
+merely restates a premise instead of concluding from it.""",
+            },
+        ],
+    },
+    {
+        "name": "Standard English Conventions",
+        "share": "~26% of the Reading & Writing section (11-15 questions per test)",
+        "skills": [
+            {
+                "name": "Boundaries",
+                "blurb": "Punctuate clause and sentence boundaries: joins, separations, and supplements.",
+                "figures": "never",
+                "variants": [
+                    "two independent clauses: period / semicolon / comma + conjunction vs the comma splice",
+                    "colon or dash introducing an explanation, list, or amplification",
+                    "nonessential supplement set off by paired commas, dashes, or parentheses",
+                    "NO punctuation needed: reject choices that splice a comma between subject and verb or before a restrictive phrase",
+                ],
+                "spec": """\
+WHAT IT TESTS: sentence boundaries and supplements — where one clause ends,
+another begins, and what may or must separate them. Choices differ ONLY in
+punctuation (and any accompanying conjunction); the words are identical.
+STANDARDIZED STEM (use verbatim): "Which choice completes the text so that it
+conforms to the conventions of Standard English?" — the passage contains
+_______ at the boundary in question.
+PASSAGE: 40-100 words, informational, on a real-feeling scholarly topic (the
+SAT sets conventions items in genuinely interesting material — keep that).
+Build the sentence so its grammar is decidable purely from structure.
+DIFFICULTY BANDS: low = two short, clearly independent clauses; one choice
+punctuates legally, the others obviously splice or fuse. Mid = longer clauses
+whose subjects hide mid-sentence; one nonessential phrase near the boundary.
+High = stack hazards so every rule is needed at once: a long subject with an
+interrupting nonessential phrase, a quotation or parenthetical abutting the
+boundary, choices where EACH wrong option violates a DIFFERENT rule
+(semicolon before a fragment; colon after a non-independent lead-in; single
+comma where a pair is required; comma splice dressed up with a conjunctive
+adverb like "however").
+DISTRACTOR TRAPS: comma splice; fused sentence; semicolon before a dependent
+clause or fragment; colon not preceded by an independent clause; mixing a
+dash with a comma to close one supplement; a lone comma between subject and
+verb.""",
+            },
+            {
+                "name": "Form, Structure, and Sense",
+                "blurb": "Choose the word form that fits: agreement, tense, pronouns, modifiers, possessives, parallelism.",
+                "figures": "never",
+                "variants": [
+                    "subject-verb agreement across an interrupting phrase or inverted structure",
+                    "verb tense/aspect consistent with the passage's time frame",
+                    "pronoun-antecedent agreement (and its/it's, whose/who's, their/there)",
+                    "dangling or misplaced modifier: the opener must describe the subject that follows",
+                    "plural vs possessive forms (species', researchers', the Joneses') and parallel structure in lists or comparisons",
+                ],
+                "spec": """\
+WHAT IT TESTS: within-sentence grammar — the choices differ in word FORM
+(verb inflection, pronoun, possessive, modifier placement), not punctuation.
+STANDARDIZED STEM (use verbatim): "Which choice completes the text so that it
+conforms to the conventions of Standard English?" — with _______ at the
+tested spot.
+PASSAGE: 40-100 words, informational register, real-feeling topic. Engineer
+the syntax so exactly one form is correct and the distractor forms are
+genuinely tempting in context.
+DIFFICULTY BANDS: low = subject sits next to its verb; the wrong forms sound
+wrong out loud. Mid = subject separated from verb by a prepositional phrase
+or appositive ("the collection of manuscripts _______"); simple tense-frame
+consistency. High = agreement across a relative clause, inverted or delayed
+subjects ("crucial to the theory _______ two assumptions"), quantifier
+subjects ("each of the studies"), stacked possessives on plural nouns ending
+in s, and participial openers where the nearest plausible noun is NOT the
+doer — the classic dangling-modifier trap that reads smoothly aloud.
+DISTRACTOR TRAPS: verb agreeing with the nearest noun instead of the true
+subject; tense shifted away from the passage's established frame; pronoun
+matching the wrong (or a missing) antecedent; opener modifying the wrong
+noun; plural where the possessive is needed and vice versa; broken
+parallelism in the final list slot.""",
+            },
+        ],
+    },
+    {
+        "name": "Expression of Ideas",
+        "share": "~20% of the Reading & Writing section (8-12 questions per test)",
+        "skills": [
+            {
+                "name": "Rhetorical Synthesis",
+                "blurb": "Use a student's bulleted research notes to accomplish a stated rhetorical goal.",
+                "figures": "never (the notes render as *** bullet lines)",
+                "variants": [
+                    "emphasize a similarity or a difference between two things in the notes",
+                    "introduce the subject to an audience unfamiliar with it",
+                    "stress the aim, method, or result of a study",
+                    "present a sequence or cause-and-effect relationship from the notes",
+                    "make and support a recommendation or generalization the notes justify",
+                ],
+                "spec": """\
+WHAT IT TESTS: matching a sentence to a rhetorical GOAL — every choice is
+factually consistent with the notes; only one accomplishes the stated goal.
+FIXED FRAME (use verbatim, in this order):
+"While researching a topic, a student has taken the following notes:"
+then 4-6 bullet notes, EACH on its own line starting with *** (renderer
+bullet syntax), then:
+"The student wants to [GOAL]. Which choice most effectively uses relevant
+information from the notes to accomplish this goal?"
+Choices are single complete sentences assembled from the notes.
+NOTES DESIGN: notes are short declarative facts (who/what/when/finding), and
+must contain BOTH the material the goal needs AND plausible material it does
+not, so relevance selection is real work.
+DIFFICULTY BANDS: low = the goal names one thing and one note-pair delivers
+it. Mid = the goal requires combining two notes and ignoring two others. High
+= a TWO-PART goal ("emphasize the similarity in method AND the difference in
+result") where the best distractor satisfies exactly one part, or two choices
+that both touch the goal but only one addresses BOTH named subjects; goals
+whose key verb ("contrast", "introduce", "justify") each distractor honors
+in letter but not in function.
+DISTRACTOR TRAPS: factually accurate sentence aimed at the wrong goal;
+answers half of a two-part goal; emphasizes the opposite element (a
+difference when similarity is asked); assumes audience familiarity when the
+goal says "unfamiliar"; smuggles in a claim that appears nowhere in the
+notes.""",
+            },
+            {
+                "name": "Transitions",
+                "blurb": "Pick the transition word or phrase that expresses the true logical relationship.",
+                "figures": "never",
+                "variants": [
+                    "contrast vs continuation (however / in addition / likewise)",
+                    "cause or consequence (therefore / as a result / consequently)",
+                    "illustration or specification (for example / specifically / in particular)",
+                    "concession, reinforcement, or sequence (granted / indeed / subsequently / finally)",
+                ],
+                "spec": """\
+WHAT IT TESTS: the logical relationship between ideas — the four choices are
+transitions from DIFFERENT logical classes, so the item is solved by
+classifying the relationship, not by ear.
+STANDARDIZED STEM (use verbatim): "Which choice completes the text with the
+most logical transition?" — the blank _______ opens a sentence (usually the
+last), followed by a comma.
+PASSAGE: 40-100 words, informational. The sentences before and after the
+blank must pin the relationship unambiguously.
+DIFFICULTY BANDS: low = a blunt two-sentence relationship (plain contrast or
+plain result) with clearly distinct choices. Mid = the relationship spans
+more than the adjacent sentence — the blank's sentence contrasts with an idea
+TWO sentences back while continuing the one just before it, so proximity
+matching fails. High = neighboring logical classes that students conflate:
+concession ("granted") vs contrast ("however"), reinforcement ("indeed") vs
+specification ("specifically"), result ("consequently") vs sequence
+("subsequently"); passages that continue a TOPIC while pivoting in LOGIC, so
+the tempting continuation transition is wrong.
+DISTRACTOR TRAPS: matches the adjacent sentence but not the paragraph's true
+pivot; same general class but wrong precision or strength; mistakes topic
+continuity for logical continuity; a sequence word where the relationship is
+causal (or vice versa).""",
+            },
+        ],
+    },
+]
+
+DOMAINS = MATH_DOMAINS + ENGLISH_DOMAINS
+
+ENGLISH_SKILL_NAMES = {
+    skill["name"] for domain in ENGLISH_DOMAINS for skill in domain["skills"]
+}
+
 SKILL_INDEX = {
     skill["name"]: (domain, skill)
     for domain in DOMAINS
@@ -778,9 +1339,10 @@ def build_prompt(skill_name, difficulty, count):
         "stick to one, and feel free to invent fresh angles beyond this list):\n"
         "%s\n" % variants if variants else ""
     )
-    return BASE_PROMPT.format(
-        format_rules=FORMAT_RULES,
-        difficulty_rubric=DIFFICULTY_RUBRIC,
+    english = skill_name in ENGLISH_SKILL_NAMES
+    return (ENGLISH_BASE_PROMPT if english else BASE_PROMPT).format(
+        format_rules=ENGLISH_FORMAT_RULES if english else FORMAT_RULES,
+        difficulty_rubric=ENGLISH_DIFFICULTY_RUBRIC if english else DIFFICULTY_RUBRIC,
         domain="%s (%s)" % (domain["name"], domain["share"]),
         skill=skill_name,
         spec=skill["spec"],

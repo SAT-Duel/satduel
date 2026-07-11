@@ -15,7 +15,7 @@ from api.models import Question
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAdminUser])
 def generation_taxonomy(request):
-    """The math taxonomy plus current per-skill question counts in the bank."""
+    """The math + English taxonomy plus current per-skill question counts in the bank."""
     counts = dict(
         Question.objects.values_list('question_type')
         .annotate(n=Count('id'))
