@@ -34,15 +34,14 @@ from api import generation
 from api.models import PracticeActiveQuestion, PracticeAttempt, PracticeStats, Question
 from api.views.serializers import QuestionSerializer
 
-DEFAULT_QUESTION_TYPES = [
-    'Cross-Text Connections', 'Text Structure and Purpose', 'Words in Context',
-    'Rhetorical Synthesis', 'Transitions', 'Central Ideas and Details',
-    'Command of Evidence', 'Inferences', 'Boundaries', 'Form, Structure, and Sense',
-]
-
-# Math question_types are the official College Board skill names in the AI
+# question_types are the official College Board skill names in the AI
 # generator's taxonomy — reused so the two never drift apart.
-MATH_QUESTION_TYPES = list(generation.SKILL_INDEX)
+DEFAULT_QUESTION_TYPES = [
+    s['name'] for d in generation.ENGLISH_DOMAINS for s in d['skills']
+]
+MATH_QUESTION_TYPES = [
+    s['name'] for d in generation.MATH_DOMAINS for s in d['skills']
+]
 
 SUBJECT_TYPES = {
     'english': DEFAULT_QUESTION_TYPES,
