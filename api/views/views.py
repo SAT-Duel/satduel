@@ -1,6 +1,5 @@
 from random import sample
 from django.core.paginator import Paginator
-from django.utils import timezone
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from rest_framework.response import Response
@@ -157,9 +156,11 @@ def check_answer(request):
     they no longer batter the practice rating.
     """
     from api.views.practice_views import (
-        apply_practice_elo, get_practice_stats, practice_stats_breakdown,
-        quota_payload, record_practice_answer, subject_of,
+        apply_practice_elo, practice_stats_breakdown, quota_payload,
+        record_practice_answer, subject_of,
     )
+    from api.models import PracticeActiveQuestion
+    from api.views.practice_views import SUBJECT_TYPES
 
     data = request.data
     question_id = data.get('question_id')
@@ -186,10 +187,11 @@ def check_answer(request):
 
     if is_practice:
         subject = subject_of(question)
-        # Only the same subject's lock gates this answer, so an English question
-        # in progress doesn't block answering a Math one (and vice versa).
-        subject_stats = get_practice_stats(request.user, subject)
-        if subject_stats.active_question_id and subject_stats.active_question_id != question.id:
+        active_subject_questions = PracticeActiveQuestion.objects.filter(
+            user=request.user,
+            question__question_type__in=SUBJECT_TYPES[subject],
+        )
+        if active_subject_questions.exists() and not active_subject_questions.filter(question=question).exists():
             return Response(
                 {'error': 'active_question_required',
                  'detail': 'Answer your current practice question before moving on.'},
@@ -203,29 +205,18 @@ def check_answer(request):
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
         from api.views.practice_views import practice_current_streak, update_daily_streak
-        # Serve-to-answer time, from the clock next_question started. Answers
-        # without a running clock (e.g. legacy locks) just record no time.
-        time_taken = None
-        if subject_stats.active_question_id == question.id and subject_stats.active_question_served_at:
-            time_taken = (timezone.now() - subject_stats.active_question_served_at).total_seconds()
-
-        rating_update = apply_practice_elo(request.user, question, correct, time_taken=time_taken)
-        record_practice_answer(request.user, question, correct, subject, time_taken=time_taken)
+        rating_update = apply_practice_elo(request.user, question, correct)
+        record_practice_answer(request.user, question, correct, subject)
         payload['rated'] = rating_update['rated']
         payload['quota'] = quota_payload(request.user)
         payload['sp_elo_rating'] = rating_update['new_rating']
         payload['sp_elo_rating_previous'] = rating_update['previous_rating']
         payload['sp_elo_rating_delta'] = rating_update['delta']
-        payload['speed_bonus'] = rating_update['speed_bonus']
-        payload['time_taken'] = round(time_taken) if time_taken is not None else None
         # Daily-goal streak: answering DAILY_PRACTICE_GOAL questions in a local
         # day completes it and extends the flame.
         payload['daily'] = update_daily_streak(request.user)
         payload['subject'] = subject
-        if subject_stats.active_question_id == question.id:
-            subject_stats.active_question = None
-            subject_stats.active_question_served_at = None
-            subject_stats.save(update_fields=['active_question', 'active_question_served_at'])
+        active_subject_questions.filter(question=question).delete()
 
         # Best correct-answer run, shown on the streak leaderboard.
         profile = getattr(request.user, 'profile', None)

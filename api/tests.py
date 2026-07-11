@@ -398,7 +398,8 @@ class PracticeTierTests(APITestCase):
         question = Question.objects.get(id=first.data['question']['id'])
         resp = self._answer(question, 'b')
         self.assertEqual(resp.status_code, 200)
-        self.assertIsNone(self._stats('english').active_question_id)
+        from api.models import PracticeActiveQuestion
+        self.assertFalse(PracticeActiveQuestion.objects.filter(user=self.user).exists())
 
     def test_practice_must_answer_active_question(self):
         first = self.client.get('/api/practice/next/')
@@ -419,6 +420,26 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data['question']['question_type'], 'Transitions')
         self.assertIsNone(resp.data['quota']['limit'])
+
+    def test_premium_topic_switches_resume_each_unanswered_question(self):
+        from api.models import PracticeActiveQuestion
+
+        self.profile.is_premium = True
+        self.profile.save()
+        Question.objects.create(
+            question='Inference?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type='Inferences',
+        )
+
+        transitions = self.client.get('/api/practice/next/', {'type': 'Transitions'})
+        inferences = self.client.get('/api/practice/next/', {'type': 'Inferences'})
+        transitions_again = self.client.get('/api/practice/next/', {'type': 'Transitions'})
+        inferences_again = self.client.get('/api/practice/next/', {'type': 'Inferences'})
+
+        self.assertNotEqual(transitions.data['question']['id'], inferences.data['question']['id'])
+        self.assertEqual(transitions.data['question']['id'], transitions_again.data['question']['id'])
+        self.assertEqual(inferences.data['question']['id'], inferences_again.data['question']['id'])
+        self.assertEqual(PracticeActiveQuestion.objects.filter(user=self.user).count(), 2)
 
     def test_expired_premium_is_free_tier(self):
         from django.utils import timezone
