@@ -7,13 +7,13 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
 from api.bot_duels import advance_bot, available_bot_user
-from api.models import DuelEmote, Room, TrackedQuestion
+from api.models import DUEL_EMOJIS, DuelEmote, Room, TrackedQuestion
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import RoomSerializer, TrackedQuestionSerializer, TrackedQuestionResultSerializer
 
-DUEL_EMOJIS = ('👍', '🔥', '😂', '😮')
+BOT_EMOTE_MODES = ('none', 'single', 'spam')
 
 
 def _room_for_user(room_id, user):
@@ -28,7 +28,24 @@ def _player_payload(user):
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
         'elo_rating': profile.elo_rating,
+        'duel_emotes': profile.duel_emotes,
+        'is_premium': profile.has_premium,
     }
+
+
+def _bot_emote_mode(bot):
+    return BOT_EMOTE_MODES[bot.id % len(BOT_EMOTE_MODES)]
+
+
+def _schedule_bot_emotes(room, bot, now, count):
+    loadout = bot.profile.duel_emotes or list(DUEL_EMOJIS[:4])
+    for index in range(count):
+        DuelEmote.objects.create(
+            room=room,
+            sender=bot,
+            emoji=random.choice(loadout),
+            visible_at=now + timezone.timedelta(seconds=random.uniform(2, 5) + index * 0.7),
+        )
 
 
 @api_view(['GET'])
@@ -335,29 +352,30 @@ def duel_emotes(request):
         if room.status != 'Battling':
             return Response({'error': 'This duel has ended.'}, status=409)
         emoji = request.data.get('emoji')
-        if emoji not in DUEL_EMOJIS:
+        if emoji not in request.user.profile.duel_emotes:
             return Response({'error': 'Invalid emote.'}, status=400)
         last_sent = DuelEmote.objects.filter(room=room, sender=request.user).order_by('-created_at').first()
         if last_sent and last_sent.created_at > now - timezone.timedelta(seconds=1):
             return Response({'error': 'Slow down.'}, status=429)
         DuelEmote.objects.create(room=room, sender=request.user, emoji=emoji, visible_at=now)
         if opponent and opponent.profile.is_bot:
-            DuelEmote.objects.create(
-                room=room,
-                sender=opponent,
-                emoji=random.choice(DUEL_EMOJIS),
-                visible_at=now + timezone.timedelta(seconds=random.uniform(1.5, 3.5)),
-            )
+            mode = _bot_emote_mode(opponent)
+            latest_bot = DuelEmote.objects.filter(room=room, sender=opponent).order_by('-visible_at').first()
+            cooled_down = not latest_bot or latest_bot.visible_at <= now - timezone.timedelta(seconds=30)
+            if mode == 'single' and not latest_bot:
+                _schedule_bot_emotes(room, opponent, now, 1)
+            elif mode == 'spam' and cooled_down:
+                _schedule_bot_emotes(room, opponent, now, random.randint(2, 4))
 
     if opponent and opponent.profile.is_bot:
+        mode = _bot_emote_mode(opponent)
         latest_bot = DuelEmote.objects.filter(room=room, sender=opponent).order_by('-visible_at').first()
-        if (not latest_bot or latest_bot.visible_at < now - timezone.timedelta(seconds=8)) and random.random() < 0.25:
-            DuelEmote.objects.create(
-                room=room,
-                sender=opponent,
-                emoji=random.choice(DUEL_EMOJIS),
-                visible_at=now + timezone.timedelta(seconds=random.uniform(0.5, 2)),
-            )
+        battle_age = (now - room.battle_start_time).total_seconds() if room.battle_start_time else 0
+        cooled_down = not latest_bot or latest_bot.visible_at <= now - timezone.timedelta(seconds=30)
+        if battle_age >= 30 and mode == 'single' and not latest_bot and random.random() < 0.04:
+            _schedule_bot_emotes(room, opponent, now, 1)
+        elif battle_age >= 30 and mode == 'spam' and cooled_down and random.random() < 0.06:
+            _schedule_bot_emotes(room, opponent, now, random.randint(2, 4))
 
     emotes = list(
         DuelEmote.objects.filter(room=room, visible_at__lte=now)

@@ -1,7 +1,13 @@
+import random
+
 from django.db.models import Q
 from django.utils import timezone
 
 from api.models import Profile, Room, TrackedQuestion
+
+
+def bot_accuracy(rating):
+    return min(82, max(52, 52 + (rating - 1200) // 20))
 
 
 def rotating_bot_users(now=None):
@@ -50,14 +56,13 @@ def advance_bot(room, bot):
     pace_seconds = max(16, 25 - max(0, rating - 1200) // 150)
     elapsed = max(0, (timezone.now() - room.battle_start_time).total_seconds())
     due = min(len(questions), int(elapsed // pace_seconds))
-    accuracy = min(85, max(55, 55 + (rating - 1200) // 20))
+    accuracy = bot_accuracy(rating)
 
     changed = []
     for tracked in questions[:due]:
         if tracked.status != 'Blank':
             continue
-        roll = (room.id * 31 + tracked.question_id * 17 + bot.id * 13) % 100
-        tracked.status = 'Correct' if roll < accuracy else 'Incorrect'
+        tracked.status = 'Correct' if random.randrange(100) < accuracy else 'Incorrect'
         changed.append(tracked)
     if changed:
         TrackedQuestion.objects.bulk_update(changed, ['status'])
