@@ -403,6 +403,10 @@ class Room(models.Model):
     winner = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True)
     user1_score = models.IntegerField(default=0)
     user2_score = models.IntegerField(default=0)
+    user1_elo_before = models.IntegerField(null=True, blank=True)
+    user1_elo_after = models.IntegerField(null=True, blank=True)
+    user2_elo_before = models.IntegerField(null=True, blank=True)
+    user2_elo_after = models.IntegerField(null=True, blank=True)
 
     def is_full(self):
         return self.user2 is not None
@@ -429,16 +433,23 @@ class Room(models.Model):
             self.winner = None
             result_user1 = result_user2 = 0.5
 
-        self.status = 'Ended'
-        self.save()
-
-        # Update ELO ratings
         user1_profile = self.user1.profile
         user2_profile = self.user2.profile
         user1_start = user1_profile.elo_rating
         user2_start = user2_profile.elo_rating
+        self.user1_elo_before = user1_start
+        self.user2_elo_before = user2_start
+        self.status = 'Ended'
+        self.save()
+
         user1_profile.update_elo(user2_start, result_user1)
         user2_profile.update_elo(user1_start, result_user2)
+        self.user1_elo_after = user1_profile.elo_rating
+        self.user2_elo_after = user2_profile.elo_rating
+        Room.objects.filter(pk=self.pk).update(
+            user1_elo_after=self.user1_elo_after,
+            user2_elo_after=self.user2_elo_after,
+        )
 
     def save(self, *args, **kwargs):
         previous_status = None

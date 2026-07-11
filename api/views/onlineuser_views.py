@@ -8,7 +8,7 @@ from api.bot_duels import rotating_bot_users
 from ..models import OnlineUser
 
 
-def _player_payload(user):
+def _player_payload(user, is_current_user=False):
     profile = user.profile
     return {
         'id': user.id,
@@ -16,7 +16,7 @@ def _player_payload(user):
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
         'elo_rating': profile.elo_rating,
-        'is_bot': profile.is_bot,
+        'is_current_user': is_current_user,
     }
 
 
@@ -58,5 +58,8 @@ def get_online_users(request):
         .select_related('user__profile')
     ]
     bot_users = rotating_bot_users()
-    users_list = [_player_payload(user) for user in real_users + bot_users]
+    users_list = (
+        [_player_payload(request.user, is_current_user=True)]
+        + [_player_payload(user) for user in real_users + bot_users]
+    )
     return JsonResponse({'users': users_list})

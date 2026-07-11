@@ -1,6 +1,7 @@
 import random
 
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -27,7 +28,6 @@ def _player_payload(user):
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
         'elo_rating': profile.elo_rating,
-        'is_bot': profile.is_bot,
     }
 
 
@@ -35,25 +35,26 @@ def _player_payload(user):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def match(request):
-    user_in_room = Room.objects.filter(
-        Q(user1=request.user, status__in=['Searching', 'Battling']) |
-        Q(user2=request.user, status__in=['Searching', 'Battling'])
-    ).first()
+    with transaction.atomic():
+        user_in_room = Room.objects.filter(
+            Q(user1=request.user, status__in=['Searching', 'Battling']) |
+            Q(user2=request.user, status__in=['Searching', 'Battling'])
+        ).first()
 
-    if user_in_room:
-        return Response({'error': 'You are already matching or in a room'}, status=400)
+        if user_in_room:
+            return Response({'error': 'You are already matching or in a room'}, status=400)
 
-    room = Room.objects.filter(user2__isnull=True, status='Searching').exclude(user1=request.user).first()
+        room = (
+            Room.objects.select_for_update()
+            .filter(user2__isnull=True, status='Searching')
+            .exclude(user1=request.user)
+            .first()
+        )
 
-    if room:
-        room.user2 = request.user
-        room.status = 'Battling'
-        room.save()
-        return Response({'id': room.id, 'full': 'true'}, status=200)
-    else:
-        bot = available_bot_user(exclude_user=request.user)
-        if bot:
-            room = Room.objects.create(user1=request.user, user2=bot, status='Battling')
+        if room:
+            room.user2 = request.user
+            room.status = 'Battling'
+            room.save()
             return Response({'id': room.id, 'full': 'true'}, status=200)
         room = Room.objects.create(user1=request.user, status='Searching')
 
@@ -117,15 +118,26 @@ def update_match_question(request):
 def get_room_status(request):
     room_id = request.query_params.get('room_id')
     if not room_id:
-        print('missing rid')
         return Response({'error': 'Missing room_id'}, status=400)
-    try:
-        room = Room.objects.get(id=room_id)
-    except Room.DoesNotExist:
-        return Response({'error': 'Room does not exist'}, status=404)
+    with transaction.atomic():
+        room = get_object_or_404(
+            Room.objects.select_for_update(),
+            Q(user1=request.user) | Q(user2=request.user),
+            id=room_id,
+        )
 
-    if room.is_full():
-        return Response({'status': 'full'})
+        if room.is_full():
+            return Response({'status': 'full'})
+
+        elapsed = (timezone.now() - room.created_at).total_seconds()
+        should_add_opponent = elapsed >= 10 or (elapsed >= 5 and random.random() < 0.35)
+        if room.status == 'Searching' and should_add_opponent:
+            bot = available_bot_user(exclude_user=request.user)
+            if bot:
+                room.user2 = bot
+                room.status = 'Battling'
+                room.save(update_fields=['user2', 'status'])
+                return Response({'status': 'full'})
     return Response({'status': 'waiting'})
 
 
@@ -214,13 +226,44 @@ def get_results(request):
     tracked_questions_user2 = TrackedQuestion.objects.filter(user=room.user2, room=room).order_by('id')
     serializer_user1 = TrackedQuestionResultSerializer(tracked_questions_user1, many=True)
     serializer_user2 = TrackedQuestionResultSerializer(tracked_questions_user2, many=True)
+    current_is_user1 = room.user1_id == request.user.id
+    current_user = room.user1 if current_is_user1 else room.user2
+    opponent = room.user2 if current_is_user1 else room.user1
+    current_prefix = 'user1' if current_is_user1 else 'user2'
+    opponent_prefix = 'user2' if current_is_user1 else 'user1'
+    current_results = serializer_user1.data if current_is_user1 else serializer_user2.data
+    opponent_results = serializer_user2.data if current_is_user1 else serializer_user1.data
 
-    combined_data = {
+    def result_player(user, prefix, score, results):
+        before = getattr(room, f'{prefix}_elo_before')
+        after = getattr(room, f'{prefix}_elo_after')
+        return {
+            **_player_payload(user),
+            'score': score,
+            'elo_before': before,
+            'elo_after': after,
+            'elo_change': after - before if before is not None and after is not None else None,
+            'results': results,
+        }
+
+    outcome = 'draw' if room.winner_id is None else 'win' if room.winner_id == request.user.id else 'loss'
+    return Response({
+        'outcome': outcome,
+        'current_user': result_player(
+            current_user, current_prefix,
+            room.user1_score if current_is_user1 else room.user2_score,
+            current_results,
+        ),
+        'opponent': result_player(
+            opponent, opponent_prefix,
+            room.user2_score if current_is_user1 else room.user1_score,
+            opponent_results,
+        ),
+        'created_at': room.created_at,
+        # Keep the legacy arrays while older clients age out.
         'user1_results': serializer_user1.data,
-        'user2_results': serializer_user2.data
-    }
-
-    return Response(combined_data)
+        'user2_results': serializer_user2.data,
+    })
 
 
 @api_view(['POST'])
@@ -256,7 +299,7 @@ def get_match_history(request, user_id=None):
     rooms = (
         Room.objects
         .filter(Q(user1=user) | Q(user2=user), status='Ended')
-        .select_related('user1', 'user2', 'winner')
+        .select_related('user1__profile', 'user2__profile', 'winner')
         .order_by('-created_at')[:limit]
     )
     serializer = RoomSerializer(rooms, many=True)

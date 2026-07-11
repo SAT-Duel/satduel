@@ -308,10 +308,13 @@ class DuelEloTests(APITestCase):
 
         room.status = 'Ended'
         room.save()
+        room.refresh_from_db()
         profile1.refresh_from_db()
         profile2.refresh_from_db()
         first_elo1 = profile1.elo_rating
         first_elo2 = profile2.elo_rating
+        self.assertEqual((room.user1_elo_before, room.user2_elo_before), (1500, 1500))
+        self.assertEqual((room.user1_elo_after, room.user2_elo_after), (first_elo1, first_elo2))
 
         room.save()
         profile1.refresh_from_db()
@@ -348,20 +351,49 @@ class BotDuelTests(APITestCase):
         self.assertEqual(bots.count(), 24)
         self.assertTrue(all(user.email.endswith('@bots.satduel.invalid') for user in bots))
         self.assertTrue(all(not user.has_usable_password() for user in bots))
+        icons = set(bots.values_list('profile__avatar_icon', flat=True))
+        self.assertIn('initial', icons)
+        self.assertGreater(len(icons), 1)
 
-    def test_online_list_includes_rotating_practice_rivals(self):
+    def test_online_list_includes_self_and_hides_bot_metadata(self):
         response = self.client.get('/api/online_users/')
-        bot_rows = [user for user in response.json()['users'] if user['is_bot']]
+        rows = response.json()['users']
+        bot_ids = set(User.objects.filter(profile__is_bot=True).values_list('id', flat=True))
+        bot_rows = [user for user in rows if user['id'] in bot_ids]
+        self.assertTrue(rows[0]['is_current_user'])
+        self.assertEqual(rows[0]['id'], self.user.id)
         self.assertIn(len(bot_rows), (3, 4))
         self.assertTrue(all('avatar_icon' in user for user in bot_rows))
+        self.assertTrue(all('is_bot' not in user for user in rows))
 
-    def test_match_uses_bot_when_no_human_is_waiting(self):
+    @patch('api.views.duel_views.random.random', return_value=0)
+    def test_match_waits_before_bot_fallback(self, _random):
         response = self.client.get('/api/match/')
         room = Room.objects.get(id=response.data['id'])
-        self.assertEqual(response.data['full'], 'true')
+        self.assertEqual(room.status, 'Searching')
+        self.assertIsNone(room.user2)
+
+        waiting = self.client.get('/api/match/status/', {'room_id': room.id})
+        self.assertEqual(waiting.data['status'], 'waiting')
+        Room.objects.filter(pk=room.pk).update(created_at=timezone.now() - timedelta(seconds=6))
+
+        matched = self.client.get('/api/match/status/', {'room_id': room.id})
+        room.refresh_from_db()
+        self.assertEqual(matched.data['status'], 'full')
         self.assertTrue(room.user2.profile.is_bot)
         self.assertEqual(TrackedQuestion.objects.filter(room=room, user=self.user).count(), 10)
         self.assertEqual(TrackedQuestion.objects.filter(room=room, user=room.user2).count(), 10)
+
+    def test_match_prioritizes_a_waiting_human(self):
+        other = User.objects.create_user(username='waiting_human', email='waiting@e.com')
+        Profile.objects.create(user=other, elo_rating=1600)
+        room = Room.objects.create(user1=other, status='Searching')
+
+        response = self.client.get('/api/match/')
+        room.refresh_from_db()
+
+        self.assertEqual(response.data['full'], 'true')
+        self.assertEqual(room.user2_id, self.user.id)
 
     def test_polling_advances_bot_progress(self):
         room = self._room(started_seconds_ago=100)
@@ -416,6 +448,12 @@ class BotDuelTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual((room.user1_score, room.user2_score), (3, 2))
         self.assertEqual(room.winner_id, self.user.id)
+        self.assertEqual(room.user1_elo_after - room.user1_elo_before, 8)
+
+        result = self.client.post('/api/match/get_results/', {'room_id': room.id}, format='json')
+        self.assertEqual(result.data['outcome'], 'win')
+        self.assertEqual(result.data['current_user']['elo_change'], 8)
+        self.assertNotIn('is_bot', result.data['opponent'])
 
 
 class CleanupUnverifiedUsersTests(APITestCase):

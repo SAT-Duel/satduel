@@ -33,6 +33,16 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'first_name', 'last_name', 'email']
 
 
+class DuelUserSerializer(serializers.ModelSerializer):
+    avatar = serializers.CharField(source='profile.avatar', read_only=True)
+    avatar_icon = serializers.CharField(source='profile.avatar_icon', read_only=True)
+    elo_rating = serializers.IntegerField(source='profile.elo_rating', read_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'avatar', 'avatar_icon', 'elo_rating']
+
+
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
     is_premium = serializers.SerializerMethodField()
@@ -97,13 +107,14 @@ class InfiniteQuestionsSerializer(serializers.ModelSerializer):
 
 
 class RoomSerializer(serializers.ModelSerializer):
-    user1 = UserSerializer()
-    user2 = UserSerializer()
+    user1 = DuelUserSerializer()
+    user2 = DuelUserSerializer()
 
     class Meta:
         model = Room
         fields = ['id', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time',
-                  'user1_score', 'user2_score']
+                  'user1_score', 'user2_score', 'user1_elo_before', 'user1_elo_after',
+                  'user2_elo_before', 'user2_elo_after']
 
 
 class TrackedQuestionSerializer(serializers.ModelSerializer):
@@ -115,7 +126,7 @@ class TrackedQuestionSerializer(serializers.ModelSerializer):
 
 
 class TrackedQuestionResultSerializer(serializers.ModelSerializer):
-    user = UserSerializer()
+    user = DuelUserSerializer()
 
     class Meta:
         model = TrackedQuestion
@@ -212,4 +223,3 @@ class TPSubmitAnswerSerializer(serializers.ModelSerializer):
         # Retrieve and order the questions by ID
         questions = obj.tournamentquestion_set.all().order_by('id')
         return TournamentQuestionSerializer(questions, many=True).data
-
