@@ -134,6 +134,9 @@ class Profile(models.Model):
     country = models.CharField(max_length=2, default='US')
     avatar = models.CharField(max_length=32, choices=AVATAR_CHOICES, default='violet')
     avatar_icon = models.CharField(max_length=32, choices=AVATAR_ICON_CHOICES, default='initial')
+    # Bot profiles use normal User rows so they work with rooms, Elo, avatars,
+    # and history. Email/notification jobs must always exclude this flag.
+    is_bot = models.BooleanField(default=False, db_index=True)
     max_streak = models.IntegerField(default=0)
     pets = models.ManyToManyField('api.Pet', related_name='owners', blank=True)
     goal = models.CharField(max_length=255,
@@ -517,6 +520,21 @@ class TrackedQuestion(models.Model):
         return f"{self.user.username} - {self.question.question} - {self.status}"
 
 
+class DuelEmote(models.Model):
+    """A lightweight in-duel reaction, including delayed bot reactions."""
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='emotes')
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='duel_emotes')
+    emoji = models.CharField(max_length=8)
+    created_at = models.DateTimeField(auto_now_add=True)
+    visible_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        ordering = ['visible_at', 'id']
+
+    def __str__(self):
+        return f"{self.sender.username} {self.emoji} in room {self.room_id}"
+
+
 class FriendRequest(models.Model):
     """Handles friend connections between users."""
     from_user = models.ForeignKey(User, related_name='sent_friend_requests', on_delete=models.CASCADE)
@@ -556,7 +574,7 @@ class Ranking(models.Model):
     def update_rankings(cls):
         """Recompute every user's rank in bulk (was 2 queries per user)."""
         profiles = list(
-            Profile.objects.order_by('-elo_rating', 'user_id')
+            Profile.objects.filter(is_bot=False).order_by('-elo_rating', 'user_id')
             .values_list('user_id', flat=True)
         )
         existing = {r.user_id: r for r in cls.objects.all()}

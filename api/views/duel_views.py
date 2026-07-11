@@ -1,14 +1,34 @@
+import random
+
 from django.contrib.auth.models import User
+from django.db.models import Q
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.response import Response
-from api.models import Room, TrackedQuestion
+from api.bot_duels import advance_bot, available_bot_user
+from api.models import DuelEmote, Room, TrackedQuestion
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from django.db.models import Q
-from api.views.serializers import RoomSerializer, TrackedQuestionSerializer, UserSerializer, \
-    TrackedQuestionResultSerializer
+from api.views.serializers import RoomSerializer, TrackedQuestionSerializer, TrackedQuestionResultSerializer
 
-from django.utils import timezone
+DUEL_EMOJIS = ('👍', '🔥', '😂', '😮')
+
+
+def _room_for_user(room_id, user):
+    return get_object_or_404(Room, Q(user1=user) | Q(user2=user), id=room_id)
+
+
+def _player_payload(user):
+    profile = user.profile
+    return {
+        'id': user.id,
+        'username': user.username,
+        'avatar': profile.avatar,
+        'avatar_icon': profile.avatar_icon,
+        'elo_rating': profile.elo_rating,
+        'is_bot': profile.is_bot,
+    }
 
 
 @api_view(['GET'])
@@ -23,7 +43,7 @@ def match(request):
     if user_in_room:
         return Response({'error': 'You are already matching or in a room'}, status=400)
 
-    room = Room.objects.filter(user2__isnull=True, status='Searching').first()
+    room = Room.objects.filter(user2__isnull=True, status='Searching').exclude(user1=request.user).first()
 
     if room:
         room.user2 = request.user
@@ -31,6 +51,10 @@ def match(request):
         room.save()
         return Response({'id': room.id, 'full': 'true'}, status=200)
     else:
+        bot = available_bot_user(exclude_user=request.user)
+        if bot:
+            room = Room.objects.create(user1=request.user, user2=bot, status='Battling')
+            return Response({'id': room.id, 'full': 'true'}, status=200)
         room = Room.objects.create(user1=request.user, status='Searching')
 
     serializer = RoomSerializer(room)
@@ -62,14 +86,29 @@ def get_match_questions(request):
 def update_match_question(request):
     data = request.data
     tracked_question_id = data.get('tracked_question_id')
-    result = data.get('result')
-    track_question = TrackedQuestion.objects.get(id=tracked_question_id)
-    if result == "correct":
-        track_question.status = "Correct"
-    else:
-        track_question.status = "Incorrect"
-    track_question.save()
-    return Response({'status': 'success'})
+    selected_choice = data.get('selected_choice')
+    if not tracked_question_id or not selected_choice:
+        return Response({'error': 'Missing tracked_question_id or selected_choice.'}, status=400)
+    track_question = get_object_or_404(
+        TrackedQuestion.objects.select_related('question'),
+        id=tracked_question_id,
+        user=request.user,
+        room__status='Battling',
+    )
+    if track_question.status != 'Blank':
+        return Response({'error': 'This question is already answered.'}, status=409)
+    if TrackedQuestion.objects.filter(
+        room=track_question.room,
+        user=request.user,
+        id__lt=track_question.id,
+        status='Blank',
+    ).exists():
+        return Response({'error': 'Answer the current question first.'}, status=409)
+
+    correct = track_question.question.answer_text == selected_choice
+    track_question.status = 'Correct' if correct else 'Incorrect'
+    track_question.save(update_fields=['status'])
+    return Response({'status': 'success', 'result': 'correct' if correct else 'incorrect'})
 
 
 @api_view(['GET'])
@@ -96,9 +135,12 @@ def get_room_status(request):
 def get_opponent_progres(request):
     data = request.data
     room_id = data.get('room_id')
-    room = Room.objects.get(id=room_id)
+    room = _room_for_user(room_id, request.user)
     user = request.user
     opponent = room.user1 if user != room.user1 else room.user2
+    if opponent and opponent.profile.is_bot:
+        # ponytail: polling advances bots; add a worker only when realtime scale needs one.
+        advance_bot(room, opponent)
     opponent_tracked_questions = TrackedQuestion.objects.filter(user=opponent, room=room).order_by('id')
     serializer = TrackedQuestionSerializer(opponent_tracked_questions, many=True)
     return Response(serializer.data)
@@ -122,16 +164,15 @@ def rejoin_match(request):
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def get_end_time(request):
     data = request.data
     room_id = data.get('room_id')
-    room = Room.objects.get(id=room_id)
-
-    if not room:
-        return Response({'error': 'No active battle found'}, status=404)
-    if room.battle_start_time == None:
+    room = _room_for_user(room_id, request.user)
+    if room.battle_start_time is None:
         room.battle_start_time = timezone.now()
-        room.save()
+        room.save(update_fields=['battle_start_time'])
     end_time = room.battle_start_time + timezone.timedelta(seconds=room.battle_duration)
 
     return Response({
@@ -140,25 +181,35 @@ def get_end_time(request):
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def end_match(request):
     data = request.data
     room_id = data.get('room_id')
-    room = Room.objects.get(id=room_id)
-
-    if not room:
-        return Response({'error': 'No active battle found'}, status=404)
-
+    room = _room_for_user(room_id, request.user)
+    if room.status == 'Ended':
+        return Response({'status': 'success'})
+    for player in (room.user1, room.user2):
+        if player.profile.is_bot:
+            advance_bot(room, player)
+    both_finished = not TrackedQuestion.objects.filter(room=room, status='Blank').exists()
+    if not both_finished and not room.is_battle_ended():
+        return Response({'error': 'The duel is still in progress.'}, status=409)
+    room.user1_score = TrackedQuestion.objects.filter(room=room, user=room.user1, status='Correct').count()
+    room.user2_score = TrackedQuestion.objects.filter(room=room, user=room.user2, status='Correct').count()
     room.status = 'Ended'
-    room.save()
+    room.save(update_fields=['user1_score', 'user2_score', 'status'])
 
     return Response({'status': 'success'})
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def get_results(request):
     data = request.data
     room_id = data.get('room_id')
-    room = Room.objects.get(id=room_id)
+    room = _room_for_user(room_id, request.user)
     tracked_questions_user1 = TrackedQuestion.objects.filter(user=room.user1, room=room).order_by('id')
     tracked_questions_user2 = TrackedQuestion.objects.filter(user=room.user2, room=room).order_by('id')
     serializer_user1 = TrackedQuestionResultSerializer(tracked_questions_user1, many=True)
@@ -173,12 +224,12 @@ def get_results(request):
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def cancel_match(request):
     data = request.data
     room_id = data.get('room_id')
-    room = Room.objects.get(id=room_id)
-    if not room:
-        return Response({'error': 'No active battle found'}, status=404)
+    room = get_object_or_404(Room, id=room_id, user1=request.user, status='Searching')
     room.delete()
     return Response({'status': 'success'})
 
@@ -218,48 +269,72 @@ def get_match_history(request, user_id=None):
 def get_match_info(request):
     data = request.data
     room_id = data.get('room_id')
-    room = Room.objects.get(id=room_id)
-    if not room:
-        return Response({'error': 'No active battle found'}, status=404)
+    room = _room_for_user(room_id, request.user)
     if room.user1 == request.user:
         opponent = room.user2
         user = room.user1
     else:
         opponent = room.user1
         user = room.user2
-    opponent_data = UserSerializer(opponent)
-    user_data = UserSerializer(user)
-    return Response({'opponent': opponent_data.data, 'currentUser': user_data.data})
+    return Response({'opponent': _player_payload(opponent), 'currentUser': _player_payload(user)})
+
+
+@api_view(['GET', 'POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def duel_emotes(request):
+    room_id = request.data.get('room_id') if request.method == 'POST' else request.query_params.get('room_id')
+    room = _room_for_user(room_id, request.user)
+    opponent = room.user1 if request.user == room.user2 else room.user2
+    now = timezone.now()
+
+    if request.method == 'POST':
+        if room.status != 'Battling':
+            return Response({'error': 'This duel has ended.'}, status=409)
+        emoji = request.data.get('emoji')
+        if emoji not in DUEL_EMOJIS:
+            return Response({'error': 'Invalid emote.'}, status=400)
+        last_sent = DuelEmote.objects.filter(room=room, sender=request.user).order_by('-created_at').first()
+        if last_sent and last_sent.created_at > now - timezone.timedelta(seconds=1):
+            return Response({'error': 'Slow down.'}, status=429)
+        DuelEmote.objects.create(room=room, sender=request.user, emoji=emoji, visible_at=now)
+        if opponent and opponent.profile.is_bot:
+            DuelEmote.objects.create(
+                room=room,
+                sender=opponent,
+                emoji=random.choice(DUEL_EMOJIS),
+                visible_at=now + timezone.timedelta(seconds=random.uniform(1.5, 3.5)),
+            )
+
+    if opponent and opponent.profile.is_bot:
+        latest_bot = DuelEmote.objects.filter(room=room, sender=opponent).order_by('-visible_at').first()
+        if (not latest_bot or latest_bot.visible_at < now - timezone.timedelta(seconds=8)) and random.random() < 0.25:
+            DuelEmote.objects.create(
+                room=room,
+                sender=opponent,
+                emoji=random.choice(DUEL_EMOJIS),
+                visible_at=now + timezone.timedelta(seconds=random.uniform(0.5, 2)),
+            )
+
+    emotes = list(
+        DuelEmote.objects.filter(room=room, visible_at__lte=now)
+        .order_by('-visible_at', '-id')
+        .values('id', 'sender_id', 'emoji', 'visible_at')[:20]
+    )
+    return Response({'emotes': list(reversed(emotes))})
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def set_winner(request):
-    data = request.data
-    room_id = data.get('room_id')
-    winner = data.get('winner')
-    room = Room.objects.get(id=room_id)
-    if winner == 'Tie':
-        # new_elo1, new_elo2 = get_new_elo(0.5, old_elo1, old_elo2)
-        return Response({'status': 'success'})
-    if room.user1.username == winner:
-        # new_elo1, new_elo2 = get_new_elo(1, old_elo1, old_elo2)
-        room.winner = room.user1
-    else:
-        # new_elo1, new_elo2 = get_new_elo(0, old_elo1, old_elo2)
-        room.winner = room.user2
-    room.status = 'Ended'
-    room.save()
+    _room_for_user(request.data.get('room_id'), request.user)
     return Response({'status': 'success'})
 
 
 @api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def set_score(request):
-    data = request.data
-    room_id = data.get('room_id')
-    user1_score = data.get('user1_score')
-    user2_score = data.get('user2_score')
-    room = Room.objects.get(id=room_id)
-    room.user1_score = user1_score
-    room.user2_score = user2_score
-    room.save()
+    _room_for_user(request.data.get('room_id'), request.user)
     return Response({'status': 'success'})

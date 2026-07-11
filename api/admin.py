@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 
-from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
+from api.models import Question, Profile, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
     Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats
 
@@ -18,7 +18,7 @@ class ProfileInline(admin.StackedInline):
     model = Profile
     can_delete = False
     fields = [
-        'role', 'grade', 'country', 'elo_rating',
+        'role', 'grade', 'country', 'elo_rating', 'is_bot',
         'avatar', 'avatar_icon', 'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
     ]
     extra = 0
@@ -78,10 +78,10 @@ class QuestionAdmin(admin.ModelAdmin):
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = [
-        'user', 'role', 'grade', 'avatar', 'avatar_icon', 'elo_rating',
+        'user', 'role', 'grade', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
         'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
     ]
-    list_filter = ['role', 'grade', 'is_premium']
+    list_filter = ['role', 'grade', 'is_premium', 'is_bot']
     search_fields = ['user__username', 'user__email', 'stripe_customer_id', 'stripe_subscription_id']
 
 
@@ -110,6 +110,7 @@ class PracticeActiveQuestionAdmin(admin.ModelAdmin):
 
 admin.site.register(Room)
 admin.site.register(TrackedQuestion)
+admin.site.register(DuelEmote)
 admin.site.register(FriendRequest)
 admin.site.register(UserStatistics)
 admin.site.register(PowerSprintStatistics)

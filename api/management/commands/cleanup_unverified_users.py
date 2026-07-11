@@ -57,6 +57,7 @@ class Command(BaseCommand):
             .filter(last_login__isnull=True)   # never logged in
             .filter(date_joined__lt=cutoff)    # old enough
             .filter(is_staff=False, is_superuser=False)  # never touch staff
+            .exclude(profile__is_bot=True)     # bot rivals are deliberate system accounts
             .order_by('date_joined')
         )
 
