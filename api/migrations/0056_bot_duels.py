@@ -57,6 +57,10 @@ def seed_duel_bots(apps, schema_editor):
 
 class Migration(migrations.Migration):
 
+    # PostgreSQL must commit the seeded Profile rows before Django creates the
+    # deferred is_bot index, otherwise pending FK trigger events block it.
+    atomic = False
+
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
         ('api', '0055_manual_practice_timer'),
