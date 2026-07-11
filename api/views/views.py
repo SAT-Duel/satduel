@@ -206,7 +206,7 @@ def check_answer(request):
             )
         from api.views.practice_views import practice_current_streak, update_daily_streak
         rating_update = apply_practice_elo(request.user, question, correct)
-        record_practice_answer(request.user, question, correct, subject)
+        record_practice_answer(request.user, question, correct, subject, selected_choice)
         payload['rated'] = rating_update['rated']
         payload['quota'] = quota_payload(request.user)
         payload['sp_elo_rating'] = rating_update['new_rating']
