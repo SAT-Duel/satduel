@@ -1,4 +1,4 @@
-# Generated manually for Prism Archive avatar icons.
+# Generated manually for profile avatar icons.
 
 from django.db import migrations, models
 

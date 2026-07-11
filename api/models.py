@@ -5,6 +5,17 @@ import random
 import pytz
 
 
+DUEL_EMOJIS = (
+    '👍', '🔥', '😂', '😮', '🎉', '💀', '👀', '🧠', '💪', '😎',
+    '🤔', '😭', '🫡', '🚀', '⚡', '🎯', '🏆', '🤝', '😅', '🙃',
+    '😤', '🥳', '🤯', '👏', '✨', '😈', '🐐', '✅', '❌', '🫠',
+)
+
+
+def default_duel_emotes():
+    return list(DUEL_EMOJIS[:4])
+
+
 # =========================================================
 # Core Learning Models
 # =========================================================
@@ -137,6 +148,7 @@ class Profile(models.Model):
     # Bot profiles use normal User rows so they work with rooms, Elo, avatars,
     # and history. Email/notification jobs must always exclude this flag.
     is_bot = models.BooleanField(default=False, db_index=True)
+    duel_emotes = models.JSONField(default=default_duel_emotes)
     max_streak = models.IntegerField(default=0)
     pets = models.ManyToManyField('api.Pet', related_name='owners', blank=True)
     goal = models.CharField(max_length=255,
@@ -444,6 +456,10 @@ class Room(models.Model):
 
         user1_profile.update_elo(user2_start, result_user1)
         user2_profile.update_elo(user1_start, result_user2)
+        for profile in (user1_profile, user2_profile):
+            if profile.is_bot and profile.elo_rating > 1799:
+                profile.elo_rating = 1799
+                profile.save(update_fields=['elo_rating'])
         self.user1_elo_after = user1_profile.elo_rating
         self.user2_elo_after = user2_profile.elo_rating
         Room.objects.filter(pk=self.pk).update(
@@ -585,7 +601,7 @@ class Ranking(models.Model):
     def update_rankings(cls):
         """Recompute every user's rank in bulk (was 2 queries per user)."""
         profiles = list(
-            Profile.objects.filter(is_bot=False).order_by('-elo_rating', 'user_id')
+            Profile.objects.order_by('-elo_rating', 'user_id')
             .values_list('user_id', flat=True)
         )
         existing = {r.user_id: r for r in cls.objects.all()}

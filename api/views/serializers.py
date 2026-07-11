@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
+from api.models import DUEL_EMOJIS, Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
@@ -37,10 +37,15 @@ class DuelUserSerializer(serializers.ModelSerializer):
     avatar = serializers.CharField(source='profile.avatar', read_only=True)
     avatar_icon = serializers.CharField(source='profile.avatar_icon', read_only=True)
     elo_rating = serializers.IntegerField(source='profile.elo_rating', read_only=True)
+    duel_emotes = serializers.JSONField(source='profile.duel_emotes', read_only=True)
+    is_premium = serializers.SerializerMethodField()
+
+    def get_is_premium(self, obj):
+        return obj.profile.has_premium
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'avatar', 'avatar_icon', 'elo_rating']
+        fields = ['id', 'username', 'avatar', 'avatar_icon', 'elo_rating', 'duel_emotes', 'is_premium']
 
 
 class ProfileSerializer(serializers.ModelSerializer):
@@ -49,11 +54,16 @@ class ProfileSerializer(serializers.ModelSerializer):
     # Practice ratings live on PracticeStats; keep the old payload keys.
     sp_elo_rating = serializers.SerializerMethodField()
     math_elo_rating = serializers.SerializerMethodField()
+    duel_emotes = serializers.ListField(
+        child=serializers.ChoiceField(choices=DUEL_EMOJIS),
+        min_length=4,
+        max_length=4,
+    )
 
     class Meta:
         model = Profile
         fields = ['id', 'user', 'biography', 'grade', 'country', 'avatar', 'avatar_icon', 'elo_rating', 'sp_elo_rating',
-                  'math_elo_rating', 'is_premium', 'max_streak']
+                  'math_elo_rating', 'is_premium', 'max_streak', 'duel_emotes']
 
     def get_is_premium(self, obj):
         return obj.has_premium
@@ -69,6 +79,11 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     def get_math_elo_rating(self, obj):
         return self._subject_elo(obj, 'math')
+
+    def validate_duel_emotes(self, value):
+        if len(set(value)) != 4:
+            raise serializers.ValidationError('Choose four different duel emotes.')
+        return value
 
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})

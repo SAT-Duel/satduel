@@ -201,19 +201,18 @@ class RankingUpdateTests(APITestCase):
             users.append(u)
         Ranking.update_rankings()
         ranks = {r.user.username: r.rank for r in Ranking.objects.all()}
-        # u1 has highest elo (1800) -> rank 1
         self.assertEqual(ranks['u1'], 1)
-        self.assertEqual(ranks['u2'], 2)  # 1500
-        self.assertEqual(ranks['u0'], 3)  # 1200
-        # ranks are unique and contiguous
-        self.assertEqual(sorted(ranks.values()), [1, 2, 3])
+        self.assertLess(ranks['u2'], ranks['u0'])
+        self.assertTrue(User.objects.filter(profile__is_bot=True, ranking__isnull=False).exists())
+        self.assertEqual(sorted(ranks.values()), list(range(1, len(ranks) + 1)))
 
     def test_rankings_idempotent(self):
         u = User.objects.create_user(username='solo', email='s@e.com')
         Profile.objects.create(user=u, elo_rating=1500)
         Ranking.update_rankings()
         Ranking.update_rankings()  # second run must not blow up on unique constraint
-        self.assertEqual(Ranking.objects.get(user=u).rank, 1)
+        self.assertIsNotNone(Ranking.objects.get(user=u).rank)
+        self.assertEqual(Ranking.objects.count(), Profile.objects.count())
 
 
 class LeaderboardViewTests(APITestCase):
@@ -237,11 +236,12 @@ class LeaderboardViewTests(APITestCase):
     def test_duel_leaderboard_orders_by_duel_rating(self):
         resp = self.client.get(reverse('leaderboard'), {'metric': 'duel'})
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual([entry['user']['username'] for entry in resp.data['entries']], [
-            'cipher', 'nova', 'ember', 'mira',
-        ])
+        names = [entry['user']['username'] for entry in resp.data['entries']]
+        self.assertLess(names.index('cipher'), names.index('nova'))
+        self.assertLess(names.index('nova'), names.index('ember'))
+        self.assertLess(names.index('ember'), names.index('mira'))
+        self.assertTrue(any(Profile.objects.get(user__username=name).is_bot for name in names))
         self.assertEqual(resp.data['current_user']['user']['username'], 'ember')
-        self.assertEqual(resp.data['current_user']['rank'], 3)
 
     def test_practice_leaderboard_orders_by_practice_rating(self):
         resp = self.client.get(reverse('leaderboard'), {'metric': 'practice', 'limit': 2})
@@ -339,6 +339,13 @@ class BotDuelTests(APITestCase):
     def _bot(self):
         return User.objects.filter(profile__is_bot=True).select_related('profile').first()
 
+    def _bot_for_emote_mode(self, mode):
+        from api.views.duel_views import _bot_emote_mode
+        return next(
+            bot for bot in User.objects.filter(profile__is_bot=True).select_related('profile')
+            if _bot_emote_mode(bot) == mode
+        )
+
     def _room(self, started_seconds_ago=0):
         room = Room.objects.create(user1=self.user, user2=self._bot(), status='Battling')
         if started_seconds_ago:
@@ -351,9 +358,30 @@ class BotDuelTests(APITestCase):
         self.assertEqual(bots.count(), 24)
         self.assertTrue(all(user.email.endswith('@bots.satduel.invalid') for user in bots))
         self.assertTrue(all(not user.has_usable_password() for user in bots))
-        icons = set(bots.values_list('profile__avatar_icon', flat=True))
-        self.assertIn('initial', icons)
-        self.assertGreater(len(icons), 1)
+        self.assertEqual(bots.exclude(profile__avatar_icon='initial').count(), 6)
+        self.assertEqual(bots.filter(profile__is_premium=True).count(), 2)
+        self.assertLessEqual(bots.order_by('-profile__elo_rating').first().profile.elo_rating, 1750)
+        self.assertTrue(all(len(user.profile.duel_emotes) == 4 for user in bots.select_related('profile')))
+
+    def test_bot_profiles_are_searchable_without_exposing_email(self):
+        response = self.client.get('/api/profile/search/', {'q': 'maddie'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data[0]['username'], 'maddie07')
+        self.assertNotIn('email', response.data[0])
+
+    def test_duel_leaderboard_includes_bots_but_practice_does_not(self):
+        duel = self.client.get('/api/leaderboard/', {'metric': 'duel'})
+        practice = self.client.get('/api/leaderboard/', {'metric': 'practice'})
+        bot_names = set(User.objects.filter(profile__is_bot=True).values_list('username', flat=True))
+        self.assertTrue(bot_names.intersection(row['user']['username'] for row in duel.data['entries']))
+        self.assertFalse(bot_names.intersection(row['user']['username'] for row in practice.data['entries']))
+
+    def test_profile_requires_four_unique_duel_emotes(self):
+        invalid = self.client.patch('/api/profile/', {'duel_emotes': ['👍', '👍', '🔥', '😂']}, format='json')
+        valid = self.client.patch('/api/profile/', {'duel_emotes': ['🎉', '💀', '👀', '🧠']}, format='json')
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(valid.status_code, 200)
+        self.assertEqual(valid.data['duel_emotes'], ['🎉', '💀', '👀', '🧠'])
 
     def test_online_list_includes_self_and_hides_bot_metadata(self):
         response = self.client.get('/api/online_users/')
@@ -401,6 +429,26 @@ class BotDuelTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertGreater(sum(row['status'] != 'Blank' for row in response.data), 0)
 
+    def test_bot_accuracy_uses_current_elo_and_rng(self):
+        from api.bot_duels import advance_bot, bot_accuracy
+        room = self._room(started_seconds_ago=100)
+        bot = room.user2
+        bot.profile.elo_rating = 1200
+        bot.profile.save(update_fields=['elo_rating'])
+        with patch('api.bot_duels.random.randrange', return_value=60):
+            advance_bot(room, bot)
+        first = TrackedQuestion.objects.filter(room=room, user=bot).order_by('id').first()
+        self.assertEqual(first.status, 'Incorrect')
+
+        TrackedQuestion.objects.filter(room=room, user=bot).update(status='Blank')
+        bot.profile.elo_rating = 1700
+        bot.profile.save(update_fields=['elo_rating'])
+        with patch('api.bot_duels.random.randrange', return_value=60):
+            advance_bot(room, bot)
+        first.refresh_from_db()
+        self.assertEqual(first.status, 'Correct')
+        self.assertLess(bot_accuracy(1200), bot_accuracy(1700))
+
     def test_duel_answer_is_graded_server_side(self):
         room = self._room()
         tracked = TrackedQuestion.objects.filter(room=room, user=self.user).order_by('id').first()
@@ -419,7 +467,11 @@ class BotDuelTests(APITestCase):
     @patch('api.views.duel_views.random.choice', return_value='🔥')
     @patch('api.views.duel_views.random.uniform', return_value=0)
     def test_bot_responds_to_emote(self, _uniform, _choice, _random):
-        room = self._room()
+        room = Room.objects.create(
+            user1=self.user,
+            user2=self._bot_for_emote_mode('single'),
+            status='Battling',
+        )
         response = self.client.post('/api/match/emotes/', {
             'room_id': room.id,
             'emoji': '👍',
@@ -427,6 +479,21 @@ class BotDuelTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(DuelEmote.objects.filter(room=room).count(), 2)
         self.assertEqual({row['emoji'] for row in response.data['emotes']}, {'👍', '🔥'})
+
+    @patch('api.views.duel_views.random.random', return_value=1)
+    @patch('api.views.duel_views.random.randint', return_value=3)
+    @patch('api.views.duel_views.random.choice', return_value='🔥')
+    @patch('api.views.duel_views.random.uniform', return_value=0)
+    def test_bot_emote_personalities_include_none_and_spam(self, _uniform, _choice, _randint, _random):
+        for mode, expected in [('none', 0), ('spam', 3)]:
+            bot = self._bot_for_emote_mode(mode)
+            room = Room.objects.create(user1=self.user, user2=bot, status='Battling')
+            response = self.client.post('/api/match/emotes/', {
+                'room_id': room.id,
+                'emoji': '👍',
+            }, format='json')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(DuelEmote.objects.filter(room=room, sender=bot).count(), expected)
 
     def test_end_match_calculates_scores_before_elo(self):
         room = self._room()

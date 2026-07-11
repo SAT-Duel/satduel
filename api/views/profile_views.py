@@ -8,7 +8,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import ProfileSerializer, \
-    ProfileBiographySerializer, UserSerializer, FriendRequestSerializer
+    ProfileBiographySerializer, DuelUserSerializer, UserSerializer, FriendRequestSerializer
 from rest_framework import status
 from api.views.practice_views import practice_stats_breakdown
 
@@ -42,9 +42,12 @@ def _stats_subquery(field, subject, default):
     )
 
 
-def _annotated_profiles():
+def _annotated_profiles(include_bots=False):
     """Profiles with per-subject practice stats attached for ranking/display."""
-    return Profile.objects.filter(is_bot=False).select_related('user').annotate(
+    profiles = Profile.objects.select_related('user')
+    if not include_bots:
+        profiles = profiles.filter(is_bot=False)
+    return profiles.annotate(
         english_elo=_stats_subquery('elo', 'english', 1200),
         math_elo=_stats_subquery('elo', 'math', 1200),
         english_answered_count=_stats_subquery('answered', 'english', 0),
@@ -126,7 +129,7 @@ def leaderboard_view(request):
 
     limit = _leaderboard_limit(request.query_params.get('limit'))
     ordering = LEADERBOARD_METRICS[metric]['ordering']
-    ranked_profiles = list(_annotated_profiles().order_by(*ordering))
+    ranked_profiles = list(_annotated_profiles(include_bots=metric == 'duel').order_by(*ordering))
 
     current_entry = None
     entries = []
@@ -215,8 +218,8 @@ def update_streak(request):
 @api_view(['GET'])
 def search_users(request):
     query = request.query_params.get('q', '')
-    users = User.objects.filter(username__icontains=query, profile__is_bot=False)
-    serializer = UserSerializer(users, many=True)
+    users = User.objects.filter(username__icontains=query).select_related('profile')[:20]
+    serializer = DuelUserSerializer(users, many=True)
     return Response(serializer.data)
 
 
