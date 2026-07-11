@@ -794,6 +794,40 @@ class PracticeTierTests(APITestCase):
         resp = self.client.get('/api/practice/next/')
         self.assertEqual(resp.data['question']['id'], self.questions[4].id)
 
+    def test_next_does_not_repeat_after_finishing_a_topic(self):
+        from api.models import PracticeAttempt
+        for question in self.questions:
+            PracticeAttempt.objects.create(user=self.user, question=question, correct=True)
+
+        resp = self.client.get('/api/practice/next/')
+
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data['error'], 'completed_topic')
+
+    def test_next_reports_when_a_premium_topic_has_no_questions(self):
+        self.profile.is_premium = True
+        self.profile.save(update_fields=['is_premium'])
+
+        resp = self.client.get('/api/practice/next/', {'type': 'Inferences'})
+
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data['error'], 'no_questions')
+
+    def test_practice_history_includes_selected_answer_and_review(self):
+        self.questions[0].explanation = 'Because B is correct.'
+        self.questions[0].save(update_fields=['explanation'])
+        self._answer(self.questions[0], 'b')
+
+        resp = self.client.get('/api/practice/history/')
+
+        self.assertEqual(resp.status_code, 200)
+        attempt = resp.data['attempts'][0]
+        self.assertTrue(attempt['correct'])
+        self.assertEqual(attempt['selected_choice'], 'b')
+        self.assertEqual(attempt['question']['correct_choice_label'], 'B')
+        self.assertEqual(attempt['question']['correct_answer'], 'b')
+        self.assertEqual(attempt['question']['explanation'], 'Because B is correct.')
+
 
 class BillingViewsTests(APITestCase):
     def setUp(self):

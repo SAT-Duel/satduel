@@ -97,9 +97,12 @@ def practice_stats_breakdown(user):
 practice_attempt_breakdown = practice_stats_breakdown
 
 
-def record_practice_answer(user, question, correct, subject):
+def record_practice_answer(user, question, correct, subject, selected_choice):
     """Log the attempt and bump the subject's lifetime counters atomically."""
-    PracticeAttempt.objects.create(user=user, question=question, correct=correct, subject=subject)
+    PracticeAttempt.objects.create(
+        user=user, question=question, correct=correct, subject=subject,
+        selected_choice=selected_choice,
+    )
     stats = get_practice_stats(user, subject)
     stats.answered = F('answered') + 1
     if correct:
@@ -204,7 +207,11 @@ def apply_practice_elo(user, question, correct):
 # ---------------------------------------------------------------------------
 
 def pick_practice_question(user, subject, question_type=None):
-    """Pick a question near the user's rating, preferring ones never attempted."""
+    """Pick an unattempted question near the user's rating.
+
+    The caller distinguishes an empty topic from a completed one so practice
+    never silently recycles a question the student already answered.
+    """
     types = SUBJECT_TYPES[subject]
     user_rating = get_practice_stats(user, subject).elo
 
@@ -214,27 +221,29 @@ def pick_practice_question(user, subject, question_type=None):
     else:
         base = base.filter(question_type__in=types)
 
+    if not base.exists():
+        return None, 'no_questions'
+
     attempted_ids = set(
         PracticeAttempt.objects.filter(user=user).values_list('question_id', flat=True)
     )
+    fresh = base.exclude(id__in=attempted_ids)
+    if not fresh.exists():
+        return None, 'completed_topic'
 
     # Widen the rating window until we find fresh questions.
     for window in (250, 500, 1000, None):
-        qs = base
+        qs = fresh
         if window is not None:
             qs = qs.filter(
                 sp_elo_rating__gte=user_rating - window,
                 sp_elo_rating__lte=user_rating + window,
             )
-        fresh_ids = list(qs.exclude(id__in=attempted_ids).values_list('id', flat=True))
+        fresh_ids = list(qs.values_list('id', flat=True))
         if fresh_ids:
-            return Question.objects.get(id=random.choice(fresh_ids))
+            return Question.objects.get(id=random.choice(fresh_ids)), None
 
-    # Everything's been attempted: recycle from the full pool.
-    all_ids = list(base.values_list('id', flat=True))
-    if not all_ids:
-        return None
-    return Question.objects.get(id=random.choice(all_ids))
+    return None, 'completed_topic'
 
 
 # ---------------------------------------------------------------------------
@@ -273,9 +282,20 @@ def next_question(request):
             'quota': quota, 'subject': subject,
         })
 
-    question = pick_practice_question(request.user, subject, selected_type)
+    question, empty_state = pick_practice_question(request.user, subject, selected_type)
     if question is None:
-        return Response({'error': 'No questions available.'}, status=status.HTTP_404_NOT_FOUND)
+        topic = selected_type or 'all topics'
+        if empty_state == 'completed_topic':
+            detail = f'You answered every {subject} practice problem in {topic}.'
+        else:
+            detail = f'No {subject} practice questions are available in {topic} yet.'
+        return Response({
+            'error': empty_state,
+            'detail': detail,
+            'subject': subject,
+            'topic': selected_type or 'any',
+            'quota': quota,
+        }, status=status.HTTP_404_NOT_FOUND)
 
     active, _ = PracticeActiveQuestion.objects.get_or_create(
         user=request.user,
@@ -302,6 +322,70 @@ def practice_status(request):
         'stats': stats,
         'topics': SUBJECT_TYPES,
         'daily': daily_snapshot(request.user),
+    })
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def practice_history(request):
+    """Return the user's past practice answers, newest first."""
+    subject = request.GET.get('subject')
+    if subject not in SUBJECTS:
+        subject = None
+    try:
+        offset = max(0, int(request.GET.get('offset', 0)))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = min(50, max(1, int(request.GET.get('limit', 20))))
+    except (TypeError, ValueError):
+        limit = 20
+
+    # Do not expose a known answer while the same question is currently live
+    # in a duel or tournament.
+    from api.models import TournamentParticipation, TrackedQuestion
+    tournament_questions = TournamentParticipation.objects.filter(
+        user=request.user, status='Active',
+    ).values_list('tournament__questions', flat=True)
+    duel_questions = TrackedQuestion.objects.filter(
+        user=request.user, room__status='Battling', status='Blank',
+    ).values_list('question_id', flat=True)
+
+    attempts = PracticeAttempt.objects.filter(user=request.user).exclude(
+        question_id__in=tournament_questions,
+    ).exclude(
+        question_id__in=duel_questions,
+    )
+    if subject:
+        attempts = attempts.filter(subject=subject)
+    attempts = attempts.select_related('question').order_by('-created_at', '-id')
+    page = list(attempts[offset:offset + limit + 1])
+    has_more = len(page) > limit
+
+    return Response({
+        'attempts': [{
+            'id': attempt.id,
+            'subject': attempt.subject,
+            'correct': attempt.correct,
+            'selected_choice': attempt.selected_choice,
+            'created_at': attempt.created_at.isoformat(),
+            'question': {
+                'id': attempt.question_id,
+                'question': attempt.question.question,
+                'choices': [
+                    attempt.question.choice_a, attempt.question.choice_b,
+                    attempt.question.choice_c, attempt.question.choice_d,
+                ],
+                'difficulty': attempt.question.difficulty,
+                'question_type': attempt.question.question_type,
+                'correct_choice_label': attempt.question.answer,
+                'correct_answer': attempt.question.answer_text,
+                'explanation': attempt.question.explanation,
+            },
+        } for attempt in page[:limit]],
+        'has_more': has_more,
+        'next_offset': offset + limit if has_more else None,
     })
 
 

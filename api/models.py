@@ -657,6 +657,9 @@ class PracticeAttempt(models.Model):
         db_index=True,
     )
     correct = models.BooleanField()
+    # Keep the answer text submitted at the time of the attempt. Older rows
+    # predate answer-history, so they intentionally remain blank.
+    selected_choice = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

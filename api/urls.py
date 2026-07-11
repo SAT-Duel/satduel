@@ -107,6 +107,7 @@ urlpatterns = [
     # Adaptive practice (quota-enforced)
     path('practice/next/', practice_views.next_question, name='practice_next'),
     path('practice/status/', practice_views.practice_status, name='practice_status'),
+    path('practice/history/', practice_views.practice_history, name='practice_history'),
 
     # Billing
     path('billing/create_checkout_session/', billing_views.create_checkout_session, name='billing_create_checkout_session'),
