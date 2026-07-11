@@ -131,19 +131,25 @@ def get_quota(user):
     """Return (used_today, limit, has_premium). limit is None for premium."""
     profile = getattr(user, 'profile', None)
     has_premium = bool(profile and profile.has_premium)
-    today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    used = PracticeAttempt.objects.filter(user=user, created_at__gte=today_start).count()
+    start, end = _local_day_bounds_utc(profile, _local_today(profile))
+    used = PracticeAttempt.objects.filter(
+        user=user, created_at__gte=start, created_at__lt=end,
+    ).count()
     limit = None if has_premium else settings.FREE_DAILY_LIMIT
     return used, limit, has_premium
 
 
 def quota_payload(user):
     used, limit, has_premium = get_quota(user)
+    profile = getattr(user, 'profile', None)
+    _, reset_at = _local_day_bounds_utc(profile, _local_today(profile))
     return {
         'used': used,
         'limit': limit,
         'remaining': None if limit is None else max(0, limit - used),
         'is_premium': has_premium,
+        'reset_at': reset_at.isoformat(),
+        'timezone': str(_user_tz(profile)),
     }
 
 
@@ -326,7 +332,9 @@ def _local_day_bounds_utc(profile, local_date):
     """UTC datetimes spanning the given local calendar day."""
     tz = _user_tz(profile)
     start = tz.localize(datetime.datetime.combine(local_date, datetime.time.min))
-    end = start + datetime.timedelta(days=1)
+    end = tz.localize(datetime.datetime.combine(
+        local_date + datetime.timedelta(days=1), datetime.time.min,
+    ))
     return start.astimezone(pytz.UTC), end.astimezone(pytz.UTC)
 
 
@@ -358,6 +366,7 @@ def update_daily_streak(user):
 
     today = _local_today(profile)
     count = _attempts_on(user, profile, today)
+    _, day_ends_at = _local_day_bounds_utc(profile, today)
     completed = count >= goal
     extended = False
 
@@ -383,6 +392,8 @@ def update_daily_streak(user):
         'streak': effective_streak(profile, today),
         'longest': profile.longest_practice_streak,
         'streak_extended': extended,
+        'day_ends_at': day_ends_at.isoformat(),
+        'timezone': str(_user_tz(profile)),
     }
 
 
@@ -415,6 +426,30 @@ def week_strip(user, profile):
     return days
 
 
+def practice_activity(user, days=365):
+    """Daily answered-question totals for the profile activity grid."""
+    profile = getattr(user, 'profile', None)
+    today = _local_today(profile)
+    start_date = today - datetime.timedelta(days=days - 1)
+    start_utc, _ = _local_day_bounds_utc(profile, start_date)
+    _, end_utc = _local_day_bounds_utc(profile, today)
+    tz = _user_tz(profile)
+    counts = {}
+    attempts = PracticeAttempt.objects.filter(
+        user=user, created_at__gte=start_utc, created_at__lt=end_utc,
+    ).values_list('created_at', 'subject')
+    for stamp, subject in attempts:
+        local_date = stamp.astimezone(tz).date()
+        day = counts.setdefault(local_date, {'count': 0, 'english': 0, 'math': 0})
+        day['count'] += 1
+        day[subject] += 1
+
+    return [
+        {'date': date.isoformat(), **counts.get(date, {'count': 0, 'english': 0, 'math': 0})}
+        for date in (start_date + datetime.timedelta(days=offset) for offset in range(days))
+    ]
+
+
 def daily_snapshot(user):
     """Full streak block for dashboards: today's progress + week strip."""
     profile = getattr(user, 'profile', None)
@@ -424,6 +459,7 @@ def daily_snapshot(user):
                 'streak': 0, 'longest': 0, 'week': []}
     today = _local_today(profile)
     count = _attempts_on(user, profile, today)
+    _, day_ends_at = _local_day_bounds_utc(profile, today)
     return {
         'count': count,
         'goal': goal,
@@ -431,4 +467,6 @@ def daily_snapshot(user):
         'streak': effective_streak(profile, today),
         'longest': profile.longest_practice_streak,
         'week': week_strip(user, profile),
+        'day_ends_at': day_ends_at.isoformat(),
+        'timezone': str(_user_tz(profile)),
     }

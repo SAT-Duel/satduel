@@ -592,6 +592,36 @@ class PracticeTierTests(APITestCase):
         self.assertIn('question', resp.data)
         self.assertEqual(resp.data['quota']['limit'], 25)
         self.assertFalse(resp.data['quota']['is_premium'])
+        self.assertIn('reset_at', resp.data['quota'])
+
+    def test_quota_uses_the_profile_local_day(self):
+        import datetime
+        from api.models import PracticeAttempt
+
+        self.profile.timezone = 'America/Los_Angeles'
+        self.profile.save(update_fields=['timezone'])
+        old = PracticeAttempt.objects.create(
+            user=self.user, question=self.questions[0], correct=True,
+        )
+        current = PracticeAttempt.objects.create(
+            user=self.user, question=self.questions[1], correct=True,
+        )
+        PracticeAttempt.objects.filter(pk=old.pk).update(
+            created_at=datetime.datetime(2026, 7, 10, 1, tzinfo=datetime.timezone.utc),
+        )
+        PracticeAttempt.objects.filter(pk=current.pk).update(
+            created_at=datetime.datetime(2026, 7, 10, 23, tzinfo=datetime.timezone.utc),
+        )
+        now = datetime.datetime(2026, 7, 11, 1, tzinfo=datetime.timezone.utc)
+
+        with patch('api.views.practice_views.timezone.now', return_value=now):
+            resp = self.client.get('/api/practice/status/')
+
+        self.assertEqual(resp.data['quota']['used'], 1)
+        self.assertEqual(resp.data['quota']['timezone'], 'America/Los_Angeles')
+        self.assertEqual(
+            resp.data['quota']['reset_at'], '2026-07-11T07:00:00+00:00',
+        )
 
     def test_next_question_reuses_active_until_answered(self):
         first = self.client.get('/api/practice/next/')
@@ -1125,6 +1155,39 @@ class PracticeStreakTests(APITestCase):
         self.assertTrue(resp.data['daily']['completed_today'])
         self.assertTrue(resp.data['daily']['streak_extended'])
         self.assertEqual(resp.data['daily']['streak'], 1)
+        self.assertIn('day_ends_at', resp.data['daily'])
+
+    def test_local_day_bounds_follow_daylight_saving_time(self):
+        import datetime
+        from api.views.practice_views import _local_day_bounds_utc
+
+        self.profile.timezone = 'America/New_York'
+        start, end = _local_day_bounds_utc(self.profile, datetime.date(2026, 3, 8))
+
+        self.assertEqual(end - start, datetime.timedelta(hours=23))
+
+    def test_profile_activity_tracks_answers_not_logins(self):
+        self._answer(self.questions[0])
+
+        resp = self.client.get('/api/infinite_questions_profile/')
+
+        self.assertEqual(len(resp.data['activity']), 365)
+        self.assertEqual(resp.data['activity'][-1]['count'], 1)
+
+    def test_profile_keeps_best_correct_streak_after_a_miss(self):
+        for question in self.questions[:3]:
+            self._answer(question)
+        self.client.post('/api/check_answer/', {
+            'question_id': self.questions[3].id,
+            'selected_choice': 'b',
+            'mode': 'practice',
+        }, format='json')
+
+        resp = self.client.get('/api/profile/')
+        stats = self.client.get('/api/infinite_questions_profile/')
+
+        self.assertEqual(resp.data['max_streak'], 3)
+        self.assertEqual(stats.data['current_streak'], 0)
 
     def test_no_double_extension_same_day(self):
         for i in range(10):

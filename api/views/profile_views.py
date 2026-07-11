@@ -10,7 +10,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import ProfileSerializer, \
     ProfileBiographySerializer, DuelUserSerializer, UserSerializer, FriendRequestSerializer
 from rest_framework import status
-from api.views.practice_views import practice_stats_breakdown
+from api.views.practice_views import practice_activity, practice_stats_breakdown
 
 LEADERBOARD_METRICS = {
     'duel': {
@@ -59,6 +59,7 @@ def _practice_statistics_payload(user):
     breakdown = practice_stats_breakdown(user)
     breakdown['correct_number'] = breakdown['practice_correct']
     breakdown['incorrect_number'] = breakdown['practice_answered'] - breakdown['practice_correct']
+    breakdown['activity'] = practice_activity(user)
     return breakdown
 
 
