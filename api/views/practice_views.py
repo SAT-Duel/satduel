@@ -18,7 +18,7 @@ check_answer call from any surface):
 import random
 
 from django.conf import settings
-from django.db.models import Avg, F, Q
+from django.db.models import F, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (
@@ -31,7 +31,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api import generation
-from api.models import PracticeAttempt, PracticeStats, Question
+from api.models import PracticeActiveQuestion, PracticeAttempt, PracticeStats, Question
 from api.views.serializers import QuestionSerializer
 
 DEFAULT_QUESTION_TYPES = [
@@ -89,15 +89,6 @@ def practice_stats_breakdown(user):
         round(payload['practice_correct'] / payload['practice_answered'] * 100)
         if payload['practice_answered'] else None
     )
-    avg_times = dict(
-        PracticeAttempt.objects
-        .filter(user=user, time_taken__isnull=False, time_taken__lte=AVG_TIME_CUTOFF_SECONDS)
-        .values_list('subject')
-        .annotate(avg=Avg('time_taken'))
-    )
-    for subject in SUBJECTS:
-        avg = avg_times.get(subject)
-        payload[f'{subject}_avg_time'] = round(avg) if avg is not None else None
     payload['current_streak'] = practice_current_streak(user)
     return payload
 
@@ -106,11 +97,9 @@ def practice_stats_breakdown(user):
 practice_attempt_breakdown = practice_stats_breakdown
 
 
-def record_practice_answer(user, question, correct, subject, time_taken=None):
+def record_practice_answer(user, question, correct, subject):
     """Log the attempt and bump the subject's lifetime counters atomically."""
-    PracticeAttempt.objects.create(
-        user=user, question=question, correct=correct, subject=subject, time_taken=time_taken,
-    )
+    PracticeAttempt.objects.create(user=user, question=question, correct=correct, subject=subject)
     stats = get_practice_stats(user, subject)
     stats.answered = F('answered') + 1
     if correct:
@@ -131,15 +120,6 @@ USER_K_STABLE = 16
 QUESTION_K = 8
 PROVISIONAL_ATTEMPTS = 30
 
-# Flat rating bonus for fast, correct, rated answers. Time is measured
-# server-side (serve -> answer), so reloading the page can't reset the clock;
-# fast wrong guesses already lose rating, so guessing for the bonus is net
-# negative and no further anti-abuse is needed.
-SPEED_BONUS_POINTS = 3
-SPEED_BONUS_SECONDS = {'english': 25, 'math': 45}
-# Answers slower than this are "walked away and came back", not answering
-# speed — they still record, but stay out of the average-time stat.
-AVG_TIME_CUTOFF_SECONDS = 600
 RATING_MIN, RATING_MAX = 100, 3000
 
 
@@ -181,10 +161,8 @@ def _clamp(rating):
     return max(RATING_MIN, min(RATING_MAX, int(rating)))
 
 
-def apply_practice_elo(user, question, correct, time_taken=None):
-    """First-attempt-only rating update between a user and a question. Moves the
-    rating on the subject's PracticeStats row. Fast correct answers earn a flat
-    speed bonus on top of the Elo movement."""
+def apply_practice_elo(user, question, correct):
+    """First-attempt-only rating update between a user and a question."""
     subject = subject_of(question)
     stats = get_practice_stats(user, subject)
     previous_rating = stats.elo
@@ -194,7 +172,6 @@ def apply_practice_elo(user, question, correct, time_taken=None):
         return {
             'rated': False, 'subject': subject,
             'previous_rating': previous_rating, 'new_rating': previous_rating, 'delta': 0,
-            'speed_bonus': 0,
         }
 
     total_attempts = PracticeAttempt.objects.filter(user=user).filter(subject_filter(subject)).count()
@@ -203,12 +180,7 @@ def apply_practice_elo(user, question, correct, time_taken=None):
     expected = _expected_score(previous_rating, question.sp_elo_rating)
     result = 1.0 if correct else 0.0
 
-    speed_bonus = (
-        SPEED_BONUS_POINTS
-        if correct and time_taken is not None and time_taken <= SPEED_BONUS_SECONDS[subject]
-        else 0
-    )
-    new_rating = _clamp(previous_rating + user_k * (result - expected) + speed_bonus)
+    new_rating = _clamp(previous_rating + user_k * (result - expected))
     stats.elo = new_rating
     stats.save(update_fields=['elo'])
 
@@ -218,7 +190,6 @@ def apply_practice_elo(user, question, correct, time_taken=None):
         'rated': True, 'subject': subject,
         'previous_rating': previous_rating, 'new_rating': new_rating,
         'delta': new_rating - previous_rating,
-        'speed_bonus': speed_bonus,
     }
 
 
@@ -272,7 +243,6 @@ def next_question(request):
     question_type = request.GET.get('type')
     subject = resolve_subject(request.GET.get('subject'))
     quota = quota_payload(request.user)
-    stats = get_practice_stats(request.user, subject)
 
     if question_type and question_type != 'any' and not quota['is_premium']:
         return Response(
@@ -288,32 +258,28 @@ def next_question(request):
             status=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
-    # Each subject holds its own locked question, so switching subjects and back
-    # resumes where you left off — with the clock still running.
-    if stats.active_question:
-        if stats.active_question_served_at is None:
-            # Lock predates the serve-time clock; start it now.
-            stats.active_question_served_at = timezone.now()
-            stats.save(update_fields=['active_question_served_at'])
-        elapsed = (timezone.now() - stats.active_question_served_at).total_seconds()
+    selected_type = question_type if question_type in SUBJECT_TYPES[subject] else None
+    lane = f'{subject}:{selected_type or "any"}'
+    active = PracticeActiveQuestion.objects.filter(user=request.user, lane=lane).first()
+    if active:
         return Response({
-            'question': QuestionSerializer(stats.active_question).data,
+            'question': QuestionSerializer(active.question).data,
             'quota': quota, 'subject': subject,
-            'elapsed_seconds': int(elapsed),
         })
 
-    question = pick_practice_question(request.user, subject, question_type)
+    question = pick_practice_question(request.user, subject, selected_type)
     if question is None:
         return Response({'error': 'No questions available.'}, status=status.HTTP_404_NOT_FOUND)
 
-    stats.active_question = question
-    stats.active_question_served_at = timezone.now()
-    stats.save(update_fields=['active_question', 'active_question_served_at'])
+    active, _ = PracticeActiveQuestion.objects.get_or_create(
+        user=request.user,
+        lane=lane,
+        defaults={'question': question},
+    )
 
     return Response({
-        'question': QuestionSerializer(question).data,
+        'question': QuestionSerializer(active.question).data,
         'quota': quota, 'subject': subject,
-        'elapsed_seconds': 0,
     })
 
 

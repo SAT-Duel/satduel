@@ -230,10 +230,11 @@ class Profile(models.Model):
 
 
 class PracticeStats(models.Model):
-    """Per-user, per-subject practice state: rating, lifetime counters, and the
-    locked in-progress question. One row per (user, subject), so adding a new
-    subject is a data change, not a schema change. Accuracy is derived
-    (correct / answered), never stored, so it can't drift."""
+    """Per-user, per-subject practice state: rating and lifetime counters.
+    One row per (user, subject), so adding a new subject is a data change,
+    not a schema change. Accuracy is derived (correct / answered), never
+    stored, so it can't drift. In-progress questions live in
+    PracticeActiveQuestion (one per lane, not per subject)."""
     SUBJECT_CHOICES = [('english', 'English'), ('math', 'Math')]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_stats')
@@ -241,16 +242,6 @@ class PracticeStats(models.Model):
     elo = models.IntegerField(default=1200)
     answered = models.IntegerField(default=0)
     correct = models.IntegerField(default=0)
-    active_question = models.ForeignKey(
-        'api.Question',
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name='+',
-    )
-    # When active_question was first served. Time-per-question is computed
-    # server-side from this, so quitting/reopening can't reset the clock.
-    active_question_served_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         constraints = [
@@ -263,6 +254,25 @@ class PracticeStats(models.Model):
 
     def __str__(self):
         return f"{self.user.username} {self.subject}: elo {self.elo}, {self.correct}/{self.answered}"
+
+
+class PracticeActiveQuestion(models.Model):
+    """The in-progress practice question, one per lane. A lane is either a
+    subject's random mix ('english:any' / 'math:any') or a specific question
+    type for premium topic drills, so switching lanes and back resumes the
+    same question instead of letting it be skipped. Rows are deleted when the
+    question is answered, so the table only holds open questions."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_active_questions')
+    lane = models.CharField(max_length=128)
+    question = models.ForeignKey('api.Question', on_delete=models.CASCADE, related_name='+')
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'lane'], name='unique_active_question_per_lane'),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} [{self.lane}] -> Q{self.question_id}"
 
 
 class UserStatistics(models.Model):
@@ -602,9 +612,6 @@ class PracticeAttempt(models.Model):
         db_index=True,
     )
     correct = models.BooleanField()
-    # Seconds from serve to answer, measured server-side. Null on legacy rows
-    # and on answers submitted without an active-question clock.
-    time_taken = models.FloatField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

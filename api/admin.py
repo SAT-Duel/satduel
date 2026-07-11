@@ -7,7 +7,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from api.models import Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, Game, GameQuestion, PracticeAttempt, PracticeStats
+    Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,14 @@ class PracticeStatsAdmin(admin.ModelAdmin):
     list_display = ['user', 'subject', 'elo', 'answered', 'correct']
     list_filter = ['subject']
     search_fields = ['user__username']
-    raw_id_fields = ['user', 'active_question']
+    raw_id_fields = ['user']
+
+
+@admin.register(PracticeActiveQuestion)
+class PracticeActiveQuestionAdmin(admin.ModelAdmin):
+    list_display = ['user', 'lane', 'question']
+    search_fields = ['user__username', 'lane']
+    raw_id_fields = ['user', 'question']
 
 
 admin.site.register(Room)
