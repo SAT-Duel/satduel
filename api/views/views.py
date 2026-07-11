@@ -255,17 +255,23 @@ def get_answer(request):
     except Question.DoesNotExist:
         return Response({'error': 'Question does not exist'}, status=404)
 
-    from api.models import TournamentParticipation, Room
+    from api.models import TournamentParticipation, Room, TrackedQuestion
     in_active_tournament = TournamentParticipation.objects.filter(
         user=request.user,
         status='Active',
         tournament__questions=question,
     ).exists()
-    in_active_duel = Room.objects.filter(
+    active_duel = Room.objects.filter(
         status='Battling',
         questions=question,
     ).filter(models.Q(user1=request.user) | models.Q(user2=request.user)).exists()
-    if in_active_tournament or in_active_duel:
+    unanswered_duel_question = active_duel and TrackedQuestion.objects.filter(
+        user=request.user,
+        question=question,
+        room__status='Battling',
+        status='Blank',
+    ).exists()
+    if in_active_tournament or unanswered_duel_question:
         return Response(
             {'error': 'Answers are hidden while you are competing on this question.'},
             status=status.HTTP_403_FORBIDDEN,

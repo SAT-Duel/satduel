@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
-from api.models import Profile, Question, Ranking, Room
+from api.models import DuelEmote, Profile, Question, Ranking, Room, TrackedQuestion
 
 
 class PasswordLoginTests(APITestCase):
@@ -318,6 +318,104 @@ class DuelEloTests(APITestCase):
         profile2.refresh_from_db()
         self.assertEqual(profile1.elo_rating, first_elo1)
         self.assertEqual(profile2.elo_rating, first_elo2)
+
+
+class BotDuelTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='human_duelist', email='human@e.com')
+        Profile.objects.create(user=self.user, elo_rating=1500)
+        self.client.force_authenticate(user=self.user)
+        self.questions = [
+            Question.objects.create(
+                question=f'Duel Q{i}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='B', difficulty=3, question_type='Transitions',
+            )
+            for i in range(10)
+        ]
+
+    def _bot(self):
+        return User.objects.filter(profile__is_bot=True).select_related('profile').first()
+
+    def _room(self, started_seconds_ago=0):
+        room = Room.objects.create(user1=self.user, user2=self._bot(), status='Battling')
+        if started_seconds_ago:
+            room.battle_start_time = timezone.now() - timedelta(seconds=started_seconds_ago)
+            room.save(update_fields=['battle_start_time'])
+        return room
+
+    def test_seeded_bots_are_flagged_and_have_reserved_emails(self):
+        bots = User.objects.filter(profile__is_bot=True)
+        self.assertEqual(bots.count(), 24)
+        self.assertTrue(all(user.email.endswith('@bots.satduel.invalid') for user in bots))
+        self.assertTrue(all(not user.has_usable_password() for user in bots))
+
+    def test_online_list_includes_rotating_practice_rivals(self):
+        response = self.client.get('/api/online_users/')
+        bot_rows = [user for user in response.json()['users'] if user['is_bot']]
+        self.assertIn(len(bot_rows), (3, 4))
+        self.assertTrue(all('avatar_icon' in user for user in bot_rows))
+
+    def test_match_uses_bot_when_no_human_is_waiting(self):
+        response = self.client.get('/api/match/')
+        room = Room.objects.get(id=response.data['id'])
+        self.assertEqual(response.data['full'], 'true')
+        self.assertTrue(room.user2.profile.is_bot)
+        self.assertEqual(TrackedQuestion.objects.filter(room=room, user=self.user).count(), 10)
+        self.assertEqual(TrackedQuestion.objects.filter(room=room, user=room.user2).count(), 10)
+
+    def test_polling_advances_bot_progress(self):
+        room = self._room(started_seconds_ago=100)
+        response = self.client.post('/api/match/get_opponent_progress/', {'room_id': room.id}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertGreater(sum(row['status'] != 'Blank' for row in response.data), 0)
+
+    def test_duel_answer_is_graded_server_side(self):
+        room = self._room()
+        tracked = TrackedQuestion.objects.filter(room=room, user=self.user).order_by('id').first()
+        response = self.client.post('/api/match/update/', {
+            'tracked_question_id': tracked.id,
+            'selected_choice': 'a',
+            'result': 'correct',
+        }, format='json')
+        tracked.refresh_from_db()
+        self.assertEqual(response.data['result'], 'incorrect')
+        self.assertEqual(tracked.status, 'Incorrect')
+        reveal = self.client.post('/api/get_answer/', {'question_id': tracked.question_id}, format='json')
+        self.assertEqual(reveal.status_code, 200)
+
+    @patch('api.views.duel_views.random.random', return_value=1)
+    @patch('api.views.duel_views.random.choice', return_value='🔥')
+    @patch('api.views.duel_views.random.uniform', return_value=0)
+    def test_bot_responds_to_emote(self, _uniform, _choice, _random):
+        room = self._room()
+        response = self.client.post('/api/match/emotes/', {
+            'room_id': room.id,
+            'emoji': '👍',
+        }, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(DuelEmote.objects.filter(room=room).count(), 2)
+        self.assertEqual({row['emoji'] for row in response.data['emotes']}, {'👍', '🔥'})
+
+    def test_end_match_calculates_scores_before_elo(self):
+        room = self._room()
+        mine = list(TrackedQuestion.objects.filter(room=room, user=self.user).order_by('id'))
+        theirs = list(TrackedQuestion.objects.filter(room=room, user=room.user2).order_by('id'))
+        for row in mine[:3]:
+            row.status = 'Correct'
+        for row in mine[3:]:
+            row.status = 'Incorrect'
+        for row in theirs[:2]:
+            row.status = 'Correct'
+        for row in theirs[2:]:
+            row.status = 'Incorrect'
+        TrackedQuestion.objects.bulk_update(mine + theirs, ['status'])
+
+        response = self.client.post('/api/match/end_match/', {'room_id': room.id}, format='json')
+        room.refresh_from_db()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((room.user1_score, room.user2_score), (3, 2))
+        self.assertEqual(room.winner_id, self.user.id)
 
 
 class CleanupUnverifiedUsersTests(APITestCase):

@@ -44,7 +44,7 @@ def _stats_subquery(field, subject, default):
 
 def _annotated_profiles():
     """Profiles with per-subject practice stats attached for ranking/display."""
-    return Profile.objects.select_related('user').annotate(
+    return Profile.objects.filter(is_bot=False).select_related('user').annotate(
         english_elo=_stats_subquery('elo', 'english', 1200),
         math_elo=_stats_subquery('elo', 'math', 1200),
         english_answered_count=_stats_subquery('answered', 'english', 0),
@@ -215,7 +215,7 @@ def update_streak(request):
 @api_view(['GET'])
 def search_users(request):
     query = request.query_params.get('q', '')
-    users = User.objects.filter(username__icontains=query)
+    users = User.objects.filter(username__icontains=query, profile__is_bot=False)
     serializer = UserSerializer(users, many=True)
     return Response(serializer.data)
 

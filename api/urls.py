@@ -53,6 +53,7 @@ urlpatterns = [
     path('match/get_match_history/', duel_views.get_match_history, name='get_match_history'),
     path('match/get_match_history/<int:user_id>/', duel_views.get_match_history, name='get_match_history_with_user_id'),
     path('match/info/', duel_views.get_match_info, name='get_match_info'),
+    path('match/emotes/', duel_views.duel_emotes, name='duel_emotes'),
     path('match/set_winner/', duel_views.set_winner, name='set_winner'),
     path('match/set_score/', duel_views.set_score, name='set_score'),
 
