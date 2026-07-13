@@ -13,6 +13,7 @@ verified email so a user can use Google and password interchangeably.
 import re
 
 from django.conf import settings
+from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.models import User, update_last_login
 from django.db import transaction
 from rest_framework import status
@@ -260,3 +261,22 @@ def complete_profile(request):
     profile.grade = grade
     profile.save(update_fields=['grade'])
     return Response({'status': 'success', 'grade': profile.grade}, status=status.HTTP_200_OK)
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def set_password(request):
+    """Let a verified Google-only account add its first password."""
+    if request.user.has_usable_password():
+        return Response(
+            {'error': 'This account already has a password. Use password reset to change it.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    form = SetPasswordForm(request.user, request.data)
+    if not form.is_valid():
+        return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    form.save()
+    return Response({'message': 'Password set successfully.', 'has_usable_password': True})

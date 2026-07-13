@@ -3,9 +3,9 @@ from api.models import DUEL_EMOJIS, Question, Profile, Room, TrackedQuestion, Fr
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 from allauth.account.adapter import get_adapter
+from allauth.account.models import EmailAddress
 from allauth.account.utils import setup_user_email
 from dj_rest_auth.registration.serializers import RegisterSerializer
-from django.utils import timezone
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -31,6 +31,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'first_name', 'last_name', 'email']
+        read_only_fields = ['id', 'username', 'email']
 
 
 class DuelUserSerializer(serializers.ModelSerializer):
@@ -88,12 +89,12 @@ class ProfileSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         user_data = validated_data.pop('user', {})
         user = instance.user
-        
-        # Update user fields if data exists
+
         if user_data:
-            for attr, value in user_data.items():
-                setattr(user, attr, value)
-            user.save()
+            for attr in ('first_name', 'last_name'):
+                if attr in user_data:
+                    setattr(user, attr, user_data[attr])
+            user.save(update_fields=['first_name', 'last_name'])
 
         # Update profile fields
         for attr, value in validated_data.items():
@@ -196,8 +197,16 @@ class CustomRegisterSerializer(RegisterSerializer):
         return user
 
     def validate(self, data):
-        print("Received data in validate:", data)
-        return super().validate(data)
+        data = super().validate(data)
+        email = data.get('email', '').strip()
+        if email and (
+            User.objects.filter(email__iexact=email).exists()
+            or EmailAddress.objects.filter(email__iexact=email).exists()
+        ):
+            raise serializers.ValidationError({
+                'email': 'An account with this email already exists. Verify it or sign in instead.',
+            })
+        return data
 
 
 class TournamentSerializer(serializers.ModelSerializer):

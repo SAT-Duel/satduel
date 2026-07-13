@@ -16,6 +16,7 @@ urlpatterns = [
     path('create_question/', views.create_question, name='create_question'),
 
     path('profile/', profile_views.profile_view, name='profile'),
+    path('account/username/', profile_views.update_username, name='account_username'),
     path('profile/update_biography/', profile_views.update_biography, name='update_biography'),
     path('profile/update_rankings/', profile_views.update_ranking, name='update_ranking'),
     path('profile/update_streak/', profile_views.update_streak, name='update_streak'),
@@ -39,6 +40,7 @@ urlpatterns = [
     path('auth/login/', auth_views.login_view, name='auth_login'),
     path('auth/google/', auth_views.google_login, name='auth_google'),
     path('auth/complete_profile/', auth_views.complete_profile, name='auth_complete_profile'),
+    path('auth/set_password/', auth_views.set_password, name='auth_set_password'),
 
     path('match/', duel_views.match, name='match'),
     path('match/questions/', duel_views.get_match_questions, name='get_match_questions'),

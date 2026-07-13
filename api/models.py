@@ -168,6 +168,7 @@ class Profile(models.Model):
     stripe_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     stripe_price_id = models.CharField(max_length=255, blank=True, null=True)
+    username_changed_at = models.DateTimeField(null=True, blank=True)
 
     # Day streak: completing the daily practice goal (DAILY_PRACTICE_GOAL
     # answers in the user's local day) extends it. Evaluated lazily — a missed
