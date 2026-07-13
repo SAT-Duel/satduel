@@ -1,7 +1,11 @@
-from venv import logger
+from datetime import timedelta
+import re
+
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.db.models import IntegerField, OuterRef, Subquery
 from django.db.models.functions import Coalesce
+from django.utils import timezone
 from rest_framework.response import Response
 from api.models import Profile, FriendRequest, PracticeStats
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
@@ -11,6 +15,9 @@ from api.views.serializers import ProfileSerializer, \
     ProfileBiographySerializer, DuelUserSerializer, UserSerializer, FriendRequestSerializer
 from rest_framework import status
 from api.views.practice_views import practice_activity, practice_stats_breakdown
+
+USERNAME_CHANGE_COOLDOWN = timedelta(days=30)
+USERNAME_RULE = re.compile(r'^[a-zA-Z0-9_]{1,15}$')
 
 LEADERBOARD_METRICS = {
     'duel': {
@@ -63,6 +70,22 @@ def _practice_statistics_payload(user):
     return breakdown
 
 
+def _username_change_available_at(profile):
+    if not profile.username_changed_at:
+        return None
+    return profile.username_changed_at + USERNAME_CHANGE_COOLDOWN
+
+
+def _current_profile_payload(profile):
+    data = dict(ProfileSerializer(profile).data)
+    available_at = _username_change_available_at(profile)
+    data['account'] = {
+        'has_usable_password': profile.user.has_usable_password(),
+        'username_change_available_at': available_at.isoformat() if available_at else None,
+    }
+    return data
+
+
 def _leaderboard_entry(profile, rank, metric):
     field = LEADERBOARD_METRICS[metric]['field']
 
@@ -108,16 +131,56 @@ def profile_view(request):
         return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == 'GET':
-        serializer = ProfileSerializer(profile)
-        return Response(serializer.data)
+        return Response(_current_profile_payload(profile))
 
     elif request.method == 'PATCH':
         # Pass data directly without restructuring
         serializer = ProfileSerializer(profile, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            return Response(_current_profile_payload(profile), status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['PATCH'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+@transaction.atomic
+def update_username(request):
+    username = str(request.data.get('username', '')).strip()
+    if not USERNAME_RULE.fullmatch(username):
+        return Response(
+            {'error': 'Use 1–15 letters, numbers, or underscores.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        profile = Profile.objects.select_for_update().select_related('user').get(user=request.user)
+    except Profile.DoesNotExist:
+        return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if username == request.user.username:
+        return Response({'error': 'Choose a different username.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    available_at = _username_change_available_at(profile)
+    if available_at and available_at > timezone.now():
+        return Response({
+            'error': f'You can change your username again on {available_at.date():%B %d, %Y}.',
+            'username_change_available_at': available_at.isoformat(),
+        }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+    if User.objects.filter(username__iexact=username).exclude(pk=request.user.pk).exists():
+        return Response({'error': 'That username is already taken.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    request.user.username = username
+    request.user.save(update_fields=['username'])
+    profile.username_changed_at = timezone.now()
+    profile.save(update_fields=['username_changed_at'])
+    available_at = _username_change_available_at(profile)
+    return Response({
+        'username': username,
+        'username_change_available_at': available_at.isoformat(),
+    })
 
 
 @api_view(['GET'])

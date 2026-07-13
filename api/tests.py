@@ -192,6 +192,85 @@ class CompleteProfileTests(APITestCase):
         self.assertEqual(resp.status_code, 401)
 
 
+class AccountSettingsTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='google_user', email='google@example.com')
+        self.profile = Profile.objects.create(user=self.user)
+        EmailAddress.objects.create(
+            user=self.user, email=self.user.email, verified=True, primary=True,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_username_change_is_limited_to_once_per_30_days(self):
+        first = self.client.patch(
+            reverse('account_username'), {'username': 'new_name'}, format='json',
+        )
+        second = self.client.patch(
+            reverse('account_username'), {'username': 'another_name'}, format='json',
+        )
+
+        self.user.refresh_from_db()
+        self.profile.refresh_from_db()
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+        self.assertEqual(self.user.username, 'new_name')
+        self.assertIsNotNone(self.profile.username_changed_at)
+
+    def test_profile_patch_cannot_bypass_account_controls(self):
+        response = self.client.patch(reverse('profile'), {
+            'user': {
+                'username': 'bypass',
+                'email': 'changed@example.com',
+                'first_name': 'Updated',
+            },
+        }, format='json')
+
+        self.user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.user.username, 'google_user')
+        self.assertEqual(self.user.email, 'google@example.com')
+        self.assertEqual(self.user.first_name, 'Updated')
+
+    def test_google_only_user_can_set_a_password(self):
+        response = self.client.post(reverse('auth_set_password'), {
+            'new_password1': 'NewSecret123!',
+            'new_password2': 'NewSecret123!',
+        }, format='json')
+
+        self.user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.user.check_password('NewSecret123!'))
+
+    def test_existing_password_cannot_be_overwritten(self):
+        self.user.set_password('ExistingSecret123!')
+        self.user.save(update_fields=['password'])
+
+        response = self.client.post(reverse('auth_set_password'), {
+            'new_password1': 'NewSecret123!',
+            'new_password2': 'NewSecret123!',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+
+
+class RegistrationAbuseTests(APITestCase):
+    def test_same_email_cannot_reserve_multiple_usernames(self):
+        User.objects.create_user(username='first_name', email='student@example.com')
+
+        response = self.client.post(reverse('register'), {
+            'username': 'second_name',
+            'email': 'STUDENT@example.com',
+            'first_name': 'Test',
+            'last_name': 'Student',
+            'password1': 'Secret123!',
+            'password2': 'Secret123!',
+            'grade': '11',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(User.objects.filter(email__iexact='student@example.com').count(), 1)
+
+
 class RankingUpdateTests(APITestCase):
     def test_rankings_ordered_by_elo(self):
         users = []
