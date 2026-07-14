@@ -156,8 +156,8 @@ def check_answer(request):
     they no longer batter the practice rating.
     """
     from api.views.practice_views import (
-        apply_practice_elo, practice_stats_breakdown, quota_payload,
-        record_practice_answer, subject_of,
+        apply_practice_elo, practice_stats_breakdown, practice_type_progress,
+        quota_payload, record_practice_answer, subject_of,
     )
     from api.models import PracticeActiveQuestion
     from api.views.practice_views import SUBJECT_TYPES
@@ -216,6 +216,7 @@ def check_answer(request):
         # day completes it and extends the flame.
         payload['daily'] = update_daily_streak(request.user)
         payload['subject'] = subject
+        payload['type_progress'] = practice_type_progress(request.user, [subject])
         active_subject_questions.filter(question=question).delete()
 
         # Best correct-answer run, shown on the streak leaderboard.

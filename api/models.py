@@ -272,6 +272,27 @@ class PracticeStats(models.Model):
         return f"{self.user.username} {self.subject}: elo {self.elo}, {self.correct}/{self.answered}"
 
 
+class PracticeTypeStats(models.Model):
+    """Per-user, per-question-type progress through the question bank.
+    `solved` counts DISTINCT questions attempted (practice never re-serves an
+    attempted question, so attempted == progress toward finishing the type);
+    `correct` counts how many of those were answered right. Derived from
+    PracticeAttempt: the backfill migration rebuilds both from the attempt
+    log, so pre-log legacy activity intentionally starts at zero here."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_type_stats')
+    question_type = models.CharField(max_length=1000)
+    solved = models.IntegerField(default=0)
+    correct = models.IntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'question_type'], name='unique_practice_type_stats'),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} [{self.question_type}]: {self.correct}/{self.solved}"
+
+
 class PracticeActiveQuestion(models.Model):
     """The in-progress practice question, one per lane. A lane is either a
     subject's random mix ('english:any' / 'math:any') or a specific question
