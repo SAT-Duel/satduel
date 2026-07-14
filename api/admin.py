@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 
-from api.models import Question, Profile, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
+from api.models import Question, QuestionReport, Profile, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
     Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats
 
@@ -73,6 +73,14 @@ class QuestionAdmin(admin.ModelAdmin):
     list_display = ['id', 'question_type', 'difficulty', 'answer', 'sp_elo_rating']
     list_filter = ['question_type', 'difficulty']
     search_fields = ['question']
+
+
+@admin.register(QuestionReport)
+class QuestionReportAdmin(admin.ModelAdmin):
+    list_display = ['question', 'reporter', 'reason', 'created_at']
+    list_filter = ['reason', 'created_at']
+    search_fields = ['question__question', 'reporter__username', 'details']
+    raw_id_fields = ['question', 'reporter']
 
 
 @admin.register(Profile)
