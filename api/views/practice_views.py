@@ -18,7 +18,7 @@ check_answer call from any surface):
 import random
 
 from django.conf import settings
-from django.db.models import F, Q
+from django.db.models import Count, F, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (
@@ -31,7 +31,13 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api import generation
-from api.models import PracticeActiveQuestion, PracticeAttempt, PracticeStats, Question
+from api.models import (
+    PracticeActiveQuestion,
+    PracticeAttempt,
+    PracticeStats,
+    PracticeTypeStats,
+    Question,
+)
 from api.views.serializers import QuestionSerializer
 
 # question_types are the official College Board skill names in the AI
@@ -98,6 +104,7 @@ practice_attempt_breakdown = practice_stats_breakdown
 
 def record_practice_answer(user, question, correct, subject, selected_choice):
     """Log the attempt and bump the subject's lifetime counters atomically."""
+    first_attempt = not PracticeAttempt.objects.filter(user=user, question=question).exists()
     PracticeAttempt.objects.create(
         user=user, question=question, correct=correct, subject=subject,
         selected_choice=selected_choice,
@@ -107,6 +114,55 @@ def record_practice_answer(user, question, correct, subject, selected_choice):
     if correct:
         stats.correct = F('correct') + 1
     stats.save(update_fields=['answered', 'correct'])
+
+    # Question-bank progress counts DISTINCT questions, so only the first
+    # attempt at a question moves the per-type counters (same rule as Elo).
+    if first_attempt and question.question_type:
+        type_stats, _ = PracticeTypeStats.objects.get_or_create(
+            user=user, question_type=question.question_type,
+        )
+        type_stats.solved = F('solved') + 1
+        fields = ['solved']
+        if correct:
+            type_stats.correct = F('correct') + 1
+            fields.append('correct')
+        type_stats.save(update_fields=fields)
+
+
+def practice_type_progress(user, subjects=None):
+    """Question-bank progress per type: solved (distinct attempted) vs total.
+
+    Returns {subject: [{'type', 'solved', 'correct', 'total'}, ...]} in the
+    taxonomy's teaching order. Totals come from the live Question table, so
+    solved is clamped in case questions were deleted after being attempted.
+    """
+    subjects = [s for s in (subjects or SUBJECTS) if s in SUBJECT_TYPES]
+    types = [t for s in subjects for t in SUBJECT_TYPES[s]]
+    totals = {
+        row['question_type']: row['total']
+        for row in Question.objects.filter(question_type__in=types)
+        .values('question_type').annotate(total=Count('id'))
+    }
+    stats = {
+        row.question_type: row
+        for row in PracticeTypeStats.objects.filter(user=user, question_type__in=types)
+    }
+    payload = {}
+    for subject in subjects:
+        entries = []
+        for question_type in SUBJECT_TYPES[subject]:
+            total = totals.get(question_type, 0)
+            row = stats.get(question_type)
+            solved = min(row.solved, total) if row else 0
+            correct = min(row.correct, solved) if row else 0
+            entries.append({
+                'type': question_type,
+                'solved': solved,
+                'correct': correct,
+                'total': total,
+            })
+        payload[subject] = entries
+    return payload
 
 
 def practice_current_streak(user):
@@ -320,6 +376,7 @@ def practice_status(request):
         'math_elo_rating': stats['math_elo'],
         'stats': stats,
         'topics': SUBJECT_TYPES,
+        'type_progress': practice_type_progress(request.user),
         'daily': daily_snapshot(request.user),
     })
 

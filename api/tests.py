@@ -908,6 +908,81 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(attempt['question']['explanation'], 'Because B is correct.')
 
 
+class PracticeTypeProgressTests(APITestCase):
+    """Question-bank progress: per-type solved/total counters for the
+    practice page progress bars."""
+
+    def setUp(self):
+        from api.models import Question
+        self.user = User.objects.create_user(username='banker', email='bank@e.com')
+        self.profile = Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+        self.transitions = [
+            Question.objects.create(
+                question=f'T{i}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='B', difficulty=3, question_type='Transitions',
+            )
+            for i in range(3)
+        ]
+        self.inference = Question.objects.create(
+            question='I0?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type='Inferences',
+        )
+
+    def _answer(self, q, choice='b'):
+        return self.client.post('/api/check_answer/', {
+            'question_id': q.id, 'selected_choice': choice, 'mode': 'practice',
+        }, format='json')
+
+    def _entry(self, progress, question_type, subject='english'):
+        return next(e for e in progress[subject] if e['type'] == question_type)
+
+    def test_status_reports_totals_with_no_progress(self):
+        resp = self.client.get('/api/practice/status/')
+        self.assertEqual(resp.status_code, 200)
+        progress = resp.data['type_progress']
+        self.assertIn('english', progress)
+        self.assertIn('math', progress)
+        transitions = self._entry(progress, 'Transitions')
+        self.assertEqual(transitions['total'], 3)
+        self.assertEqual(transitions['solved'], 0)
+        self.assertEqual(transitions['correct'], 0)
+        # Every English type appears, even ones without questions yet.
+        inferences = self._entry(progress, 'Inferences')
+        self.assertEqual(inferences['total'], 1)
+
+    def test_answers_move_the_right_type_counter(self):
+        resp = self._answer(self.transitions[0], 'b')   # correct
+        self.assertEqual(resp.status_code, 200)
+        progress = resp.data['type_progress']
+        self.assertEqual(self._entry(progress, 'Transitions')['solved'], 1)
+        self.assertEqual(self._entry(progress, 'Transitions')['correct'], 1)
+
+        resp = self._answer(self.transitions[1], 'a')   # wrong: solved, not correct
+        progress = resp.data['type_progress']
+        self.assertEqual(self._entry(progress, 'Transitions')['solved'], 2)
+        self.assertEqual(self._entry(progress, 'Transitions')['correct'], 1)
+        self.assertEqual(self._entry(progress, 'Inferences')['solved'], 0)
+
+    def test_repeat_attempt_does_not_double_count(self):
+        self._answer(self.transitions[0], 'b')
+        resp = self._answer(self.transitions[0], 'b')
+        progress = resp.data['type_progress']
+        self.assertEqual(self._entry(progress, 'Transitions')['solved'], 1)
+        self.assertEqual(self._entry(progress, 'Transitions')['correct'], 1)
+
+    def test_solved_is_clamped_when_questions_are_deleted(self):
+        from api.models import PracticeTypeStats
+        from api.views.practice_views import practice_type_progress
+        PracticeTypeStats.objects.create(
+            user=self.user, question_type='Transitions', solved=5, correct=4,
+        )
+        entry = self._entry(practice_type_progress(self.user), 'Transitions')
+        self.assertEqual(entry['total'], 3)
+        self.assertEqual(entry['solved'], 3)
+        self.assertEqual(entry['correct'], 3)
+
+
 class BillingViewsTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='subscriber', email='sub@example.com')
