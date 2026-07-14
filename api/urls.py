@@ -14,6 +14,9 @@ urlpatterns = [
     path('filter_questions/', views.list_questions, name='list_questions'),
     path('edit_question/<int:question_id>', views.edit_question, name='edit_question'),
     path('create_question/', views.create_question, name='create_question'),
+    path('question_reports/', views.create_question_report, name='create_question_report'),
+    path('admin/question_reports/', views.list_question_reports, name='list_question_reports'),
+    path('admin/question_reports/<int:report_id>/', views.delete_question_report, name='delete_question_report'),
 
     path('profile/', profile_views.profile_view, name='profile'),
     path('account/username/', profile_views.update_username, name='account_username'),

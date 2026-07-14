@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
-from api.models import DuelEmote, Profile, Question, Ranking, Room, TrackedQuestion
+from api.models import DuelEmote, Profile, Question, QuestionReport, Ranking, Room, TrackedQuestion
 
 
 class PasswordLoginTests(APITestCase):
@@ -73,6 +73,52 @@ class QuestionFilterSubjectTests(APITestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual([question['id'] for question in resp.data['questions']], [math.id])
+
+
+class QuestionReportTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='reporter', password='Secret123')
+        self.admin = User.objects.create_user(username='staff', password='Secret123', is_staff=True)
+        self.question = Question.objects.create(
+            question='Which choice is correct?',
+            choice_a='First', choice_b='Second', choice_c='Third', choice_d='Fourth',
+            answer='B', difficulty=1, question_type='Words in Context',
+            explanation='The second choice is correct.',
+        )
+
+    def test_report_requires_twenty_characters(self):
+        self.client.force_authenticate(user=self.user)
+        too_short = self.client.post(reverse('create_question_report'), {
+            'question_id': self.question.id,
+            'reason': 'bad_explanation',
+            'details': 'Too short',
+        }, format='json')
+        accepted = self.client.post(reverse('create_question_report'), {
+            'question_id': self.question.id,
+            'reason': 'bad_explanation',
+            'details': 'The explanation skips an important reasoning step.',
+        }, format='json')
+
+        self.assertEqual(too_short.status_code, 400)
+        self.assertEqual(accepted.status_code, 201)
+        self.assertEqual(QuestionReport.objects.get().reporter, self.user)
+
+    def test_staff_can_review_and_delete_report(self):
+        report = QuestionReport.objects.create(
+            question=self.question,
+            reporter=self.user,
+            reason='bad_explanation',
+            details='The explanation skips the key reasoning step.',
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        listed = self.client.get(reverse('list_question_reports'))
+        deleted = self.client.delete(reverse('delete_question_report', args=[report.id]))
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.data[0]['question']['explanation'], self.question.explanation)
+        self.assertEqual(deleted.status_code, 204)
+        self.assertFalse(QuestionReport.objects.exists())
 
 
 def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):

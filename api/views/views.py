@@ -8,7 +8,7 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import QuestionSerializer, QuestionAdminSerializer
 from django.db import models
-from ..models import Question
+from ..models import Question, QuestionReport
 from rest_framework import status
 
 ENGLISH_QUESTION_TYPES = [
@@ -126,6 +126,61 @@ def create_question(request):
     )
     question.save()
     return JsonResponse({'status': 'success'})
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def create_question_report(request):
+    question_id = request.data.get('question_id')
+    reason = request.data.get('reason')
+    details = str(request.data.get('details', '')).strip()
+
+    if not str(question_id).isdigit():
+        return Response({'error': 'A valid question is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    if reason not in dict(QuestionReport.REASON_CHOICES):
+        return Response({'error': 'Choose a report reason.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(details) < 20:
+        return Response({'error': 'Please provide at least 20 characters of detail.'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(details) > 2000:
+        return Response({'error': 'Report details cannot exceed 2,000 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    question = get_object_or_404(Question, id=question_id)
+    report = QuestionReport.objects.create(
+        question=question,
+        reporter=request.user,
+        reason=reason,
+        details=details,
+    )
+    return Response({'id': report.id}, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def list_question_reports(request):
+    reports = QuestionReport.objects.select_related('question', 'reporter')
+    return Response([
+        {
+            'id': report.id,
+            'reason': report.reason,
+            'reason_label': report.get_reason_display(),
+            'details': report.details,
+            'created_at': report.created_at,
+            'reporter': report.reporter.username if report.reporter else 'Deleted user',
+            'question': QuestionAdminSerializer(report.question).data,
+        }
+        for report in reports
+    ])
+
+
+@api_view(['DELETE'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def delete_question_report(request, report_id):
+    report = get_object_or_404(QuestionReport, id=report_id)
+    report.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['GET'])

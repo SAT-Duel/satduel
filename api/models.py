@@ -82,6 +82,28 @@ class Question(models.Model):
         return random.sample(questions, num_questions)
 
 
+class QuestionReport(models.Model):
+    REASON_CHOICES = [
+        ('incorrect_statement', 'Incorrect problem statement'),
+        ('no_correct_choice', 'No correct answer choice'),
+        ('incorrect_answer', 'Incorrect marked answer'),
+        ('bad_explanation', 'Bad or unclear explanation'),
+        ('other', 'Other issue'),
+    ]
+
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='reports')
+    reporter = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='question_reports')
+    reason = models.CharField(max_length=32, choices=REASON_CHOICES)
+    details = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Q{self.question_id}: {self.get_reason_display()}"
+
+
 # =========================================================
 # Customization and Virtual Space Models
 # =========================================================
