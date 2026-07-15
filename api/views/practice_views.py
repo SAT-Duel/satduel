@@ -62,7 +62,7 @@ def resolve_subject(name):
 
 def subject_of(question):
     """Which subject a question belongs to, from its question_type."""
-    return 'math' if question.question_type in MATH_QUESTION_TYPES else 'english'
+    return generation.subject_of_type(question.question_type)
 
 
 def subject_filter(subject):

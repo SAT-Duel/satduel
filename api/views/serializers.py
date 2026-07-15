@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from api import generation
 from api.models import DUEL_EMOJIS, Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
@@ -11,13 +12,17 @@ from dj_rest_auth.registration.serializers import RegisterSerializer
 class QuestionSerializer(serializers.ModelSerializer):
     """Public question payload — must never include the correct answer or explanation."""
     choices = serializers.SerializerMethodField()
+    subject = serializers.SerializerMethodField()
 
     class Meta:
         model = Question
-        fields = ['id', 'question', 'choices', 'difficulty', 'question_type', 'choice_a', 'choice_b', 'choice_c', 'choice_d']
+        fields = ['id', 'question', 'choices', 'difficulty', 'question_type', 'subject', 'choice_a', 'choice_b', 'choice_c', 'choice_d']
 
     def get_choices(self, obj):
         return [obj.choice_a, obj.choice_b, obj.choice_c, obj.choice_d]
+
+    def get_subject(self, obj):
+        return generation.subject_of_type(obj.question_type)
 
 
 class QuestionAdminSerializer(QuestionSerializer):

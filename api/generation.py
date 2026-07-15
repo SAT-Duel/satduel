@@ -1320,11 +1320,21 @@ ENGLISH_SKILL_NAMES = {
     skill["name"] for domain in ENGLISH_DOMAINS for skill in domain["skills"]
 }
 
+MATH_SKILL_NAMES = {
+    skill["name"] for domain in MATH_DOMAINS for skill in domain["skills"]
+}
+
 SKILL_INDEX = {
     skill["name"]: (domain, skill)
     for domain in DOMAINS
     for skill in domain["skills"]
 }
+
+
+def subject_of_type(question_type):
+    """Which subject a question_type belongs to. Unknown types read as english,
+    matching the practice lanes' default."""
+    return 'math' if question_type in MATH_SKILL_NAMES else 'english'
 
 
 def build_prompt(skill_name, difficulty, count):
