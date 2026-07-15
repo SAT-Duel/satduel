@@ -9,7 +9,9 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
+from api import generation
 from api.models import DuelEmote, Profile, Question, QuestionReport, Ranking, Room, TrackedQuestion
+from api.views.serializers import QuestionSerializer
 
 
 class PasswordLoginTests(APITestCase):
@@ -119,6 +121,36 @@ class QuestionReportTests(APITestCase):
         self.assertEqual(listed.data[0]['question']['explanation'], self.question.explanation)
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(QuestionReport.objects.exists())
+
+
+class QuestionSubjectFieldTests(APITestCase):
+    """The serialized `subject` drives the in-card Desmos button, which must
+    appear on math questions only."""
+
+    def _serialized_subject(self, question_type):
+        question = Question.objects.create(
+            question='Q?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='A', difficulty=1, question_type=question_type,
+        )
+        return QuestionSerializer(question).data['subject']
+
+    def test_math_question_type_serializes_as_math(self):
+        self.assertEqual(self._serialized_subject('Linear functions'), 'math')
+        self.assertEqual(self._serialized_subject('Circles'), 'math')
+
+    def test_english_question_type_serializes_as_english(self):
+        self.assertEqual(self._serialized_subject('Words in Context'), 'english')
+
+    def test_unknown_question_type_falls_back_to_english(self):
+        self.assertEqual(self._serialized_subject('Not A Real Skill'), 'english')
+        self.assertEqual(self._serialized_subject(None), 'english')
+
+    def test_every_math_skill_in_the_taxonomy_is_math(self):
+        for skill in generation.MATH_SKILL_NAMES:
+            self.assertEqual(generation.subject_of_type(skill), 'math', skill)
+
+    def test_math_and_english_taxonomies_do_not_overlap(self):
+        self.assertEqual(generation.MATH_SKILL_NAMES & generation.ENGLISH_SKILL_NAMES, set())
 
 
 def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):
