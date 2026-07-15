@@ -985,6 +985,29 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(attempt['question']['correct_answer'], 'b')
         self.assertEqual(attempt['question']['explanation'], 'Because B is correct.')
 
+    def test_practice_history_filters_mistakes_by_question_type(self):
+        from api.models import Question
+        inference = Question.objects.create(
+            question='Inference?', choice_a='a', choice_b='b',
+            choice_c='c', choice_d='d', answer='B', difficulty=3,
+            question_type='Inferences',
+        )
+        self._answer(self.questions[0], 'b')
+        self._answer(inference, 'a')
+
+        resp = self.client.get('/api/practice/history/', {
+            'question_type': 'Inferences',
+            'incorrect_only': 'true',
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.data['attempts']), 1)
+        self.assertEqual(resp.data['attempts'][0]['question']['id'], inference.id)
+        self.assertEqual(resp.data['mistake_count'], 1)
+        self.assertEqual(
+            resp.data['question_types'], ['Inferences', 'Transitions'],
+        )
+
 
 class PracticeTypeProgressTests(APITestCase):
     """Question-bank progress: per-type solved/total counters for the

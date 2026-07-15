@@ -389,6 +389,10 @@ def practice_history(request):
     subject = request.GET.get('subject')
     if subject not in SUBJECTS:
         subject = None
+    question_type = request.GET.get('question_type')
+    if question_type == 'all':
+        question_type = None
+    incorrect_only = request.GET.get('incorrect_only', '').lower() == 'true'
     try:
         offset = max(0, int(request.GET.get('offset', 0)))
     except (TypeError, ValueError):
@@ -415,6 +419,23 @@ def practice_history(request):
     )
     if subject:
         attempts = attempts.filter(subject=subject)
+
+    question_types = list(attempts.filter(
+        question__question_type__isnull=False,
+    ).exclude(
+        question__question_type='',
+    ).order_by('question__question_type').values_list(
+        'question__question_type', flat=True,
+    ).distinct())
+    if question_type:
+        attempts = attempts.filter(question__question_type=question_type)
+
+    mistake_count = attempts.filter(correct=False).values(
+        'question_id',
+    ).distinct().count()
+    if incorrect_only:
+        attempts = attempts.filter(correct=False)
+
     attempts = attempts.select_related('question').order_by('-created_at', '-id')
     page = list(attempts[offset:offset + limit + 1])
     has_more = len(page) > limit
@@ -440,6 +461,8 @@ def practice_history(request):
                 'explanation': attempt.question.explanation,
             },
         } for attempt in page[:limit]],
+        'question_types': question_types,
+        'mistake_count': mistake_count,
         'has_more': has_more,
         'next_offset': offset + limit if has_more else None,
     })
