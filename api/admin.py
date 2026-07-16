@@ -6,7 +6,7 @@ from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 
 from api.account_deletion import delete_user_account
-from api.models import Question, QuestionReport, Profile, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
+from api.models import Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
     Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats
 
@@ -21,6 +21,7 @@ class ProfileInline(admin.StackedInline):
     fields = [
         'role', 'grade', 'country', 'elo_rating', 'is_bot',
         'avatar', 'avatar_icon', 'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
+        'sat_exam_date', 'sat_exam_date_selected', 'marketing_opt_in', 'terms_accepted_at',
     ]
     extra = 0
 
@@ -106,6 +107,14 @@ class ProfileAdmin(admin.ModelAdmin):
     ]
     list_filter = ['role', 'grade', 'is_premium', 'is_bot']
     search_fields = ['user__username', 'user__email', 'stripe_customer_id', 'stripe_subscription_id']
+
+
+@admin.register(SATExamDate)
+class SATExamDateAdmin(admin.ModelAdmin):
+    list_display = ['date', 'active']
+    list_editable = ['active']
+    list_filter = ['active']
+    ordering = ['date']
 
 
 @admin.register(PracticeAttempt)

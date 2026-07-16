@@ -12,7 +12,7 @@ from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
 from api import generation
-from api.models import DuelEmote, Profile, Question, QuestionReport, Ranking, Room, TrackedQuestion
+from api.models import DuelEmote, Profile, Question, QuestionReport, Ranking, Room, SATExamDate, TrackedQuestion
 from api.views.serializers import QuestionSerializer
 
 
@@ -178,6 +178,27 @@ class GoogleLoginTests(APITestCase):
         self.assertTrue(Profile.objects.filter(user=user).exists())
         self.assertTrue(EmailAddress.objects.filter(user=user, verified=True).exists())
         self.assertFalse(user.has_usable_password())
+        self.assertTrue(resp.data['user']['onboarding_required'])
+
+    @patch('api.views.auth_views.google_id_token.verify_oauth2_token')
+    def test_new_google_user_can_choose_username_during_setup(self, mock_verify):
+        mock_verify.return_value = _fake_idinfo()
+        self.client.post(reverse('auth_google'), {'credential': 'fake-token'}, format='json')
+        user = User.objects.get(email='bob@example.com')
+        self.client.force_authenticate(user=user)
+
+        response = self.client.post(reverse('auth_complete_profile'), {
+            'username': 'sat_champion',
+            'grade': '11',
+            'sat_exam_date': None,
+            'marketing_opt_in': False,
+            'terms_accepted': True,
+        }, format='json')
+
+        user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(user.username, 'sat_champion')
+        self.assertFalse(response.data['onboarding_required'])
 
     @patch('api.views.auth_views.google_id_token.verify_oauth2_token')
     def test_google_records_social_account(self, mock_verify):
@@ -253,23 +274,68 @@ class CompleteProfileTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='carol', email='c@example.com')
         Profile.objects.create(user=self.user)
+        self.exam_date = timezone.localdate() + timedelta(days=30)
+        SATExamDate.objects.update_or_create(date=self.exam_date, defaults={'active': True})
         EmailAddress.objects.create(user=self.user, email='c@example.com', verified=True, primary=True)
         self.client.force_authenticate(user=self.user)
 
-    def test_set_grade(self):
-        resp = self.client.post(reverse('auth_complete_profile'), {'grade': '10'}, format='json')
+    def payload(self, **updates):
+        data = {
+            'grade': '10',
+            'sat_exam_date': self.exam_date.isoformat(),
+            'marketing_opt_in': True,
+            'terms_accepted': True,
+        }
+        data.update(updates)
+        return data
+
+    def test_complete_account_setup(self):
+        resp = self.client.post(reverse('auth_complete_profile'), self.payload(), format='json')
         self.assertEqual(resp.status_code, 200)
         self.user.profile.refresh_from_db()
         self.assertEqual(self.user.profile.grade, '10')
+        self.assertEqual(self.user.profile.sat_exam_date, self.exam_date)
+        self.assertTrue(self.user.profile.sat_exam_date_selected)
+        self.assertTrue(self.user.profile.marketing_opt_in)
+        self.assertIsNotNone(self.user.profile.terms_accepted_at)
+        self.assertFalse(self.user.profile.onboarding_required)
 
     def test_invalid_grade_rejected(self):
-        resp = self.client.post(reverse('auth_complete_profile'), {'grade': '99'}, format='json')
+        resp = self.client.post(reverse('auth_complete_profile'), self.payload(grade='99'), format='json')
         self.assertEqual(resp.status_code, 400)
+
+    def test_terms_are_required(self):
+        resp = self.client.post(reverse('auth_complete_profile'), self.payload(terms_accepted=False), format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unknown_exam_date_is_a_completed_choice(self):
+        resp = self.client.post(reverse('auth_complete_profile'), self.payload(sat_exam_date=None), format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.user.profile.refresh_from_db()
+        self.assertIsNone(self.user.profile.sat_exam_date)
+        self.assertTrue(self.user.profile.sat_exam_date_selected)
 
     def test_requires_auth(self):
         self.client.force_authenticate(user=None)
-        resp = self.client.post(reverse('auth_complete_profile'), {'grade': '10'}, format='json')
+        resp = self.client.post(reverse('auth_complete_profile'), self.payload(), format='json')
         self.assertEqual(resp.status_code, 401)
+
+
+class SATExamDateTests(APITestCase):
+    def test_returns_only_the_next_six_active_dates(self):
+        SATExamDate.objects.all().delete()
+        today = timezone.localdate()
+        SATExamDate.objects.create(date=today - timedelta(days=1))
+        for days in range(1, 8):
+            SATExamDate.objects.create(date=today + timedelta(days=days), active=days != 2)
+
+        response = self.client.get(reverse('sat_exam_dates'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['dates'], [
+            (today + timedelta(days=days)).isoformat()
+            for days in [1, 3, 4, 5, 6, 7]
+        ])
 
 
 class AccountSettingsTests(APITestCase):
@@ -507,10 +573,56 @@ class RegistrationAbuseTests(APITestCase):
             'password1': 'Secret123!',
             'password2': 'Secret123!',
             'grade': '11',
+            'sat_exam_date': None,
+            'marketing_opt_in': True,
+            'terms_accepted': True,
         }, format='json')
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(User.objects.filter(email__iexact='student@example.com').count(), 1)
+
+
+class RegistrationOnboardingTests(APITestCase):
+    def setUp(self):
+        self.exam_date = timezone.localdate() + timedelta(days=45)
+        SATExamDate.objects.update_or_create(date=self.exam_date, defaults={'active': True})
+
+    def registration_data(self, **updates):
+        data = {
+            'username': 'new_student',
+            'email': 'new_student@example.com',
+            'first_name': 'New',
+            'last_name': 'Student',
+            'password1': 'Secret123!',
+            'password2': 'Secret123!',
+            'grade': '11',
+            'sat_exam_date': self.exam_date.isoformat(),
+            'marketing_opt_in': False,
+            'terms_accepted': True,
+        }
+        data.update(updates)
+        return data
+
+    def test_registration_stores_onboarding_choices(self):
+        response = self.client.post(reverse('register'), self.registration_data(), format='json')
+
+        self.assertEqual(response.status_code, 201)
+        profile = Profile.objects.get(user__username='new_student')
+        self.assertEqual(profile.sat_exam_date, self.exam_date)
+        self.assertTrue(profile.sat_exam_date_selected)
+        self.assertFalse(profile.marketing_opt_in)
+        self.assertIsNotNone(profile.terms_accepted_at)
+        self.assertFalse(profile.onboarding_required)
+
+    def test_registration_rejects_unaccepted_terms(self):
+        response = self.client.post(
+            reverse('register'),
+            self.registration_data(terms_accepted=False),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(User.objects.filter(username='new_student').exists())
 
 
 class RankingUpdateTests(APITestCase):
