@@ -123,6 +123,18 @@ class Pet(models.Model):
 # User Profile and Statistics Models
 # =========================================================
 
+class SATExamDate(models.Model):
+    """Weekend SAT dates shown during onboarding, maintained in Django admin."""
+    date = models.DateField(unique=True)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['date']
+
+    def __str__(self):
+        return f'{self.date:%B} {self.date.day}, {self.date.year}'
+
+
 class Profile(models.Model):
     """Extended user profile with additional attributes and game statistics."""
     AVATAR_CHOICES = [
@@ -192,6 +204,14 @@ class Profile(models.Model):
     stripe_price_id = models.CharField(max_length=255, blank=True, null=True)
     username_changed_at = models.DateTimeField(null=True, blank=True)
 
+    # Account setup and communication preferences. `sat_exam_date_selected`
+    # distinguishes "I don't know yet" from an existing account that has not
+    # answered the question.
+    sat_exam_date = models.DateField(null=True, blank=True)
+    sat_exam_date_selected = models.BooleanField(default=False)
+    marketing_opt_in = models.BooleanField(null=True, blank=True, default=None)
+    terms_accepted_at = models.DateTimeField(null=True, blank=True)
+
     # Day streak: completing the daily practice goal (DAILY_PRACTICE_GOAL
     # answers in the user's local day) extends it. Evaluated lazily — a missed
     # day reads as 0 without any scheduled job (see practice_views).
@@ -204,6 +224,14 @@ class Profile(models.Model):
         if not self.is_premium:
             return False
         return self.premium_until is None or self.premium_until > timezone.now()
+
+    @property
+    def onboarding_required(self):
+        return (
+            not self.sat_exam_date_selected
+            or self.marketing_opt_in is None
+            or self.terms_accepted_at is None
+        )
 
     def sigma(self, r, kappa, s=400):
         """

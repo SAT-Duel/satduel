@@ -10,12 +10,14 @@ browser obtains a signed id_token from Google and posts it here; we verify it
 against our OAuth client ID and issue our own JWTs. Accounts are linked by
 verified email so a user can use Google and password interchangeably.
 """
+from datetime import date
 import re
 
 from django.conf import settings
 from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.models import User, update_last_login
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (
     api_view,
@@ -36,7 +38,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 from api.account_deletion import AccountDeletionError, delete_user_account
-from api.models import Profile
+from api.models import Profile, SATExamDate
 
 
 class AccountTokenRefreshSerializer(TokenRefreshSerializer):
@@ -78,6 +80,7 @@ def _user_payload(user, is_first_login):
         'is_premium': bool(profile and profile.has_premium),
         'avatar': profile.avatar if profile else 'violet',
         'avatar_icon': profile.avatar_icon if profile else 'initial',
+        'onboarding_required': bool(profile and profile.onboarding_required),
     }
 
 
@@ -262,26 +265,91 @@ def _link_social_account(user, idinfo):
 
 
 # ---------------------------------------------------------------------------
-# Profile completion (grade) for new social signups
+# Account setup
 # ---------------------------------------------------------------------------
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def sat_exam_dates(request):
+    """Return the next six active weekend SAT dates maintained by staff."""
+    dates = (
+        SATExamDate.objects
+        .filter(active=True, date__gte=timezone.localdate())
+        .values_list('date', flat=True)[:6]
+    )
+    return Response({'dates': [exam_date.isoformat() for exam_date in dates]})
+
 
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
+@transaction.atomic
 def complete_profile(request):
-    """Set the grade for a user that signed up without one (e.g. via Google)."""
-    grade = str(request.data.get('grade', ''))
-    valid_grades = {choice[0] for choice in Profile._meta.get_field('grade').choices}
-    if grade not in valid_grades:
-        return Response({'error': 'Invalid grade.'}, status=status.HTTP_400_BAD_REQUEST)
-
-    profile = getattr(request.user, 'profile', None)
-    if profile is None:
+    """Save required onboarding choices for social and existing accounts."""
+    try:
+        profile = Profile.objects.select_for_update().select_related('user').get(user=request.user)
+    except Profile.DoesNotExist:
         return Response({'error': 'Profile not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    profile.grade = grade
-    profile.save(update_fields=['grade'])
-    return Response({'status': 'success', 'grade': profile.grade}, status=status.HTTP_200_OK)
+    if 'sat_exam_date' not in request.data:
+        return Response({'error': 'Choose an SAT date or “I don’t know yet”.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(request.data.get('marketing_opt_in'), bool):
+        return Response({'error': 'Choose whether you want SAT Duel updates.'}, status=status.HTTP_400_BAD_REQUEST)
+    if request.data.get('terms_accepted') is not True:
+        return Response({'error': 'You must accept the Terms of Service to continue.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    sat_exam_date = request.data.get('sat_exam_date')
+    if sat_exam_date is not None:
+        try:
+            sat_exam_date = date.fromisoformat(str(sat_exam_date))
+        except ValueError:
+            return Response({'error': 'Invalid SAT date.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not SATExamDate.objects.filter(
+            date=sat_exam_date,
+            date__gte=timezone.localdate(),
+            active=True,
+        ).exists():
+            return Response({'error': 'Choose one of the available SAT dates.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    grade = request.data.get('grade')
+    if grade is not None:
+        grade = str(grade)
+        valid_grades = {choice[0] for choice in Profile._meta.get_field('grade').choices}
+        if grade not in valid_grades:
+            return Response({'error': 'Invalid grade.'}, status=status.HTTP_400_BAD_REQUEST)
+        profile.grade = grade
+
+    username = request.data.get('username')
+    if username is not None:
+        username = str(username).strip()
+        google_account = SocialAccount.objects.filter(user=profile.user, provider='google').exists()
+        if not profile.onboarding_required or not google_account:
+            return Response({'error': 'Use account settings to change your username.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not re.fullmatch(r'[a-zA-Z0-9_]{1,15}', username):
+            return Response({'error': 'Use 1–15 letters, numbers, or underscores.'}, status=status.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(username__iexact=username).exclude(pk=profile.user_id).exists():
+            return Response({'error': 'That username is already taken.'}, status=status.HTTP_400_BAD_REQUEST)
+        profile.user.username = username
+        profile.user.save(update_fields=['username'])
+
+    profile.sat_exam_date = sat_exam_date
+    profile.sat_exam_date_selected = True
+    profile.marketing_opt_in = request.data['marketing_opt_in']
+    profile.terms_accepted_at = timezone.now()
+    update_fields = [
+        'sat_exam_date', 'sat_exam_date_selected', 'marketing_opt_in', 'terms_accepted_at',
+    ]
+    if grade is not None:
+        update_fields.append('grade')
+    profile.save(update_fields=update_fields)
+    return Response({
+        'status': 'success',
+        'username': profile.user.username,
+        'grade': profile.grade,
+        'sat_exam_date': profile.sat_exam_date.isoformat() if profile.sat_exam_date else None,
+        'marketing_opt_in': profile.marketing_opt_in,
+        'onboarding_required': profile.onboarding_required,
+    })
 
 
 @api_view(['POST'])

@@ -43,6 +43,7 @@ urlpatterns = [
     # Unified auth (single-request JWT login + Google + profile completion)
     path('auth/login/', auth_views.login_view, name='auth_login'),
     path('auth/google/', auth_views.google_login, name='auth_google'),
+    path('auth/sat_exam_dates/', auth_views.sat_exam_dates, name='sat_exam_dates'),
     path('auth/complete_profile/', auth_views.complete_profile, name='auth_complete_profile'),
     path('auth/set_password/', auth_views.set_password, name='auth_set_password'),
 

@@ -83,6 +83,13 @@ def _current_profile_payload(profile):
         'has_usable_password': profile.user.has_usable_password(),
         'username_change_available_at': available_at.isoformat() if available_at else None,
     }
+    data['onboarding'] = {
+        'required': profile.onboarding_required,
+        'sat_exam_date': profile.sat_exam_date.isoformat() if profile.sat_exam_date else None,
+        'sat_exam_date_selected': profile.sat_exam_date_selected,
+        'marketing_opt_in': profile.marketing_opt_in,
+        'terms_accepted': profile.terms_accepted_at is not None,
+    }
     return data
 
 
