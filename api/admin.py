@@ -75,7 +75,7 @@ class UserAdmin(BaseUserAdmin):
         delete_user_account(obj)
 
     def delete_queryset(self, request, queryset):
-        for user in queryset.iterator():
+        for user in queryset:
             delete_user_account(user)
 
 
