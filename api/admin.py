@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 
+from api.account_deletion import delete_user_account
 from api.models import Question, QuestionReport, Profile, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
     Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats
@@ -62,6 +63,20 @@ class UserAdmin(BaseUserAdmin):
         return super().get_queryset(request).prefetch_related(
             'emailaddress_set', 'socialaccount_set',
         )
+
+    def get_deleted_objects(self, objs, request):
+        deleted, counts, _perms_needed, protected = super().get_deleted_objects(objs, request)
+        # Permission to delete a User includes its cascade-owned rows. Django's
+        # default preview otherwise blocks staff who lack delete permission for
+        # every registered stats/profile model.
+        return deleted, counts, set(), protected
+
+    def delete_model(self, request, obj):
+        delete_user_account(obj)
+
+    def delete_queryset(self, request, queryset):
+        for user in queryset.iterator():
+            delete_user_account(user)
 
 
 admin.site.unregister(User)

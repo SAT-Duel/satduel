@@ -25,14 +25,35 @@ from rest_framework.decorators import (
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenRefreshView
 
 from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
+from api.account_deletion import AccountDeletionError, delete_user_account
 from api.models import Profile
+
+
+class AccountTokenRefreshSerializer(TokenRefreshSerializer):
+    """Return 401 when a refresh token belongs to a deleted account."""
+
+    def validate(self, attrs):
+        try:
+            return super().validate(attrs)
+        except User.DoesNotExist as exc:
+            raise AuthenticationFailed(
+                self.error_messages['no_active_account'],
+                code='no_active_account',
+            ) from exc
+
+
+class AccountTokenRefreshView(TokenRefreshView):
+    serializer_class = AccountTokenRefreshSerializer
 
 
 # ---------------------------------------------------------------------------
@@ -280,3 +301,22 @@ def set_password(request):
 
     form.save()
     return Response({'message': 'Password set successfully.', 'has_usable_password': True})
+
+
+@api_view(['DELETE'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def delete_account(request):
+    """Permanently remove the authenticated user and their related data."""
+    if request.data.get('confirmation') != 'DELETE':
+        return Response(
+            {'error': 'Type DELETE to confirm permanent account deletion.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        delete_user_account(request.user)
+    except AccountDeletionError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+    return Response(status=status.HTTP_204_NO_CONTENT)
