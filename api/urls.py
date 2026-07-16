@@ -1,5 +1,5 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from rest_framework_simplejwt.views import TokenObtainPairView
 from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, inventory_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
@@ -19,6 +19,7 @@ urlpatterns = [
     path('admin/question_reports/<int:report_id>/', views.delete_question_report, name='delete_question_report'),
 
     path('profile/', profile_views.profile_view, name='profile'),
+    path('account/delete/', auth_views.delete_account, name='account_delete'),
     path('account/username/', profile_views.update_username, name='account_username'),
     path('profile/update_biography/', profile_views.update_biography, name='update_biography'),
     path('profile/update_rankings/', profile_views.update_ranking, name='update_ranking'),
@@ -86,7 +87,7 @@ urlpatterns = [
     path('tournaments/my_tournaments/', tournaments_views.get_my_tournaments, name='get_my_tournaments'),
 
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('token/refresh/', auth_views.AccountTokenRefreshView.as_view(), name='api_token_refresh'),
 
     path('buy_pet/', shop_views.buy_pet, name='buy_pet'),
 

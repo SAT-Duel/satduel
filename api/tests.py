@@ -331,6 +331,121 @@ class AccountSettingsTests(APITestCase):
         self.assertEqual(response.status_code, 400)
 
 
+class AccountDeletionTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='delete_me', email='delete@example.com')
+        self.profile = Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+
+    def test_confirmation_is_required(self):
+        response = self.client.delete(
+            reverse('account_delete'), {'confirmation': 'delete'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_deletion_removes_user_data_and_submitted_reports(self):
+        from api.models import PracticeAttempt
+
+        question = Question.objects.create(
+            question='Delete test?', choice_a='a', choice_b='b',
+            choice_c='c', choice_d='d', answer='A', difficulty=1,
+        )
+        PracticeAttempt.objects.create(
+            user=self.user, question=question, correct=False, selected_choice='b',
+        )
+        report = QuestionReport.objects.create(
+            question=question,
+            reporter=self.user,
+            reason='other',
+            details='This report belongs to the deleted user.',
+        )
+
+        response = self.client.delete(
+            reverse('account_delete'), {'confirmation': 'DELETE'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+        self.assertFalse(PracticeAttempt.objects.filter(user_id=self.user.pk).exists())
+        self.assertFalse(QuestionReport.objects.filter(pk=report.pk).exists())
+
+    @override_settings(
+        STRIPE_SECRET_KEY='stripe_secret_mock',
+        STRIPE_API_VERSION='2026-06-24.dahlia',
+    )
+    @patch('api.account_deletion.stripe.Customer.delete')
+    def test_deletion_removes_stripe_customer_first(self, mock_customer_delete):
+        self.profile.stripe_customer_id = 'cus_delete_me'
+        self.profile.save(update_fields=['stripe_customer_id'])
+
+        response = self.client.delete(
+            reverse('account_delete'), {'confirmation': 'DELETE'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 204)
+        mock_customer_delete.assert_called_once_with('cus_delete_me')
+        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+
+    @override_settings(
+        STRIPE_SECRET_KEY='stripe_secret_mock',
+        STRIPE_API_VERSION='2026-06-24.dahlia',
+    )
+    @patch('api.account_deletion.StripeError', Exception)
+    @patch('api.account_deletion.stripe.Customer.delete')
+    def test_stripe_failure_keeps_local_account(self, mock_customer_delete):
+        self.profile.stripe_customer_id = 'cus_delete_me'
+        self.profile.save(update_fields=['stripe_customer_id'])
+        mock_customer_delete.side_effect = Exception('Stripe unavailable')
+
+        response = self.client.delete(
+            reverse('account_delete'), {'confirmation': 'DELETE'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertTrue(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_refresh_token_for_deleted_account_returns_unauthorized(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        refresh_token = str(RefreshToken.for_user(self.user))
+        delete_response = self.client.delete(
+            reverse('account_delete'), {'confirmation': 'DELETE'}, format='json',
+        )
+
+        refresh_response = self.client.post(
+            reverse('api_token_refresh'), {'refresh': refresh_token}, format='json',
+        )
+
+        self.assertEqual(delete_response.status_code, 204)
+        self.assertEqual(refresh_response.status_code, 401)
+
+
+class AccountDeletionAdminTests(APITestCase):
+    def test_user_delete_permission_includes_cascade_owned_data(self):
+        from django.contrib import admin
+        from django.contrib.auth.models import Permission
+        from django.test import RequestFactory
+        from api.admin import UserAdmin
+
+        staff = User.objects.create_user(username='staff', is_staff=True)
+        staff.user_permissions.add(Permission.objects.get(codename='delete_user'))
+        target = User.objects.create_user(username='admin_delete_target')
+        Profile.objects.create(user=target)
+        request = RequestFactory().get('/admin/auth/user/')
+        request.user = staff
+        user_admin = UserAdmin(User, admin.site)
+
+        _deleted, _counts, perms_needed, protected = user_admin.get_deleted_objects([target], request)
+
+        self.assertFalse(staff.has_perm('api.delete_profile'))
+        self.assertEqual(perms_needed, set())
+        self.assertEqual(protected, [])
+        user_admin.delete_model(request, target)
+        self.assertFalse(User.objects.filter(pk=target.pk).exists())
+
+
 class RegistrationAbuseTests(APITestCase):
     def test_same_email_cannot_reserve_multiple_usernames(self):
         User.objects.create_user(username='first_name', email='student@example.com')
