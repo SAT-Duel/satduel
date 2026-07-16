@@ -1,9 +1,11 @@
 from unittest.mock import patch
 from datetime import timedelta
+from importlib import import_module
 from types import SimpleNamespace
 
 from django.contrib.auth.models import User
-from django.test import override_settings
+from django.db import connection
+from django.test import override_settings, TransactionTestCase
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APITestCase
@@ -444,6 +446,53 @@ class AccountDeletionAdminTests(APITestCase):
         self.assertEqual(protected, [])
         user_admin.delete_model(request, target)
         self.assertFalse(User.objects.filter(pk=target.pk).exists())
+
+    def test_bulk_admin_action_deletes_user(self):
+        admin_user = User.objects.create_superuser(username='delete_admin')
+        target = User.objects.create_user(username='bulk_delete_target')
+        Profile.objects.create(user=target)
+        self.client.force_login(admin_user)
+        url = reverse('admin:auth_user_changelist')
+        selection = {
+            'action': 'delete_selected',
+            '_selected_action': [str(target.pk)],
+        }
+
+        response = self.client.post(url, {**selection, 'post': 'yes'})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(User.objects.filter(pk=target.pk).exists())
+
+
+class OrphanedUserTablesMigrationTests(TransactionTestCase):
+    tables = ('api_house', 'oauth2_provider_application')
+
+    def tearDown(self):
+        with connection.cursor() as cursor:
+            for table in self.tables:
+                cursor.execute(f'DROP TABLE IF EXISTS {connection.ops.quote_name(table)}')
+        super().tearDown()
+
+    def test_cleanup_drops_legacy_user_foreign_keys(self):
+        user = User.objects.create_user(username='legacy_table_user')
+        with connection.cursor() as cursor:
+            for table in self.tables:
+                cursor.execute(
+                    f'CREATE TABLE {connection.ops.quote_name(table)} '
+                    '(id integer PRIMARY KEY, user_id integer REFERENCES auth_user(id))'
+                )
+                cursor.execute(
+                    f'INSERT INTO {connection.ops.quote_name(table)} (id, user_id) VALUES (1, %s)',
+                    [user.pk],
+                )
+
+        migration = import_module('api.migrations.0064_drop_orphaned_user_tables')
+        with connection.schema_editor() as schema_editor:
+            migration.drop_orphaned_user_tables(None, schema_editor)
+
+        remaining_tables = connection.introspection.table_names()
+        self.assertNotIn('api_house', remaining_tables)
+        self.assertNotIn('oauth2_provider_application', remaining_tables)
 
 
 class RegistrationAbuseTests(APITestCase):
