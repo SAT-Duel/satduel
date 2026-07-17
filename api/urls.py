@@ -115,6 +115,9 @@ urlpatterns = [
     path('practice/next/', practice_views.next_question, name='practice_next'),
     path('practice/status/', practice_views.practice_status, name='practice_status'),
     path('practice/history/', practice_views.practice_history, name='practice_history'),
+    path('practice/saved/', practice_views.saved_questions, name='saved_questions'),
+    path('practice/saved/status/', practice_views.saved_question_status, name='saved_question_status'),
+    path('practice/saved/<int:question_id>/', practice_views.unsave_question, name='unsave_question'),
 
     # Billing
     path('billing/create_checkout_session/', billing_views.create_checkout_session, name='billing_create_checkout_session'),
