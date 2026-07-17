@@ -743,3 +743,34 @@ class PracticeAttempt(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - Q{self.question_id} - {'✓' if self.correct else '✗'}"
+
+
+class SavedQuestion(models.Model):
+    """A question the user marked for review from practice.
+
+    `subject` is denormalized off the question's type the same way
+    PracticeAttempt does it, so the saved list splits by subject without
+    re-deriving the taxonomy on every read.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='saved_questions')
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='saved_by')
+    subject = models.CharField(
+        max_length=10,
+        choices=[('english', 'English'), ('math', 'Math')],
+        default='english',
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'question'], name='unique_saved_question_per_user'),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'subject']),      # saved list, split by subject
+            models.Index(fields=['user', 'created_at']),   # newest-first paging
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} saved Q{self.question_id}"

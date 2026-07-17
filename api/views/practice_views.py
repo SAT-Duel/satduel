@@ -37,6 +37,7 @@ from api.models import (
     PracticeStats,
     PracticeTypeStats,
     Question,
+    SavedQuestion,
 )
 from api.views.serializers import QuestionSerializer
 
@@ -381,6 +382,44 @@ def practice_status(request):
     })
 
 
+def exclude_live_questions(queryset, user):
+    """Drop rows whose question is live for `user` in a duel or tournament.
+
+    Review surfaces hand back the correct answer and explanation, which would
+    be a cheat sheet for a question the user still has to answer for real.
+    """
+    from api.models import TournamentParticipation, TrackedQuestion
+    tournament_questions = TournamentParticipation.objects.filter(
+        user=user, status='Active',
+    ).values_list('tournament__questions', flat=True)
+    duel_questions = TrackedQuestion.objects.filter(
+        user=user, room__status='Battling', status='Blank',
+    ).values_list('question_id', flat=True)
+    return queryset.exclude(
+        question_id__in=tournament_questions,
+    ).exclude(
+        question_id__in=duel_questions,
+    )
+
+
+def review_question_payload(question):
+    """Question shape used by the review surfaces (history and saved).
+
+    Unlike QuestionSerializer this deliberately includes the answer and
+    explanation — callers must gate it through exclude_live_questions().
+    """
+    return {
+        'id': question.id,
+        'question': question.question,
+        'choices': [question.choice_a, question.choice_b, question.choice_c, question.choice_d],
+        'difficulty': question.difficulty,
+        'question_type': question.question_type,
+        'correct_choice_label': question.answer,
+        'correct_answer': question.answer_text,
+        'explanation': question.explanation,
+    }
+
+
 @api_view(['GET'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
@@ -402,20 +441,8 @@ def practice_history(request):
     except (TypeError, ValueError):
         limit = 20
 
-    # Do not expose a known answer while the same question is currently live
-    # in a duel or tournament.
-    from api.models import TournamentParticipation, TrackedQuestion
-    tournament_questions = TournamentParticipation.objects.filter(
-        user=request.user, status='Active',
-    ).values_list('tournament__questions', flat=True)
-    duel_questions = TrackedQuestion.objects.filter(
-        user=request.user, room__status='Battling', status='Blank',
-    ).values_list('question_id', flat=True)
-
-    attempts = PracticeAttempt.objects.filter(user=request.user).exclude(
-        question_id__in=tournament_questions,
-    ).exclude(
-        question_id__in=duel_questions,
+    attempts = exclude_live_questions(
+        PracticeAttempt.objects.filter(user=request.user), request.user,
     )
     if subject:
         attempts = attempts.filter(subject=subject)
@@ -447,24 +474,110 @@ def practice_history(request):
             'correct': attempt.correct,
             'selected_choice': attempt.selected_choice,
             'created_at': attempt.created_at.isoformat(),
-            'question': {
-                'id': attempt.question_id,
-                'question': attempt.question.question,
-                'choices': [
-                    attempt.question.choice_a, attempt.question.choice_b,
-                    attempt.question.choice_c, attempt.question.choice_d,
-                ],
-                'difficulty': attempt.question.difficulty,
-                'question_type': attempt.question.question_type,
-                'correct_choice_label': attempt.question.answer,
-                'correct_answer': attempt.question.answer_text,
-                'explanation': attempt.question.explanation,
-            },
+            'question': review_question_payload(attempt.question),
         } for attempt in page[:limit]],
         'question_types': question_types,
         'mistake_count': mistake_count,
         'has_more': has_more,
         'next_offset': offset + limit if has_more else None,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Saved questions ("mark for review")
+# ---------------------------------------------------------------------------
+
+@api_view(['GET', 'POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def saved_questions(request):
+    """GET the user's saved questions (newest first); POST to save one."""
+    if request.method == 'POST':
+        question_id = request.data.get('question_id')
+        question = Question.objects.filter(id=question_id).first()
+        if question is None:
+            return Response({'error': 'not_found', 'detail': 'That question does not exist.'},
+                            status=status.HTTP_404_NOT_FOUND)
+        # Idempotent: re-saving an already-saved question is a no-op rather
+        # than an error, so a double click can't fail the button.
+        SavedQuestion.objects.get_or_create(
+            user=request.user,
+            question=question,
+            defaults={'subject': resolve_subject(subject_of(question))},
+        )
+        return Response({'saved': True, 'question_id': question.id})
+
+    subject = request.GET.get('subject')
+    if subject not in SUBJECTS:
+        subject = None
+    question_type = request.GET.get('question_type')
+    if question_type == 'all':
+        question_type = None
+    try:
+        offset = max(0, int(request.GET.get('offset', 0)))
+    except (TypeError, ValueError):
+        offset = 0
+    try:
+        limit = min(50, max(1, int(request.GET.get('limit', 20))))
+    except (TypeError, ValueError):
+        limit = 20
+
+    saved = exclude_live_questions(
+        SavedQuestion.objects.filter(user=request.user), request.user,
+    )
+    if subject:
+        saved = saved.filter(subject=subject)
+
+    question_types = list(saved.filter(
+        question__question_type__isnull=False,
+    ).exclude(
+        question__question_type='',
+    ).order_by('question__question_type').values_list(
+        'question__question_type', flat=True,
+    ).distinct())
+    if question_type:
+        saved = saved.filter(question__question_type=question_type)
+
+    saved_count = saved.count()
+    saved = saved.select_related('question').order_by('-created_at', '-id')
+    page = list(saved[offset:offset + limit + 1])
+    has_more = len(page) > limit
+
+    return Response({
+        'saved': [{
+            'id': row.id,
+            'subject': row.subject,
+            'created_at': row.created_at.isoformat(),
+            'question': review_question_payload(row.question),
+        } for row in page[:limit]],
+        'question_types': question_types,
+        'saved_count': saved_count,
+        'has_more': has_more,
+        'next_offset': offset + limit if has_more else None,
+    })
+
+
+@api_view(['DELETE'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def unsave_question(request, question_id):
+    """Remove a question from the user's saved list."""
+    SavedQuestion.objects.filter(user=request.user, question_id=question_id).delete()
+    return Response({'saved': False, 'question_id': question_id})
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def saved_question_status(request):
+    """Whether a single question is saved — drives the mark-for-review button."""
+    try:
+        question_id = int(request.GET.get('question_id'))
+    except (TypeError, ValueError):
+        return Response({'error': 'question_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    return Response({
+        'saved': SavedQuestion.objects.filter(user=request.user, question_id=question_id).exists(),
+        'question_id': question_id,
     })
 
 
