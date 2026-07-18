@@ -8,7 +8,8 @@ from allauth.socialaccount.models import SocialAccount
 from api.account_deletion import delete_user_account
 from api.models import Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats
+    Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats, \
+    PartyRoom, PartyPlayer
 
 
 # ---------------------------------------------------------------------------
@@ -162,3 +163,31 @@ admin.site.register(Ranking)
 admin.site.register(Pet)
 admin.site.register(Game)
 admin.site.register(GameQuestion)
+
+
+class PartyPlayerInline(admin.TabularInline):
+    model = PartyPlayer
+    fields = ['user', 'score', 'last_seen', 'answers']
+    readonly_fields = ['last_seen']
+    extra = 0
+
+
+@admin.register(PartyRoom)
+class PartyRoomAdmin(admin.ModelAdmin):
+    list_display = ['code', 'host', 'status', 'subject', 'difficulty',
+                    'num_questions', 'player_count', 'created_at']
+    list_filter = ['status', 'subject', 'difficulty', 'created_at']
+    search_fields = ['code', 'host__username']
+    ordering = ['-created_at']
+    inlines = [PartyPlayerInline]
+
+    @admin.display(description='Players')
+    def player_count(self, obj):
+        return obj.players.count()
+
+
+@admin.register(PartyPlayer)
+class PartyPlayerAdmin(admin.ModelAdmin):
+    list_display = ['user', 'room', 'score', 'last_seen']
+    search_fields = ['user__username', 'room__code']
+    ordering = ['-id']

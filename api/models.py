@@ -784,6 +784,9 @@ PARTY_COUNTDOWN_SECONDS = 5
 # Players polling within this window count as present; "everyone answered"
 # ignores ghosts who closed the tab so one dropout can't stall the room.
 PARTY_ACTIVE_WINDOW_SECONDS = 12
+# A player who hasn't polled for this long has left (closed the tab, swiped
+# back). Long enough to survive a refresh or brief app switch.
+PARTY_PRESENCE_TIMEOUT_SECONDS = 30
 
 
 class PartyRoom(models.Model):
@@ -821,8 +824,34 @@ class PartyRoom(models.Model):
     def question_deadline(self):
         return self.phase_started_at + timezone.timedelta(seconds=self.seconds_per_question)
 
+    def sync_presence(self):
+        """Reconcile the room with players who left without saying goodbye.
+
+        Polling is our only presence signal, so this runs on every state read:
+        stale lobby seats are freed, a vanished host hands the room to the
+        longest-seated active player, and a room with nobody left is closed so
+        its join code stops matching.
+        """
+        if self.status == 'finished':
+            return
+        cutoff = timezone.now() - timezone.timedelta(seconds=PARTY_PRESENCE_TIMEOUT_SECONDS)
+        players = list(self.players.order_by('id'))
+        active = [p for p in players if p.last_seen >= cutoff]
+        if not active:
+            self.status = 'finished'
+            self.save(update_fields=['status'])
+            return
+        if self.status == 'lobby':
+            # Mid-game seats survive a dropout (scores may still podium);
+            # lobby seats don't, so the player count stays honest.
+            self.players.filter(last_seen__lt=cutoff).delete()
+        if all(p.user_id != self.host_id for p in active):
+            self.host = active[0].user
+            self.save(update_fields=['host'])
+
     def advance(self):
         """Move the room forward when the current phase has expired."""
+        self.sync_presence()
         now = timezone.now()
         if self.status == 'countdown':
             ends = self.phase_started_at + timezone.timedelta(seconds=PARTY_COUNTDOWN_SECONDS)
