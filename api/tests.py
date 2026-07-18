@@ -1117,7 +1117,7 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(resp.status_code, 403)
 
     def test_daily_limit_blocks_after_quota(self):
-        from api.models import PracticeAttempt
+        from api.models import PracticeAttempt, Question
         # Simulate having used the full quota today
         for i in range(25):
             PracticeAttempt.objects.create(
@@ -1125,7 +1125,13 @@ class PracticeTierTests(APITestCase):
             )
         next_resp = self.client.get('/api/practice/next/')
         self.assertEqual(next_resp.status_code, 429)
-        answer_resp = self._answer(self.questions[0])
+        # A brand-new (never-answered) question is still blocked once the free
+        # quota is spent — only reviewing answered questions stays free.
+        fresh = Question.objects.create(
+            question='Fresh?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type='Transitions',
+        )
+        answer_resp = self._answer(fresh)
         self.assertEqual(answer_resp.status_code, 429)
         self.assertEqual(answer_resp.data['error'], 'daily_limit')
 
@@ -1192,15 +1198,17 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(resp.data['statistics']['english_accuracy'], 100)
         self.assertEqual(resp.data['statistics']['math_accuracy'], 0)
 
-    def test_repeat_attempt_does_not_move_elo(self):
+    def test_repeat_attempt_is_review_only(self):
         self._answer(self.questions[0], 'b')
         rating_after_first = self._stats('english').elo
         resp = self._answer(self.questions[0], 'b')
+        # Re-answering an answered question is a review: no rating, no quota,
+        # and no lifetime-counter impact.
         self.assertFalse(resp.data['rated'])
-        self.assertEqual(resp.data['sp_elo_rating_delta'], 0)
+        self.assertTrue(resp.data['review'])
+        self.assertEqual(resp.data['sp_elo_rating'], rating_after_first)
         self.assertEqual(self._stats('english').elo, rating_after_first)
-        # Counters still count the repeat attempt.
-        self.assertEqual(self._stats('english').answered, 2)
+        self.assertEqual(self._stats('english').answered, 1)
 
     def test_non_practice_mode_does_not_move_elo_or_quota(self):
         before = self._stats('english').elo
@@ -1358,6 +1366,89 @@ class PracticeTypeProgressTests(APITestCase):
         self.assertEqual(entry['total'], 3)
         self.assertEqual(entry['solved'], 3)
         self.assertEqual(entry['correct'], 3)
+
+
+class PracticeFilterTests(APITestCase):
+    """The premium practice filter bar: topic/level/saved narrowing plus the
+    done-before/result review pool."""
+
+    def setUp(self):
+        from api.models import Question
+        self.user = User.objects.create_user(username='filterer', email='f@e.com')
+        self.profile = Profile.objects.create(user=self.user, is_premium=True)
+        self.client.force_authenticate(user=self.user)
+        # A spread of difficulties within one type so level filters can bite.
+        self.by_level = {
+            level: Question.objects.create(
+                question=f'L{level}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='B', difficulty=level, question_type='Transitions',
+            )
+            for level in range(1, 6)
+        }
+
+    def _answer(self, q, choice='b'):
+        return self.client.post('/api/check_answer/', {
+            'question_id': q.id, 'selected_choice': choice, 'mode': 'practice',
+        }, format='json')
+
+    def test_level_filter_only_serves_matching_difficulty(self):
+        resp = self.client.get('/api/practice/next/', {'levels': '1,2'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn(resp.data['question']['difficulty'], (1, 2))
+
+    def test_filters_require_premium(self):
+        self.profile.is_premium = False
+        self.profile.save(update_fields=['is_premium'])
+        resp = self.client.get('/api/practice/next/', {'levels': '3'})
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.data['error'], 'premium_required')
+
+    def test_saved_only_filter_limits_to_saved(self):
+        from api.models import SavedQuestion
+        SavedQuestion.objects.create(user=self.user, question=self.by_level[4], subject='english')
+        resp = self.client.get('/api/practice/next/', {'saved': 'only'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['question']['id'], self.by_level[4].id)
+
+    def test_result_incorrect_reserves_the_review_pool(self):
+        # Get one question wrong so it lands in the "incorrect" pool.
+        self._answer(self.by_level[3], 'a')  # answer_text is 'b'
+        resp = self.client.get('/api/practice/next/', {'result': 'incorrect'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['question']['id'], self.by_level[3].id)
+
+    def test_reviewing_is_free_when_quota_is_spent(self):
+        from api.models import PracticeAttempt, Question
+        # Answer one wrong (records the incorrect attempt for the review pool).
+        self._answer(self.by_level[3], 'a')
+        # Exhaust the quota with a throwaway question so level 3's latest
+        # recorded outcome stays "incorrect".
+        filler = Question.objects.create(
+            question='Filler?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type='Transitions',
+        )
+        for _ in range(25):
+            PracticeAttempt.objects.create(user=self.user, question=filler, correct=True)
+        resp = self.client.get('/api/practice/next/', {'result': 'incorrect'})
+        self.assertEqual(resp.status_code, 200)
+        review = self._answer(self.by_level[3], 'a')
+        self.assertEqual(review.status_code, 200)
+        self.assertTrue(review.data['review'])
+
+    def test_review_leaves_the_result_pool_unchanged(self):
+        # Wrong first, then answer it right in review. Because review records
+        # nothing, the recorded outcome stays "incorrect" and the question is
+        # still surfaced by the incorrect-only filter.
+        self._answer(self.by_level[3], 'a')  # wrong (recorded)
+        self._answer(self.by_level[3], 'b')  # right, but a review — not recorded
+        resp = self.client.get('/api/practice/next/', {'result': 'incorrect'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['question']['id'], self.by_level[3].id)
+
+    def test_empty_review_pool_reports_no_matches(self):
+        resp = self.client.get('/api/practice/next/', {'result': 'incorrect'})
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(resp.data['error'], 'no_matches')
 
 
 class BillingViewsTests(APITestCase):
