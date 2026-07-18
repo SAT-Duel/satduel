@@ -8,7 +8,7 @@ from allauth.socialaccount.models import SocialAccount
 from api.account_deletion import delete_user_account
 from api.models import Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, Game, GameQuestion, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats, \
+    Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats, \
     PartyRoom, PartyPlayer
 
 
@@ -161,8 +161,6 @@ admin.site.register(TournamentParticipation)
 admin.site.register(TournamentQuestion)
 admin.site.register(Ranking)
 admin.site.register(Pet)
-admin.site.register(Game)
-admin.site.register(GameQuestion)
 
 
 class PartyPlayerInline(admin.TabularInline):
