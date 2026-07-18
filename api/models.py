@@ -774,3 +774,87 @@ class SavedQuestion(models.Model):
 
     def __str__(self):
         return f"{self.user.username} saved Q{self.question_id}"
+
+
+# =========================================================
+# Party Mode (Kahoot-style live rooms)
+# =========================================================
+
+PARTY_COUNTDOWN_SECONDS = 5
+# Players polling within this window count as present; "everyone answered"
+# ignores ghosts who closed the tab so one dropout can't stall the room.
+PARTY_ACTIVE_WINDOW_SECONDS = 12
+
+
+class PartyRoom(models.Model):
+    """A live Kahoot-style quiz room.
+
+    Clients poll the state endpoint; `advance()` derives phase transitions
+    from timestamps on every read, so there is no background worker.
+    """
+    STATUSES = ('lobby', 'countdown', 'question', 'leaderboard', 'finished')
+
+    host = models.ForeignKey(User, related_name='hosted_parties', on_delete=models.CASCADE)
+    code = models.CharField(max_length=6, db_index=True)
+    status = models.CharField(max_length=12, default='lobby',
+                              choices=[(s, s) for s in STATUSES])
+    max_players = models.IntegerField(default=6)
+    num_questions = models.IntegerField(default=10)
+    seconds_per_question = models.IntegerField(default=90)
+    subject = models.CharField(max_length=8, default='mixed',
+                               choices=[(s, s) for s in ('math', 'english', 'mixed')])
+    difficulty = models.CharField(max_length=6, default='medium',
+                                  choices=[(d, d) for d in ('easy', 'medium', 'hard')])
+    question_ids = models.JSONField(default=list)  # ordered; index = question number - 1
+    current_index = models.IntegerField(default=0)
+    phase_started_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Party {self.code} by {self.host.username} ({self.status})"
+
+    def current_question_id(self):
+        if 0 <= self.current_index < len(self.question_ids):
+            return self.question_ids[self.current_index]
+        return None
+
+    def question_deadline(self):
+        return self.phase_started_at + timezone.timedelta(seconds=self.seconds_per_question)
+
+    def advance(self):
+        """Move the room forward when the current phase has expired."""
+        now = timezone.now()
+        if self.status == 'countdown':
+            ends = self.phase_started_at + timezone.timedelta(seconds=PARTY_COUNTDOWN_SECONDS)
+            if now >= ends:
+                self.status = 'question'
+                self.phase_started_at = ends
+                self.save(update_fields=['status', 'phase_started_at'])
+        if self.status == 'question':
+            key = str(self.current_index)
+            cutoff = now - timezone.timedelta(seconds=PARTY_ACTIVE_WINDOW_SECONDS)
+            players = list(self.players.all())
+            active = [p for p in players if p.last_seen >= cutoff] or players
+            if now >= self.question_deadline() or all(key in p.answers for p in active):
+                self.status = 'leaderboard'
+                self.phase_started_at = now
+                self.save(update_fields=['status', 'phase_started_at'])
+
+
+class PartyPlayer(models.Model):
+    """A user's seat (and running score) in a party room. The host has one too."""
+    room = models.ForeignKey(PartyRoom, related_name='players', on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    score = models.IntegerField(default=0)
+    # question index (str) -> {'choice': 'A', 'correct': bool, 'points': int}
+    answers = models.JSONField(default=dict)
+    last_seen = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['id']
+        constraints = [
+            models.UniqueConstraint(fields=['room', 'user'], name='unique_party_player'),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} in party {self.room.code} ({self.score})"
