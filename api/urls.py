@@ -3,7 +3,6 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, inventory_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
-from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
 from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
 from api.views import party_views
 
@@ -100,13 +99,6 @@ urlpatterns = [
     # Inventory
     path('user_pets/', inventory_views.user_pets, name='user_pets'),
     path('upgrade_pet/', inventory_views.upgrade_pet, name='upgrade_pet'),
-
-    path('games/<int:game_id>/join/', join_room, name='join_room'),
-    path('games/<int:game_id>/start/', start_game, name='start_game'),  # New endpoint for starting the game
-    path('games/create/', create_game, name='create_game'),  # New endpoint for creating a game
-    path('games/waiting/', list_waiting_games, name='list_waiting_games'),  # List all waiting games
-    path('games/<int:game_id>/', retrieve_game, name='retrieve_game'),  # Retrieve a specific game by ID
-    path('games/<int:game_id>/delete/', delete_game, name='delete_game'),
 
     path('online_users/', onlineuser_views.get_online_users, name='get_online_users'),
     path('update_online_status/', onlineuser_views.update_online_status, name='update_online_status'),
