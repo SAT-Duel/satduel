@@ -211,10 +211,10 @@ def check_answer(request):
     they no longer batter the practice rating.
     """
     from api.views.practice_views import (
-        apply_practice_elo, practice_stats_breakdown, practice_type_progress,
-        quota_payload, record_practice_answer, subject_of,
+        apply_practice_elo, get_practice_stats, practice_stats_breakdown,
+        practice_type_progress, quota_payload, record_practice_answer, subject_of,
     )
-    from api.models import PracticeActiveQuestion
+    from api.models import PracticeActiveQuestion, PracticeAttempt
     from api.views.practice_views import SUBJECT_TYPES
 
     data = request.data
@@ -252,6 +252,30 @@ def check_answer(request):
                  'detail': 'Answer your current practice question before moving on.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # A repeat sighting of an answered question is a review (surfaced by the
+        # done-before/result filters): grade it, but never charge the quota,
+        # move Elo, touch lifetime stats, or extend the daily streak.
+        is_review = PracticeAttempt.objects.filter(user=request.user, question=question).exists()
+        if is_review:
+            current_elo = get_practice_stats(request.user, subject).elo
+            payload['rated'] = False
+            payload['review'] = True
+            payload['quota'] = quota_payload(request.user)
+            payload['sp_elo_rating'] = current_elo
+            payload['subject'] = subject
+            # Unchanged, but returned so the client's progress panel stays in sync.
+            payload['type_progress'] = practice_type_progress(request.user, [subject])
+            active_subject_questions.filter(question=question).delete()
+            if request.user.is_authenticated:
+                stats = practice_stats_breakdown(request.user)
+                payload['practice_stats'] = {
+                    'correct_number': stats['practice_correct'],
+                    'incorrect_number': stats['practice_answered'] - stats['practice_correct'],
+                    'answered': stats['practice_answered'],
+                    **stats,
+                }
+            return Response(payload)
 
         quota = quota_payload(request.user)
         if quota['remaining'] is not None and quota['remaining'] <= 0:

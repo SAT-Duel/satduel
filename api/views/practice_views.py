@@ -5,7 +5,11 @@ quota, and the revised single-player Elo.
 Tier rules
 ----------
 Free:    FREE_DAILY_LIMIT graded answers per day, random topics only.
-Premium: unlimited answers, may filter practice by topic.
+Premium: unlimited answers, may narrow practice with the filter bar
+         (topic, difficulty level, saved, done-before, and result). The
+         "done-before"/"result" filters open a review pool that re-serves
+         already-answered questions; reviewing is free and never moves Elo or
+         the daily quota.
 
 Elo rules (revision of the old behaviour, which updated ratings on every
 check_answer call from any surface):
@@ -15,6 +19,7 @@ check_answer call from any surface):
 - Question ratings move slowly (K=8) since they aggregate many users.
 - Ratings are clamped to [100, 3000].
 """
+import hashlib
 import random
 
 from django.conf import settings
@@ -259,6 +264,154 @@ def apply_practice_elo(user, question, correct):
 
 
 # ---------------------------------------------------------------------------
+# Practice filters (premium filter bar)
+# ---------------------------------------------------------------------------
+
+SAVED_MODES = ('all', 'only', 'exclude')          # any / saved only / unsaved only
+ATTEMPTED_MODES = ('all', 'only', 'exclude')      # any / done before / new only
+RESULT_MODES = ('all', 'correct', 'incorrect')    # any / got right / got wrong
+
+
+def parse_practice_filters(request, subject):
+    """Read the filter-bar query params into a normalized dict.
+
+    Every filter defaults to its widest setting so an absent or empty param
+    means "no filter". `types` and `levels` are comma-separated multi-selects;
+    the legacy single `type` param is still honored for back-compat.
+    """
+    types_param = request.GET.get('types')
+    if types_param is None:
+        legacy = request.GET.get('type')
+        types_param = legacy if legacy and legacy != 'any' else ''
+    valid_types = set(SUBJECT_TYPES[subject])
+    types = [t for t in types_param.split(',') if t in valid_types]
+
+    levels = []
+    for chunk in (request.GET.get('levels') or '').split(','):
+        chunk = chunk.strip()
+        if chunk.isdigit() and 1 <= int(chunk) <= 5:
+            levels.append(int(chunk))
+
+    def _one_of(name, allowed):
+        value = request.GET.get(name, 'all')
+        return value if value in allowed else 'all'
+
+    return {
+        'types': types,
+        'levels': sorted(set(levels)),
+        'saved': _one_of('saved', SAVED_MODES),
+        'attempted': _one_of('attempted', ATTEMPTED_MODES),
+        'result': _one_of('result', RESULT_MODES),
+    }
+
+
+def filters_are_default(filters):
+    """True when nothing is narrowed — i.e. plain adaptive practice."""
+    return (
+        not filters['types'] and not filters['levels']
+        and filters['saved'] == 'all'
+        and filters['attempted'] == 'all'
+        and filters['result'] == 'all'
+    )
+
+
+def filters_want_review(filters):
+    """Whether the filters ask for already-answered questions. These open the
+    review pool, which is exempt from the daily quota and never moves Elo."""
+    return filters['result'] != 'all' or filters['attempted'] == 'only'
+
+
+def filters_lane_signature(filters):
+    """Short stable id for a filter combination, used as the active-question
+    lane key so switching filters serves a fresh match instead of resuming the
+    previous lane's question. Kept well under the lane field's 128 chars."""
+    if filters_are_default(filters):
+        return 'any'
+    raw = '|'.join((
+        ','.join(filters['types']),
+        ','.join(str(level) for level in filters['levels']),
+        filters['saved'],
+        filters['attempted'],
+        filters['result'],
+    ))
+    return 'f:' + hashlib.sha1(raw.encode()).hexdigest()[:16]
+
+
+def latest_attempt_correct_ids(user, correct):
+    """Question ids whose user's MOST RECENT recorded attempt matches `correct`.
+
+    Only counted (first-time) answers are recorded, so this reflects how a
+    question was originally graded; impact-free reviews never change it.
+    """
+    latest = {}
+    for question_id, was_correct in (
+        PracticeAttempt.objects.filter(user=user)
+        .order_by('created_at', 'id')
+        .values_list('question_id', 'correct')
+    ):
+        latest[question_id] = was_correct  # later rows win → most recent attempt
+    return {qid for qid, ok in latest.items() if ok == correct}
+
+
+def pick_filtered_question(user, subject, filters):
+    """Pick a practice question honoring the filter bar.
+
+    Returns (question, empty_state). With default filters this is the adaptive
+    fresh-only picker. The done-before/result filters instead draw from a
+    review pool of already-answered questions.
+    """
+    base = Question.objects.filter(question_type__in=SUBJECT_TYPES[subject])
+    if filters['types']:
+        base = base.filter(question_type__in=filters['types'])
+    if filters['levels']:
+        base = base.filter(difficulty__in=filters['levels'])
+
+    if filters['saved'] != 'all':
+        saved_ids = SavedQuestion.objects.filter(user=user).values_list('question_id', flat=True)
+        if filters['saved'] == 'only':
+            base = base.filter(id__in=saved_ids)
+        else:  # 'exclude'
+            base = base.exclude(id__in=saved_ids)
+
+    if not base.exists():
+        return None, 'no_questions'
+
+    attempted_ids = set(
+        PracticeAttempt.objects.filter(user=user).values_list('question_id', flat=True)
+    )
+
+    if filters_want_review(filters):
+        pool = base.filter(id__in=attempted_ids)
+        if filters['result'] == 'correct':
+            pool = pool.filter(id__in=latest_attempt_correct_ids(user, True))
+        elif filters['result'] == 'incorrect':
+            pool = pool.filter(id__in=latest_attempt_correct_ids(user, False))
+        ids = list(pool.values_list('id', flat=True))
+        if not ids:
+            return None, 'no_matches'
+        return Question.objects.get(id=random.choice(ids)), None
+
+    # Fresh pool — practice never recycles a question the student has answered.
+    fresh = base.exclude(id__in=attempted_ids)
+    if not fresh.exists():
+        return None, 'completed_topic'
+
+    user_rating = get_practice_stats(user, subject).elo
+    for window in (250, 500, 1000, None):
+        qs = fresh
+        if window is not None:
+            qs = qs.filter(
+                sp_elo_rating__gte=user_rating - window,
+                sp_elo_rating__lte=user_rating + window,
+            )
+        fresh_ids = list(qs.values_list('id', flat=True))
+        if fresh_ids:
+            return Question.objects.get(id=random.choice(fresh_ids)), None
+
+    return None, 'completed_topic'
+
+
+# ---------------------------------------------------------------------------
 # Question selection
 # ---------------------------------------------------------------------------
 
@@ -310,27 +463,28 @@ def pick_practice_question(user, subject, question_type=None):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def next_question(request):
-    """Serve the next adaptive practice question, enforcing tier rules."""
-    question_type = request.GET.get('type')
+    """Serve the next practice question, enforcing tier rules and filters."""
     subject = resolve_subject(request.GET.get('subject'))
     quota = quota_payload(request.user)
+    filters = parse_practice_filters(request, subject)
 
-    if question_type and question_type != 'any' and not quota['is_premium']:
+    if not filters_are_default(filters) and not quota['is_premium']:
         return Response(
             {'error': 'premium_required',
-             'detail': 'Topic selection is a premium feature. Free practice serves random topics.'},
+             'detail': 'Practice filters are a premium feature. Free practice serves random questions.'},
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    if quota['remaining'] is not None and quota['remaining'] <= 0:
+    # The quota only guards fresh questions; reviewing answered ones is free.
+    review = filters_want_review(filters)
+    if not review and quota['remaining'] is not None and quota['remaining'] <= 0:
         return Response(
             {'error': 'daily_limit', 'quota': quota,
              'detail': 'You have used your free questions for today. Upgrade for unlimited practice.'},
             status=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
-    selected_type = question_type if question_type in SUBJECT_TYPES[subject] else None
-    lane = f'{subject}:{selected_type or "any"}'
+    lane = f'{subject}:{filters_lane_signature(filters)}'
     active = PracticeActiveQuestion.objects.filter(user=request.user, lane=lane).first()
     if active:
         return Response({
@@ -338,18 +492,18 @@ def next_question(request):
             'quota': quota, 'subject': subject,
         })
 
-    question, empty_state = pick_practice_question(request.user, subject, selected_type)
+    question, empty_state = pick_filtered_question(request.user, subject, filters)
     if question is None:
-        topic = selected_type or 'all topics'
         if empty_state == 'completed_topic':
-            detail = f'You answered every {subject} practice problem in {topic}.'
+            detail = f'You answered every matching {subject} practice question.'
+        elif empty_state == 'no_matches':
+            detail = 'No practice questions match these filters yet. Try widening them.'
         else:
-            detail = f'No {subject} practice questions are available in {topic} yet.'
+            detail = f'No {subject} practice questions are available yet.'
         return Response({
             'error': empty_state,
             'detail': detail,
             'subject': subject,
-            'topic': selected_type or 'any',
             'quota': quota,
         }, status=status.HTTP_404_NOT_FOUND)
 
