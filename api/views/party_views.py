@@ -78,6 +78,11 @@ def create_party(request):
     subject = data.get('subject') if data.get('subject') in SUBJECT_TYPES else 'mixed'
     difficulty = data.get('difficulty') if data.get('difficulty') in DIFFICULTY_RANGES else 'medium'
 
+    # One live room per host: a new room supersedes any the user abandoned.
+    PartyRoom.objects.filter(host=request.user).exclude(status='finished').update(status='finished')
+    # ponytail: opportunistic GC of day-old rooms; a cron only if the table ever matters.
+    PartyRoom.objects.filter(created_at__lt=timezone.now() - timezone.timedelta(days=1)).delete()
+
     room = PartyRoom.objects.create(
         host=request.user,
         code=_new_code(),
@@ -97,7 +102,9 @@ def create_party(request):
 def join_party(request):
     code = str(request.data.get('code', '')).strip()
     room = PartyRoom.objects.filter(code=code).exclude(status='finished').order_by('-id').first()
-    if not room:
+    if room:
+        room.sync_presence()  # an abandoned lobby closes here instead of matching
+    if not room or room.status == 'finished':
         return Response({'error': 'No room found with that code.'}, status=404)
 
     if room.players.filter(user=request.user).exists():
@@ -194,12 +201,9 @@ def next_party_question(request, room_id):
 @permission_classes([IsAuthenticated])
 def leave_party(request, room_id):
     room = get_object_or_404(PartyRoom, id=room_id)
-    if room.host_id == request.user.id and room.status != 'finished':
-        # Host leaving shuts the room down for everyone.
-        room.status = 'finished'
-        room.save(update_fields=['status'])
-    elif room.status == 'lobby':
-        room.players.filter(user=request.user).delete()
+    room.players.filter(user=request.user).delete()
+    # Empty room closes; a departing host hands off to the next player.
+    room.sync_presence()
     return Response({'left': True})
 
 
@@ -251,8 +255,6 @@ def party_state(request, room_id):
             'id': question.id,
             'question': question.question,
             'choices': [question.choice_a, question.choice_b, question.choice_c, question.choice_d],
-            'question_type': question.question_type,
-            'difficulty': question.difficulty,
         }
         state['your_answer'] = player.answers.get(key, {}).get('choice')
     elif room.status == 'leaderboard':

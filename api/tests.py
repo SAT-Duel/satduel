@@ -2034,3 +2034,58 @@ class PartyModeTests(APITestCase):
         self.client.force_authenticate(user=outsider)
         resp = self.client.get(reverse('party_state', args=[data['id']]))
         self.assertEqual(resp.status_code, 403)
+
+    def test_new_room_supersedes_hosts_old_room(self):
+        first = self._create()
+        second = self._create()
+        from api.models import PartyRoom
+        self.assertEqual(PartyRoom.objects.get(id=first['id']).status, 'finished')
+        self.assertEqual(PartyRoom.objects.get(id=second['id']).status, 'lobby')
+        # The old code no longer matches on join.
+        self.client.force_authenticate(user=self.guest)
+        resp = self.client.post(reverse('party_join'), {'code': first['code']}, format='json')
+        self.assertEqual(resp.status_code, 404)
+
+    def test_host_leaving_hands_off_or_closes_room(self):
+        from api.models import PartyRoom
+        data = self._create()
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+
+        # Host leaves -> guest inherits the room.
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_leave', args=[data['id']]))
+        room = PartyRoom.objects.get(id=data['id'])
+        self.assertEqual(room.host, self.guest)
+        self.assertEqual(room.status, 'lobby')
+
+        # Last player leaves -> room closes.
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_leave', args=[data['id']]))
+        self.assertEqual(PartyRoom.objects.get(id=data['id']).status, 'finished')
+
+    def test_stale_host_is_replaced_on_poll(self):
+        from api.models import PartyPlayer, PartyRoom
+        data = self._create()
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+
+        # Host swiped away 2 minutes ago; guest keeps polling.
+        PartyPlayer.objects.filter(room_id=data['id'], user=self.host).update(
+            last_seen=timezone.now() - timedelta(seconds=120))
+        state = self.client.get(reverse('party_state', args=[data['id']])).data
+        self.assertTrue(state['is_host'])
+        room = PartyRoom.objects.get(id=data['id'])
+        self.assertEqual(room.host, self.guest)
+        # The stale lobby seat was freed.
+        self.assertEqual(room.players.count(), 1)
+
+    def test_fully_abandoned_lobby_closes_on_join_attempt(self):
+        from api.models import PartyPlayer, PartyRoom
+        data = self._create()
+        PartyPlayer.objects.filter(room_id=data['id']).update(
+            last_seen=timezone.now() - timedelta(seconds=120))
+        self.client.force_authenticate(user=self.guest)
+        resp = self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        self.assertEqual(resp.status_code, 404)
+        self.assertEqual(PartyRoom.objects.get(id=data['id']).status, 'finished')
