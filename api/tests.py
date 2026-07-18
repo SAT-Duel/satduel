@@ -1908,3 +1908,129 @@ class PracticeStreakTests(APITestCase):
         self.assertIn('streak', resp.data)
         self.assertIn('goal', resp.data)
         self.assertIn('week', resp.data)
+
+
+class PartyModeTests(APITestCase):
+    def setUp(self):
+        self.host = User.objects.create_user(username='host', password='x')
+        Profile.objects.create(user=self.host)
+        self.guest = User.objects.create_user(username='guest', password='x')
+        Profile.objects.create(user=self.guest)
+        for i in range(12):
+            Question.objects.create(
+                question=f'Q{i}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='A', difficulty=(i % 3) + 2, question_type='Transitions',
+            )
+
+    def _create(self, **overrides):
+        self.client.force_authenticate(user=self.host)
+        payload = {'num_questions': 5, 'seconds_per_question': 60, 'subject': 'english',
+                   'difficulty': 'medium', **overrides}
+        resp = self.client.post(reverse('party_create'), payload, format='json')
+        self.assertEqual(resp.status_code, 201)
+        return resp.data
+
+    def test_free_tier_caps_are_enforced(self):
+        data = self._create(max_players=30, num_questions=40)
+        from api.models import PartyRoom
+        room = PartyRoom.objects.get(id=data['id'])
+        self.assertEqual(room.max_players, 6)
+        self.assertEqual(room.num_questions, 20)
+
+    def test_premium_caps(self):
+        self.host.profile.is_premium = True
+        self.host.profile.save()
+        data = self._create(max_players=30, num_questions=40)
+        from api.models import PartyRoom
+        room = PartyRoom.objects.get(id=data['id'])
+        self.assertEqual(room.max_players, 30)
+        self.assertEqual(room.num_questions, 40)
+
+    def test_full_game_flow(self):
+        from api.models import PartyRoom
+        data = self._create()
+        room_id = data['id']
+
+        # Guest joins with the code.
+        self.client.force_authenticate(user=self.guest)
+        resp = self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['id'], room_id)
+
+        # Wrong code 404s.
+        bad = self.client.post(reverse('party_join'), {'code': '000000x'}, format='json')
+        self.assertEqual(bad.status_code, 404)
+
+        # Only the host can start.
+        resp = self.client.post(reverse('party_start', args=[room_id]))
+        self.assertEqual(resp.status_code, 404)
+        self.client.force_authenticate(user=self.host)
+        resp = self.client.post(reverse('party_start', args=[room_id]))
+        self.assertEqual(resp.status_code, 200)
+
+        # Countdown phase, then flip to question by rewinding the clock.
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['status'], 'countdown')
+        room = PartyRoom.objects.get(id=room_id)
+        room.phase_started_at -= timedelta(seconds=10)
+        room.save()
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['status'], 'question')
+        self.assertIn('question', state)
+        self.assertEqual(len(state['question']['choices']), 4)
+        self.assertNotIn('answer', state['question'])
+
+        # Host answers correctly, gets 500-1000 points.
+        resp = self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        dup = self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(dup.status_code, 400)
+
+        # Guest answers wrong: 0 points. Everyone answered -> leaderboard.
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'B'}, format='json')
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['status'], 'leaderboard')
+        self.assertFalse(state['reveal']['correct'])
+        self.assertEqual(state['reveal']['correct_choice'], 'A')
+        scores = {p['username']: p['score'] for p in state['players']}
+        self.assertEqual(scores['guest'], 0)
+        self.assertGreaterEqual(scores['host'], 500)
+        self.assertEqual(state['players'][0]['username'], 'host')
+
+        # Only host advances; play through to the podium.
+        resp = self.client.post(reverse('party_next', args=[room_id]))
+        self.assertEqual(resp.status_code, 404)
+        self.client.force_authenticate(user=self.host)
+        for i in range(1, 5):
+            resp = self.client.post(reverse('party_next', args=[room_id]))
+            self.assertEqual(resp.data['status'], 'question')
+            room = PartyRoom.objects.get(id=room_id)
+            room.phase_started_at -= timedelta(seconds=120)  # let the timer expire
+            room.save()
+            state = self.client.get(reverse('party_state', args=[room_id])).data
+            self.assertEqual(state['status'], 'leaderboard')
+        self.assertTrue(state['reveal']['is_last'])
+        resp = self.client.post(reverse('party_next', args=[room_id]))
+        self.assertEqual(resp.data['status'], 'finished')
+
+    def test_cannot_join_started_or_full_room(self):
+        data = self._create(max_players=2)
+        outsider = User.objects.create_user(username='late', password='x')
+        Profile.objects.create(user=outsider)
+
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        self.client.force_authenticate(user=outsider)
+        resp = self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        self.assertEqual(resp.status_code, 400)  # full
+
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_start', args=[data['id']]))
+        resp = self.client.get(reverse('party_state', args=[data['id']]))
+        self.assertEqual(resp.status_code, 200)
+
+        # Outsider can't poll a room they're not in.
+        self.client.force_authenticate(user=outsider)
+        resp = self.client.get(reverse('party_state', args=[data['id']]))
+        self.assertEqual(resp.status_code, 403)

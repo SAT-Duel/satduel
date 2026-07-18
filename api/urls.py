@@ -5,6 +5,7 @@ from api.views import views, user_views, tournaments_views, shop_views, inventor
 from api.views import trainer_views as trainer_view
 from api.views.matching_view import join_room, start_game, create_game, list_waiting_games, retrieve_game, delete_game
 from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
+from api.views import party_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -128,6 +129,15 @@ urlpatterns = [
     path('admin/generation/taxonomy/', generation_views.generation_taxonomy, name='generation_taxonomy'),
     path('admin/generation/generate/', generation_views.generation_generate, name='generation_generate'),
     path('admin/generation/import/', generation_views.generation_import, name='generation_import'),
+
+    # Party Mode (Kahoot-style live rooms)
+    path('party/create/', party_views.create_party, name='party_create'),
+    path('party/join/', party_views.join_party, name='party_join'),
+    path('party/<int:room_id>/state/', party_views.party_state, name='party_state'),
+    path('party/<int:room_id>/start/', party_views.start_party, name='party_start'),
+    path('party/<int:room_id>/answer/', party_views.answer_party_question, name='party_answer'),
+    path('party/<int:room_id>/next/', party_views.next_party_question, name='party_next'),
+    path('party/<int:room_id>/leave/', party_views.leave_party, name='party_leave'),
 
     path('user_streak/', views.get_user_streak, name='user-streak'),
 ]
