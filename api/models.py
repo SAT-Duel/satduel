@@ -746,6 +746,11 @@ PARTY_ACTIVE_WINDOW_SECONDS = 12
 # back). Long enough to survive a refresh or brief app switch.
 PARTY_PRESENCE_TIMEOUT_SECONDS = 30
 
+PARTY_MAX_TEAMS = 4
+PARTY_DEFAULT_TEAM_NAMES = ('Team A', 'Team B', 'Team C', 'Team D')
+# How long players get to place a Final Jeopardy bet before the last question.
+PARTY_WAGER_SECONDS = 30
+
 
 class PartyRoom(models.Model):
     """A live Kahoot-style quiz room.
@@ -753,12 +758,19 @@ class PartyRoom(models.Model):
     Clients poll the state endpoint; `advance()` derives phase transitions
     from timestamps on every read, so there is no background worker.
     """
-    STATUSES = ('lobby', 'countdown', 'question', 'leaderboard', 'finished')
+    STATUSES = ('lobby', 'countdown', 'question', 'wager', 'leaderboard', 'finished')
+    MODES = ('classic', 'teams', 'survival', 'jeopardy')
 
     host = models.ForeignKey(User, related_name='hosted_parties', on_delete=models.CASCADE)
     code = models.CharField(max_length=6, db_index=True)
     status = models.CharField(max_length=12, default='lobby',
                               choices=[(s, s) for s in STATUSES])
+    mode = models.CharField(max_length=10, default='classic',
+                            choices=[(m, m) for m in MODES])
+    # Teams mode only. `team_names` is index-aligned with PartyPlayer.team.
+    num_teams = models.IntegerField(default=2)
+    random_teams = models.BooleanField(default=True)
+    team_names = models.JSONField(default=list)
     max_players = models.IntegerField(default=6)
     num_questions = models.IntegerField(default=10)
     seconds_per_question = models.IntegerField(default=90)
@@ -781,6 +793,59 @@ class PartyRoom(models.Model):
 
     def question_deadline(self):
         return self.phase_started_at + timezone.timedelta(seconds=self.seconds_per_question)
+
+    def wager_deadline(self):
+        return self.phase_started_at + timezone.timedelta(seconds=PARTY_WAGER_SECONDS)
+
+    def is_final_question(self):
+        return self.current_index + 1 >= len(self.question_ids)
+
+    def is_wager_question(self):
+        """True while the room is on the Final Jeopardy betting question."""
+        return self.mode == 'jeopardy' and self.is_final_question()
+
+    def settle_unplayed_wagers(self):
+        """Charge bets to anyone who let the final question time out.
+
+        Without this, sitting the question out would be strictly safer than
+        answering it, which defeats the whole point of betting.
+        """
+        key = str(self.current_index)
+        for player in self.players.all():
+            if key in player.answers or not player.wager:
+                continue
+            player.answers[key] = {
+                'choice': None, 'correct': False,
+                'points': -player.wager, 'wager': player.wager,
+            }
+            player.score -= player.wager
+            player.save(update_fields=['answers', 'score'])
+
+    def team_label(self, index):
+        names = self.team_names or []
+        if 0 <= index < len(names) and str(names[index]).strip():
+            return str(names[index])
+        return PARTY_DEFAULT_TEAM_NAMES[index % PARTY_MAX_TEAMS]
+
+    def assign_missing_teams(self):
+        """Seat every teamless player on the smallest team.
+
+        Covers both random assignment at kickoff and anyone the host left
+        unsorted when they hit start, so nobody plays without a team.
+        """
+        counts = {i: 0 for i in range(self.num_teams)}
+        unassigned = []
+        for player in self.players.order_by('id'):
+            if player.team is not None and 0 <= player.team < self.num_teams:
+                counts[player.team] += 1
+            else:
+                unassigned.append(player)
+        random.shuffle(unassigned)
+        for player in unassigned:
+            target = min(counts, key=lambda i: (counts[i], i))
+            player.team = target
+            counts[target] += 1
+            player.save(update_fields=['team'])
 
     def sync_presence(self):
         """Reconcile the room with players who left without saying goodbye.
@@ -817,12 +882,24 @@ class PartyRoom(models.Model):
                 self.status = 'question'
                 self.phase_started_at = ends
                 self.save(update_fields=['status', 'phase_started_at'])
+        if self.status == 'wager':
+            cutoff = now - timezone.timedelta(seconds=PARTY_ACTIVE_WINDOW_SECONDS)
+            players = list(self.players.all())
+            active = [p for p in players if p.last_seen >= cutoff] or players
+            # A player with nothing to bet has nothing to decide, so they never block.
+            if now >= self.wager_deadline() or all(p.wager_locked or p.score <= 0 for p in active):
+                self.status = 'question'
+                self.phase_started_at = now
+                self.save(update_fields=['status', 'phase_started_at'])
+
         if self.status == 'question':
             key = str(self.current_index)
             cutoff = now - timezone.timedelta(seconds=PARTY_ACTIVE_WINDOW_SECONDS)
             players = list(self.players.all())
             active = [p for p in players if p.last_seen >= cutoff] or players
             if now >= self.question_deadline() or all(key in p.answers for p in active):
+                if self.is_wager_question():
+                    self.settle_unplayed_wagers()
                 self.status = 'leaderboard'
                 self.phase_started_at = now
                 self.save(update_fields=['status', 'phase_started_at'])
@@ -833,6 +910,11 @@ class PartyPlayer(models.Model):
     room = models.ForeignKey(PartyRoom, related_name='players', on_delete=models.CASCADE)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     score = models.IntegerField(default=0)
+    team = models.IntegerField(null=True, blank=True)  # teams mode; index into room.team_names
+    # Final Jeopardy bet. `wager_locked` distinguishes a deliberate bet of 0
+    # from a player who simply hasn't decided yet.
+    wager = models.IntegerField(default=0)
+    wager_locked = models.BooleanField(default=False)
     # question index (str) -> {'choice': 'A', 'correct': bool, 'points': int}
     answers = models.JSONField(default=dict)
     last_seen = models.DateTimeField(auto_now=True)

@@ -32,7 +32,6 @@ urlpatterns = [
     path('profile/friends/', profile_views.list_friends, name='list_friends'),
     path('profile/view_profile/<int:user_id>/', profile_views.view_profile, name='view_profile'),
     path('infinite_questions_profile/', profile_views.infinite_questions_profile_view, name='infinite_questions_profile'),
-    path('profile/update_first_login/', profile_views.update_first_login, name='update_first_login'),
     path('leaderboard/', profile_views.leaderboard_view, name='leaderboard'),
 
     path('login/', user_views.login_view, name='login'),
@@ -129,6 +128,8 @@ urlpatterns = [
     path('party/<int:room_id>/start/', party_views.start_party, name='party_start'),
     path('party/<int:room_id>/answer/', party_views.answer_party_question, name='party_answer'),
     path('party/<int:room_id>/next/', party_views.next_party_question, name='party_next'),
+    path('party/<int:room_id>/teams/', party_views.update_party_teams, name='party_teams'),
+    path('party/<int:room_id>/wager/', party_views.place_party_wager, name='party_wager'),
     path('party/<int:room_id>/leave/', party_views.leave_party, name='party_leave'),
 
     path('user_streak/', views.get_user_streak, name='user-streak'),
