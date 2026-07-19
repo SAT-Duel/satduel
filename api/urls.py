@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView
 from api.views.user_views import CustomRegisterView
-from api.views import views, user_views, tournaments_views, shop_views, inventory_views, duel_views, profile_views
+from api.views import views, user_views, tournaments_views, shop_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
 from api.views import party_views
@@ -21,8 +21,6 @@ urlpatterns = [
     path('profile/', profile_views.profile_view, name='profile'),
     path('account/delete/', auth_views.delete_account, name='account_delete'),
     path('account/username/', profile_views.update_username, name='account_username'),
-    path('profile/update_biography/', profile_views.update_biography, name='update_biography'),
-    path('profile/update_rankings/', profile_views.update_ranking, name='update_ranking'),
     path('profile/update_streak/', profile_views.update_streak, name='update_streak'),
     path('profile/search/', profile_views.search_users, name='search_users'),
     path('profile/send_friend_request/', profile_views.send_friend_request, name='send_friend_request'),
@@ -37,7 +35,6 @@ urlpatterns = [
     path('login/', user_views.login_view, name='login'),
     path('logout/', user_views.logout_view, name='logout'),
     path('register/', CustomRegisterView.as_view(), name='register'),
-    path('set_goal/', user_views.set_goal, name='set_goal'),
 
     # Unified auth (single-request JWT login + Google + profile completion)
     path('auth/login/', auth_views.login_view, name='auth_login'),
@@ -60,15 +57,9 @@ urlpatterns = [
     path('match/get_match_history/<int:user_id>/', duel_views.get_match_history, name='get_match_history_with_user_id'),
     path('match/info/', duel_views.get_match_info, name='get_match_info'),
     path('match/emotes/', duel_views.duel_emotes, name='duel_emotes'),
-    path('match/set_winner/', duel_views.set_winner, name='set_winner'),
-    path('match/set_score/', duel_views.set_score, name='set_score'),
 
     path('trainer/infinite_question_stats/', trainer_view.get_infinite_question_stats,
          name='get_infinite_question_stats'),
-    path('trainer/power_sprint_stats/', trainer_view.get_power_sprint_stats, name='get_power_sprint_stats'),
-    path('trainer/set_power_sprint_stats/', trainer_view.set_power_sprint_stats, name='set_power_sprint_stats'),
-    path('trainer/survival_stats/', trainer_view.get_survival_stats, name='get_survival_stats'),
-    path('trainer/set_survival_stats/', trainer_view.set_survival_stats, name='set_survival_stats'),
 
     path('tournaments/', tournaments_views.tournament_list, name='tournament-list'),
     path('tournaments/<int:pk>/', tournaments_views.tournament_detail, name='tournament-detail'),
@@ -95,9 +86,7 @@ urlpatterns = [
     path('password_reset/', user_views.PasswordResetRequestView.as_view(), name='password_reset'),
     path('reset/<uidb64>/<token>/', user_views.PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 
-    # Inventory
-    path('user_pets/', inventory_views.user_pets, name='user_pets'),
-    path('upgrade_pet/', inventory_views.upgrade_pet, name='upgrade_pet'),
+    path('user_streak/', views.get_user_streak, name='user-streak'),
 
     path('online_users/', onlineuser_views.get_online_users, name='get_online_users'),
     path('update_online_status/', onlineuser_views.update_online_status, name='update_online_status'),
@@ -132,5 +121,4 @@ urlpatterns = [
     path('party/<int:room_id>/wager/', party_views.place_party_wager, name='party_wager'),
     path('party/<int:room_id>/leave/', party_views.leave_party, name='party_leave'),
 
-    path('user_streak/', views.get_user_streak, name='user-streak'),
 ]

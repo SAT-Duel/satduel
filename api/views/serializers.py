@@ -2,7 +2,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from api import generation
 from api.models import DUEL_EMOJIS, Question, Profile, SATExamDate, Room, TrackedQuestion, FriendRequest, UserStatistics, \
-    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion
+    Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 from allauth.account.models import EmailAddress
 from dj_rest_auth.registration.serializers import RegisterSerializer
@@ -160,18 +160,6 @@ class FriendRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = FriendRequest
         fields = ['id', 'from_user', 'to_user', 'timestamp', 'status']
-
-
-class PowerSprintStatisticsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PowerSprintStatistics
-        fields = '__all__'
-
-
-class SurvivalStatisticsSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SurvivalStatistics
-        fields = '__all__'
 
 
 class CustomRegisterSerializer(RegisterSerializer):

@@ -20,6 +20,7 @@ from api.models import (
     PartyPlayer,
     PartyRoom,
     Question,
+    party_lives_cap,
 )
 from api.views.views import ENGLISH_QUESTION_TYPES, MATH_QUESTION_TYPES
 
@@ -70,6 +71,8 @@ def _player_entry(player, index_key):
         'last_points': answer.get('points', 0),
         'last_correct': answer.get('correct'),
         'wagered': player.wager_locked,
+        'lives': player.lives,
+        'lost_life': bool(answer.get('life_lost')),
     }
 
 
@@ -105,16 +108,20 @@ def create_party(request):
     # ponytail: opportunistic GC of day-old rooms; a cron only if the table ever matters.
     PartyRoom.objects.filter(created_at__lt=timezone.now() - timezone.timedelta(days=1)).delete()
 
+    num_questions = _clamp(data.get('num_questions'), 2 if mode == 'jeopardy' else 1,
+                           caps['num_questions'], 10)
+    last_standing = bool(data.get('last_standing', True))
+
     room = PartyRoom.objects.create(
         host=request.user,
         code=_new_code(),
         mode=mode,
         num_teams=_clamp(data.get('num_teams'), 2, PARTY_MAX_TEAMS, 2),
         random_teams=bool(data.get('random_teams', True)),
+        last_standing=last_standing,
+        lives=_clamp(data.get('lives'), 1, party_lives_cap(last_standing, num_questions), 3),
         max_players=_clamp(data.get('max_players'), 2, caps['max_players'], min(6, caps['max_players'])),
-        # Final Jeopardy needs a normal question before the betting one.
-        num_questions=_clamp(data.get('num_questions'), 2 if mode == 'jeopardy' else 1,
-                             caps['num_questions'], 10),
+        num_questions=num_questions,
         seconds_per_question=_clamp(data.get('seconds_per_question'), 10, 300, 90),
         subject=subject,
         difficulty=difficulty,
@@ -184,6 +191,12 @@ def start_party(request, room_id):
         # Random rooms have nobody seated yet, so this shuffles everyone; hand-sorted
         # rooms only pick up the stragglers the host never dragged.
         room.assign_missing_teams()
+    if room.mode == 'survival':
+        # The pool may have yielded fewer questions than asked for, which can
+        # pull the cap down under the hearts the host picked.
+        room.lives = min(room.lives, party_lives_cap(room.last_standing, room.num_questions))
+        room.save(update_fields=['lives'])
+        room.players.update(lives=room.lives)
     return Response({'status': 'countdown'})
 
 
@@ -201,6 +214,8 @@ def answer_party_question(request, room_id):
         key = str(room.current_index)
         if key in player.answers:
             return Response({'error': 'Already answered.'}, status=400)
+        if room.eliminates() and player.lives <= 0:
+            return Response({'error': "You're out — you can only watch now."}, status=400)
 
         choice = str(request.data.get('choice', '')).upper()
         if choice not in ('A', 'B', 'C', 'D'):
@@ -221,6 +236,10 @@ def answer_party_question(request, room_id):
             # Kahoot-style: a correct answer is worth 500-1000, scaling with speed.
             points = 500 + round(500 * (1 - elapsed / room.seconds_per_question)) if correct else 0
 
+        if room.mode == 'survival' and not correct and player.lives > 0:
+            player.lives -= 1
+            entry['life_lost'] = True
+
         entry['points'] = points
         player.answers[key] = entry
         player.score += points
@@ -237,7 +256,7 @@ def next_party_question(request, room_id):
     if room.status != 'leaderboard':
         return Response({'error': 'Nothing to advance right now.'}, status=400)
 
-    if room.current_index + 1 >= len(room.question_ids):
+    if room.game_is_over():
         room.status = 'finished'
     else:
         room.current_index += 1
@@ -334,7 +353,11 @@ def party_state(request, room_id):
     key = str(room.current_index)
     roster = list(room.players.select_related('user__profile').all())
     players = [_player_entry(p, key) for p in roster]
-    players.sort(key=lambda p: -p['score'])
+    if room.mode == 'survival':
+        # Hearts decide it; the speed score is only the tiebreak.
+        players.sort(key=lambda p: (-p['lives'], -p['score']))
+    else:
+        players.sort(key=lambda p: -p['score'])
 
     state = {
         'id': room.id,
@@ -352,6 +375,8 @@ def party_state(request, room_id):
             'difficulty': room.difficulty,
             'num_teams': room.num_teams,
             'random_teams': room.random_teams,
+            'lives': room.lives,
+            'last_standing': room.last_standing,
         },
         'players': players,
         'question_number': room.current_index + 1,
@@ -359,6 +384,10 @@ def party_state(request, room_id):
     }
     if room.mode == 'teams':
         state['teams'] = _team_standings(room, players)
+    if room.mode == 'survival':
+        state['your_lives'] = player.lives
+        state['you_are_out'] = room.eliminates() and player.lives <= 0
+        state['survivors'] = len(room.survivors(roster))
 
     if room.status == 'countdown':
         ends = room.phase_started_at + timezone.timedelta(seconds=PARTY_COUNTDOWN_SECONDS)
@@ -402,7 +431,9 @@ def party_state(request, room_id):
             'points_earned': answer.get('points', 0),
             'wager': answer.get('wager'),
             'was_final_bet': room.is_wager_question(),
-            'is_last': room.current_index + 1 >= len(room.question_ids),
+            'lost_life': bool(answer.get('life_lost')),
+            'your_lives': player.lives,
+            'is_last': room.game_is_over(),
             'distribution': counts,
             'skipped': skipped,
             'review': {

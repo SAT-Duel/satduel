@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from django.db import models, transaction
 from django.utils import timezone
+import math
 import random
 import pytz
 
@@ -750,6 +751,15 @@ PARTY_MAX_TEAMS = 4
 PARTY_DEFAULT_TEAM_NAMES = ('Team A', 'Team B', 'Team C', 'Team D')
 # How long players get to place a Final Jeopardy bet before the last question.
 PARTY_WAGER_SECONDS = 30
+# Survival: last-one-standing caps lives outright; a fixed-length game scales
+# the cap to the question count so hearts stay scarce enough to matter.
+PARTY_MAX_LIVES = 5
+
+
+def party_lives_cap(last_standing, num_questions):
+    if last_standing:
+        return PARTY_MAX_LIVES
+    return max(1, math.ceil(math.sqrt(max(1, num_questions))))
 
 
 class PartyRoom(models.Model):
@@ -771,6 +781,10 @@ class PartyRoom(models.Model):
     num_teams = models.IntegerField(default=2)
     random_teams = models.BooleanField(default=True)
     team_names = models.JSONField(default=list)
+    # Survival mode only. `last_standing` plays until one player is left;
+    # otherwise the room plays every question and the most hearts wins.
+    lives = models.IntegerField(default=3)
+    last_standing = models.BooleanField(default=True)
     max_players = models.IntegerField(default=6)
     num_questions = models.IntegerField(default=10)
     seconds_per_question = models.IntegerField(default=90)
@@ -803,6 +817,40 @@ class PartyRoom(models.Model):
     def is_wager_question(self):
         """True while the room is on the Final Jeopardy betting question."""
         return self.mode == 'jeopardy' and self.is_final_question()
+
+    def survivors(self, players=None):
+        """Players still holding at least one heart."""
+        roster = self.players.all() if players is None else players
+        return [p for p in roster if p.lives > 0]
+
+    def eliminates(self):
+        """Only last-one-standing knocks players out.
+
+        A fixed-length game keeps everyone playing and treats hearts as the
+        score, so running out is a bad round rather than the end of the game.
+        """
+        return self.mode == 'survival' and self.last_standing
+
+    def charge_survival_timeouts(self):
+        """Take a heart from anyone still alive who let the clock run out.
+
+        Sitting a question out has to cost the same as answering it wrong,
+        or waiting the timer out becomes a way to dodge the risk.
+        """
+        key = str(self.current_index)
+        for player in self.survivors():
+            if key in player.answers:
+                continue
+            player.answers[key] = {'choice': None, 'correct': False, 'points': 0, 'life_lost': True}
+            player.lives -= 1
+            player.save(update_fields=['answers', 'lives'])
+
+    def survival_is_over(self):
+        """Last-one-standing ends as soon as the field is down to one player."""
+        return self.mode == 'survival' and self.last_standing and len(self.survivors()) <= 1
+
+    def game_is_over(self):
+        return self.is_final_question() or self.survival_is_over()
 
     def settle_unplayed_wagers(self):
         """Charge bets to anyone who let the final question time out.
@@ -897,9 +945,15 @@ class PartyRoom(models.Model):
             cutoff = now - timezone.timedelta(seconds=PARTY_ACTIVE_WINDOW_SECONDS)
             players = list(self.players.all())
             active = [p for p in players if p.last_seen >= cutoff] or players
+            if self.eliminates():
+                # Knocked-out players are spectators — they can't answer, so
+                # they must not hold the room open either.
+                active = [p for p in active if p.lives > 0] or active
             if now >= self.question_deadline() or all(key in p.answers for p in active):
                 if self.is_wager_question():
                     self.settle_unplayed_wagers()
+                if self.mode == 'survival':
+                    self.charge_survival_timeouts()
                 self.status = 'leaderboard'
                 self.phase_started_at = now
                 self.save(update_fields=['status', 'phase_started_at'])
@@ -911,6 +965,7 @@ class PartyPlayer(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     score = models.IntegerField(default=0)
     team = models.IntegerField(null=True, blank=True)  # teams mode; index into room.team_names
+    lives = models.IntegerField(default=0)  # survival mode; 0 once eliminated
     # Final Jeopardy bet. `wager_locked` distinguishes a deliberate bet of 0
     # from a player who simply hasn't decided yet.
     wager = models.IntegerField(default=0)

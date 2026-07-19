@@ -12,7 +12,7 @@ from rest_framework.decorators import api_view, authentication_classes, permissi
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.views.serializers import ProfileSerializer, \
-    ProfileBiographySerializer, DuelUserSerializer, UserSerializer, FriendRequestSerializer
+    DuelUserSerializer, UserSerializer, FriendRequestSerializer
 from rest_framework import status
 from api.views.practice_views import practice_activity, practice_stats_breakdown
 
@@ -218,47 +218,6 @@ def leaderboard_view(request):
         'total_users': len(ranked_profiles),
         'limit': limit,
     })
-
-
-@api_view(['PATCH'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def update_biography(request):
-    try:
-        profile = Profile.objects.get(user=request.user)
-    except Profile.DoesNotExist:
-        return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-    serializer = ProfileBiographySerializer(profile, data=request.data, partial=True)
-    if serializer.is_valid():
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_200_OK)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@api_view(['PATCH'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def update_ranking(request, user_id):
-    try:
-        # Fetch the profile of the authenticated user
-        profile = Profile.objects.get(user=request.user)
-    except Profile.DoesNotExist:
-        return Response({'error': 'Profile not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Get the new streak value from the request data
-    new_streak = request.data.get('max_streak')
-
-    if new_streak is None:
-        return Response({'error': 'max_streak is required'}, status=status.HTTP_400_BAD_REQUEST)
-
-    # Compare the new streak with the current max streak
-    if new_streak > profile.max_streak:
-        profile.max_streak = new_streak
-        profile.save()
-        return Response(ProfileSerializer(profile).data, status=status.HTTP_200_OK)
-
-    return Response({'max_streak': profile.max_streak}, status=status.HTTP_200_OK)
 
 
 @api_view(['PATCH'])

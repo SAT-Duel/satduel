@@ -2477,3 +2477,185 @@ class PartyJeopardyModeTests(APITestCase):
         self.assertEqual(state['wager']['your_score'], 700)
         self.assertFalse(state['wager']['locked'])
         self.assertIsNone(state['wager']['your_wager'])
+
+
+class PartySurvivalModeTests(APITestCase):
+    """Survival: hearts, elimination, and the two ways a game ends."""
+
+    def setUp(self):
+        self.users = []
+        for i in range(3):
+            user = User.objects.create_user(username=f's{i}', password='x')
+            Profile.objects.create(user=user)
+            self.users.append(user)
+        self.host = self.users[0]
+        for i in range(10):
+            Question.objects.create(
+                question=f'SQ{i}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='A', difficulty=3, question_type='Transitions',
+            )
+
+    def _room(self, joiners=2, **overrides):
+        self.client.force_authenticate(user=self.host)
+        payload = {'mode': 'survival', 'num_questions': 9, 'seconds_per_question': 60,
+                   'subject': 'english', 'difficulty': 'medium', **overrides}
+        data = self.client.post(reverse('party_create'), payload, format='json').data
+        for user in self.users[1:joiners + 1]:
+            self.client.force_authenticate(user=user)
+            self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_start', args=[data['id']]))
+        return data['id']
+
+    def _to_question(self, room_id):
+        from api.models import PartyRoom
+        room = PartyRoom.objects.get(id=room_id)
+        room.status = 'question'
+        room.phase_started_at = timezone.now()
+        room.save()
+        return room
+
+    def _lives(self, room_id, user):
+        from api.models import PartyPlayer
+        return PartyPlayer.objects.get(room_id=room_id, user=user).lives
+
+    def test_lives_cap_for_last_standing_is_five(self):
+        from api.models import PartyRoom
+        room_id = self._room(lives=99, last_standing=True)
+        self.assertEqual(PartyRoom.objects.get(id=room_id).lives, 5)
+
+    def test_fixed_game_caps_lives_at_sqrt_of_question_count(self):
+        from api.models import PartyRoom
+        # 9 questions -> ceil(sqrt(9)) == 3
+        room_id = self._room(lives=99, last_standing=False)
+        self.assertEqual(PartyRoom.objects.get(id=room_id).lives, 3)
+
+    def test_everyone_starts_with_the_room_lives(self):
+        room_id = self._room(lives=4, last_standing=True)
+        for user in self.users:
+            self.assertEqual(self._lives(room_id, user), 4)
+
+    def test_wrong_answer_costs_a_heart(self):
+        room_id = self._room(lives=3)
+        self._to_question(room_id)
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'B'}, format='json')
+        self.assertEqual(self._lives(room_id, self.host), 2)
+
+    def test_correct_answer_keeps_every_heart(self):
+        room_id = self._room(lives=3)
+        self._to_question(room_id)
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(self._lives(room_id, self.host), 3)
+
+    def test_timing_out_costs_a_heart_too(self):
+        """Otherwise waiting the clock out would dodge the risk."""
+        from api.models import PartyRoom
+        room_id = self._room(lives=3)
+        room = self._to_question(room_id)
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+
+        room = PartyRoom.objects.get(id=room_id)
+        room.phase_started_at = timezone.now() - timedelta(seconds=120)
+        room.save(update_fields=['phase_started_at'])
+        self.client.get(reverse('party_state', args=[room_id]))
+
+        self.assertEqual(self._lives(room_id, self.host), 3)       # answered correctly
+        self.assertEqual(self._lives(room_id, self.users[1]), 2)   # never answered
+        self.assertEqual(self._lives(room_id, self.users[2]), 2)
+
+    def test_eliminated_player_cannot_answer(self):
+        from api.models import PartyPlayer
+        room_id = self._room(lives=3, last_standing=True)
+        self._to_question(room_id)
+        PartyPlayer.objects.filter(room_id=room_id, user=self.host).update(lives=0)
+        self.client.force_authenticate(user=self.host)
+        resp = self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("out", resp.data['error'])
+
+    def test_last_standing_ends_when_one_player_remains(self):
+        from api.models import PartyPlayer, PartyRoom
+        room_id = self._room(lives=1, last_standing=True)
+        self._to_question(room_id)
+        PartyPlayer.objects.filter(room_id=room_id, user__in=self.users[1:]).update(lives=0)
+
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['status'], 'leaderboard')
+        self.assertTrue(state['reveal']['is_last'])  # podium next, not another question
+
+        resp = self.client.post(reverse('party_next', args=[room_id]))
+        self.assertEqual(resp.data['status'], 'finished')
+        self.assertEqual(PartyRoom.objects.get(id=room_id).status, 'finished')
+
+    def test_fixed_game_runs_all_questions_even_at_zero_hearts(self):
+        from api.models import PartyPlayer, PartyRoom
+        room_id = self._room(lives=1, last_standing=False)
+        self._to_question(room_id)
+        PartyPlayer.objects.filter(room_id=room_id, user__in=self.users[1:]).update(lives=0)
+
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        room = PartyRoom.objects.get(id=room_id)
+        room.phase_started_at = timezone.now() - timedelta(seconds=120)
+        room.save(update_fields=['phase_started_at'])
+        self.client.get(reverse('party_state', args=[room_id]))
+
+        resp = self.client.post(reverse('party_next', args=[room_id]))
+        self.assertEqual(resp.data['status'], 'question')  # game continues
+
+    def test_a_zero_heart_player_can_still_answer_in_a_fixed_game(self):
+        from api.models import PartyPlayer
+        room_id = self._room(lives=1, last_standing=False)
+        self._to_question(room_id)
+        PartyPlayer.objects.filter(room_id=room_id, user=self.host).update(lives=0)
+        self.client.force_authenticate(user=self.host)
+        resp = self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(resp.status_code, 200)
+
+    def test_hearts_never_go_negative(self):
+        from api.models import PartyPlayer
+        room_id = self._room(lives=1, last_standing=False)
+        self._to_question(room_id)
+        PartyPlayer.objects.filter(room_id=room_id, user=self.host).update(lives=0)
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'B'}, format='json')
+        self.assertEqual(self._lives(room_id, self.host), 0)
+
+    def test_standings_rank_by_hearts_then_score(self):
+        from api.models import PartyPlayer
+        room_id = self._room(lives=3)
+        PartyPlayer.objects.filter(room_id=room_id, user=self.host).update(lives=1, score=9000)
+        PartyPlayer.objects.filter(room_id=room_id, user=self.users[1]).update(lives=3, score=100)
+        PartyPlayer.objects.filter(room_id=room_id, user=self.users[2]).update(lives=3, score=500)
+
+        self.client.force_authenticate(user=self.host)
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        # Hearts first, so the 9000-point player with one heart ranks last.
+        self.assertEqual([p['username'] for p in state['players']], ['s2', 's1', 's0'])
+
+    def test_eliminated_players_do_not_stall_the_room(self):
+        """The question should close once the survivors have all answered."""
+        from api.models import PartyPlayer, PartyRoom
+        room_id = self._room(lives=2, last_standing=True)
+        self._to_question(room_id)
+        PartyPlayer.objects.filter(room_id=room_id, user=self.users[2]).update(lives=0)
+
+        for user in self.users[:2]:
+            self.client.force_authenticate(user=user)
+            self.client.post(reverse('party_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(PartyRoom.objects.get(id=room_id).status, 'leaderboard')
+
+    def test_state_reports_hearts_and_survivor_count(self):
+        room_id = self._room(lives=3, last_standing=True)
+        self.client.force_authenticate(user=self.host)
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['your_lives'], 3)
+        self.assertFalse(state['you_are_out'])
+        self.assertEqual(state['survivors'], 3)
+        self.assertEqual(state['settings']['lives'], 3)
+        self.assertTrue(state['settings']['last_standing'])

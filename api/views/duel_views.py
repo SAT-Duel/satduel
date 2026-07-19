@@ -385,17 +385,3 @@ def duel_emotes(request):
     return Response({'emotes': list(reversed(emotes))})
 
 
-@api_view(['POST'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def set_winner(request):
-    _room_for_user(request.data.get('room_id'), request.user)
-    return Response({'status': 'success'})
-
-
-@api_view(['POST'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def set_score(request):
-    _room_for_user(request.data.get('room_id'), request.user)
-    return Response({'status': 'success'})
