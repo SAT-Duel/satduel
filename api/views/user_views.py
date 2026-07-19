@@ -149,14 +149,3 @@ class PasswordResetConfirmView(APIView):
             return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
         return Response({"error": "Invalid token or user ID."}, status=status.HTTP_400_BAD_REQUEST)
 
-@api_view(['POST'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def set_goal(request):
-    user = request.user
-    data = json.loads(request.body)
-    goal = data.get('goal')
-    if goal:
-        user.profile.goal = goal
-        user.profile.save()
-        return JsonResponse({'message': 'Goal set successfully'}, status=200)
