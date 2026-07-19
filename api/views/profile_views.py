@@ -385,20 +385,3 @@ def view_profile(request, user_id):
 @permission_classes([IsAuthenticated])
 def infinite_questions_profile_view(request):
     return Response(_practice_statistics_payload(request.user))
-
-
-@api_view(['POST'])
-@authentication_classes([JWTAuthentication])
-@permission_classes([IsAuthenticated])
-def update_first_login(request):
-    """Update user's first login status"""
-    try:
-        profile = Profile.objects.get(user=request.user)
-        profile.is_first_login = False
-        profile.save()
-        return Response({'status': 'success'})
-    except Profile.DoesNotExist:
-        return Response(
-            {'error': 'Profile not found'},
-            status=status.HTTP_404_NOT_FOUND
-        )
