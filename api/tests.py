@@ -2659,3 +2659,139 @@ class PartySurvivalModeTests(APITestCase):
         self.assertEqual(state['survivors'], 3)
         self.assertEqual(state['settings']['lives'], 3)
         self.assertTrue(state['settings']['last_standing'])
+
+
+class PartyGoldRushModeTests(APITestCase):
+    def setUp(self):
+        from api.models import PartyRoom
+        self.PartyRoom = PartyRoom
+        self.host = User.objects.create_user(username='host', password='x')
+        Profile.objects.create(user=self.host)
+        self.guest = User.objects.create_user(username='guest', password='x')
+        Profile.objects.create(user=self.guest)
+        # Enough questions for the 30-question free pool, all answer 'A'.
+        for i in range(40):
+            Question.objects.create(
+                question=f'Q{i}?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+                answer='A', difficulty=(i % 3) + 2, question_type='Transitions',
+            )
+
+    def _play(self):
+        """Create a Gold Rush room, seat the guest, start, and reach 'playing'."""
+        self.client.force_authenticate(user=self.host)
+        data = self.client.post(reverse('party_create'), {
+            'mode': 'goldrush', 'subject': 'english', 'difficulty': 'medium', 'time_limit': 600,
+        }, format='json').data
+        room_id = data['id']
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_start', args=[room_id]))
+        room = self.PartyRoom.objects.get(id=room_id)
+        room.phase_started_at -= timedelta(seconds=10)  # burn the countdown
+        room.save()
+        return room_id
+
+    def test_pool_is_sampled_and_capped_for_free_tier(self):
+        room_id = self._play()
+        room = self.PartyRoom.objects.get(id=room_id)
+        self.assertEqual(len(room.question_ids), 30)  # free pool
+        # Each player walks their own shuffle of the same pool.
+        decks = [p.gq_deck for p in room.players.all()]
+        self.assertTrue(all(sorted(d) == sorted(room.question_ids) for d in decks))
+
+    def test_state_serves_a_question_while_playing(self):
+        room_id = self._play()
+        self.client.force_authenticate(user=self.host)
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['status'], 'playing')
+        self.assertEqual(state['gold']['phase'], 'question')
+        self.assertEqual(len(state['gold']['question']['choices']), 4)
+        self.assertNotIn('answer', state['gold']['question'])
+        self.assertGreater(state['seconds_left'], 0)
+
+    def test_wrong_answer_locks_out_then_self_heals(self):
+        room_id = self._play()
+        self.client.force_authenticate(user=self.host)
+        resp = self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'B'}, format='json')
+        self.assertFalse(resp.data['correct'])
+        self.assertEqual(resp.data['correct_choice'], 'A')
+
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['gold']['phase'], 'wrong')
+        # Answering is refused during the penalty.
+        blocked = self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(blocked.status_code, 400)
+
+        # Rewind the lockout: the next poll advances to a fresh question.
+        room = self.PartyRoom.objects.get(id=room_id)
+        player = room.players.get(user=self.host)
+        player.gq_locked_until -= timedelta(seconds=5)
+        player.save()
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['gold']['phase'], 'question')
+
+    @patch('api.views.party_views._roll_reward', return_value={'kind': 'gold', 'amount': 300})
+    def test_correct_answer_opens_a_gold_chest(self, _roll):
+        room_id = self._play()
+        self.client.force_authenticate(user=self.host)
+        resp = self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertTrue(resp.data['correct'])
+
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['gold']['phase'], 'chest')
+        self.assertEqual(state['gold']['chest_count'], 3)
+
+        opened = self.client.post(reverse('party_gold_chest', args=[room_id]), {'pick': 0}, format='json')
+        self.assertEqual(opened.data['kind'], 'gold')
+        self.assertEqual(opened.data['gold'], 300)
+        # Chest cleared, back to a question.
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['gold']['phase'], 'question')
+
+    @patch('api.views.party_views._roll_reward', return_value={'kind': 'steal', 'pct': 50})
+    def test_steal_takes_half_of_a_chosen_player(self, _roll):
+        room_id = self._play()
+        room = self.PartyRoom.objects.get(id=room_id)
+        room.players.filter(user=self.guest).update(score=1000)
+
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        # First open reports it needs a target.
+        step = self.client.post(reverse('party_gold_chest', args=[room_id]), {'pick': 0}, format='json')
+        self.assertTrue(step.data['needs_target'])
+        self.assertEqual(step.data['kind'], 'steal')
+        # Then name the victim.
+        done = self.client.post(reverse('party_gold_chest', args=[room_id]),
+                                {'target': self.guest.id}, format='json')
+        self.assertEqual(done.data['amount'], 500)
+        self.assertEqual(done.data['gold'], 500)
+        self.assertEqual(room.players.get(user=self.guest).score, 500)
+
+    @patch('api.views.party_views._roll_reward', return_value={'kind': 'swap'})
+    def test_swap_trades_totals(self, _roll):
+        room_id = self._play()
+        room = self.PartyRoom.objects.get(id=room_id)
+        room.players.filter(user=self.host).update(score=100)
+        room.players.filter(user=self.guest).update(score=900)
+
+        self.client.force_authenticate(user=self.host)
+        self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.client.post(reverse('party_gold_chest', args=[room_id]), {'pick': 0}, format='json')
+        done = self.client.post(reverse('party_gold_chest', args=[room_id]),
+                                {'target': self.guest.id}, format='json')
+        self.assertEqual(done.data['gold'], 900)
+        self.assertEqual(room.players.get(user=self.host).score, 900)
+        self.assertEqual(room.players.get(user=self.guest).score, 100)
+
+    def test_clock_running_out_finishes_the_game(self):
+        room_id = self._play()
+        room = self.PartyRoom.objects.get(id=room_id)
+        room.phase_started_at -= timedelta(seconds=room.time_limit + 1)
+        room.save()
+        self.client.force_authenticate(user=self.host)
+        state = self.client.get(reverse('party_state', args=[room_id])).data
+        self.assertEqual(state['status'], 'finished')
+        # Answers are refused once the clock is done.
+        resp = self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'A'}, format='json')
+        self.assertEqual(resp.status_code, 400)

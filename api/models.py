@@ -768,8 +768,8 @@ class PartyRoom(models.Model):
     Clients poll the state endpoint; `advance()` derives phase transitions
     from timestamps on every read, so there is no background worker.
     """
-    STATUSES = ('lobby', 'countdown', 'question', 'wager', 'leaderboard', 'finished')
-    MODES = ('classic', 'teams', 'survival', 'jeopardy')
+    STATUSES = ('lobby', 'countdown', 'question', 'wager', 'leaderboard', 'playing', 'finished')
+    MODES = ('classic', 'teams', 'survival', 'jeopardy', 'goldrush')
 
     host = models.ForeignKey(User, related_name='hosted_parties', on_delete=models.CASCADE)
     code = models.CharField(max_length=6, db_index=True)
@@ -788,6 +788,9 @@ class PartyRoom(models.Model):
     max_players = models.IntegerField(default=6)
     num_questions = models.IntegerField(default=10)
     seconds_per_question = models.IntegerField(default=90)
+    # Gold Rush only: total game length in seconds. Each player answers a
+    # self-paced stream of questions until this runs out.
+    time_limit = models.IntegerField(default=600)
     subject = models.CharField(max_length=8, default='mixed',
                                choices=[(s, s) for s in ('math', 'english', 'mixed')])
     difficulty = models.CharField(max_length=6, default='medium',
@@ -810,6 +813,10 @@ class PartyRoom(models.Model):
 
     def wager_deadline(self):
         return self.phase_started_at + timezone.timedelta(seconds=PARTY_WAGER_SECONDS)
+
+    def game_deadline(self):
+        """Gold Rush: when the whole-room clock runs out."""
+        return self.phase_started_at + timezone.timedelta(seconds=self.time_limit)
 
     def is_final_question(self):
         return self.current_index + 1 >= len(self.question_ids)
@@ -927,9 +934,14 @@ class PartyRoom(models.Model):
         if self.status == 'countdown':
             ends = self.phase_started_at + timezone.timedelta(seconds=PARTY_COUNTDOWN_SECONDS)
             if now >= ends:
-                self.status = 'question'
+                # Gold Rush is self-paced: everyone plays at once under one clock.
+                self.status = 'playing' if self.mode == 'goldrush' else 'question'
                 self.phase_started_at = ends
                 self.save(update_fields=['status', 'phase_started_at'])
+        if self.status == 'playing':
+            if now >= self.game_deadline():
+                self.status = 'finished'
+                self.save(update_fields=['status'])
         if self.status == 'wager':
             cutoff = now - timezone.timedelta(seconds=PARTY_ACTIVE_WINDOW_SECONDS)
             players = list(self.players.all())
@@ -972,6 +984,12 @@ class PartyPlayer(models.Model):
     wager_locked = models.BooleanField(default=False)
     # question index (str) -> {'choice': 'A', 'correct': bool, 'points': int}
     answers = models.JSONField(default=dict)
+    # Gold Rush only. Each player walks their own shuffled copy of the room's
+    # question pool; `gq_pending` holds the current chest / wrong-answer screen.
+    gq_deck = models.JSONField(default=list)  # shuffled question ids
+    gq_index = models.IntegerField(default=0)
+    gq_locked_until = models.DateTimeField(null=True, blank=True)  # 3s wrong-answer penalty
+    gq_pending = models.JSONField(null=True, blank=True)  # {'kind': 'chest'|'wrong', ...}
     last_seen = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -982,3 +1000,25 @@ class PartyPlayer(models.Model):
 
     def __str__(self):
         return f"{self.user.username} in party {self.room.code} ({self.score})"
+
+    def gold_question_id(self):
+        """Current Gold Rush question, reshuffling the deck for another lap."""
+        if not self.gq_deck:
+            return None
+        if self.gq_index >= len(self.gq_deck):
+            random.shuffle(self.gq_deck)
+            self.gq_index = 0
+            self.save(update_fields=['gq_deck', 'gq_index'])
+        return self.gq_deck[self.gq_index]
+
+    def gold_rush_tick(self):
+        """Clear an expired wrong-answer lockout and move to the next question.
+
+        Runs on every state read, so a player self-heals to their next question
+        a second after the 3s penalty ends without needing a button.
+        """
+        if self.gq_locked_until and timezone.now() >= self.gq_locked_until:
+            self.gq_locked_until = None
+            self.gq_pending = None
+            self.gq_index += 1
+            self.save(update_fields=['gq_locked_until', 'gq_pending', 'gq_index'])
