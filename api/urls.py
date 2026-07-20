@@ -119,6 +119,8 @@ urlpatterns = [
     path('party/<int:room_id>/next/', party_views.next_party_question, name='party_next'),
     path('party/<int:room_id>/teams/', party_views.update_party_teams, name='party_teams'),
     path('party/<int:room_id>/wager/', party_views.place_party_wager, name='party_wager'),
+    path('party/<int:room_id>/gold/answer/', party_views.gold_rush_answer, name='party_gold_answer'),
+    path('party/<int:room_id>/gold/chest/', party_views.gold_rush_chest, name='party_gold_chest'),
     path('party/<int:room_id>/leave/', party_views.leave_party, name='party_leave'),
 
 ]

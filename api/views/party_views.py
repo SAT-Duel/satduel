@@ -29,6 +29,28 @@ CAPS = {
     'free': {'max_players': 6, 'num_questions': 20},
     'premium': {'max_players': 50, 'num_questions': 50},
 }
+# Gold Rush question pool: premium hosts sample more so answers repeat less
+# over a long game, without ever exposing the whole bank.
+GOLD_POOL = {'free': 30, 'premium': 100}
+GOLD_LOCKOUT_SECONDS = 3  # wrong-answer penalty before the next question
+
+
+def _roll_reward():
+    """One closed Gold Rush chest. Mostly gold, with the swingy events rare."""
+    r = random.random()
+    if r < 0.34:
+        return {'kind': 'gold', 'amount': random.choice([100, 150, 200, 250, 300])}
+    if r < 0.58:
+        return {'kind': 'gold', 'amount': random.choice([350, 400, 500, 600])}
+    if r < 0.70:
+        return {'kind': 'gold', 'amount': random.choice([700, 900, 1200])}
+    if r < 0.80:
+        return {'kind': 'double'}          # your gold ×2
+    if r < 0.90:
+        return {'kind': 'steal', 'pct': 50}  # take half of a chosen player
+    if r < 0.96:
+        return {'kind': 'swap'}            # swap totals with a chosen player
+    return {'kind': 'lose', 'pct': 30}     # a dud chest
 DIFFICULTY_RANGES = {'easy': (1, 3), 'medium': (2, 4), 'hard': (3, 5)}
 SUBJECT_TYPES = {
     'math': MATH_QUESTION_TYPES,
@@ -74,6 +96,53 @@ def _player_entry(player, index_key):
         'lives': player.lives,
         'lost_life': bool(answer.get('life_lost')),
     }
+
+
+def _gold_view(player):
+    """The player's current Gold Rush screen: question, wrong-answer, chest, or target pick."""
+    now = timezone.now()
+    view = {'gold': player.score}
+    pending = player.gq_pending or {}
+
+    if player.gq_locked_until and now < player.gq_locked_until:
+        # Wrong answer: show the right one until the penalty clears.
+        view['phase'] = 'wrong'
+        view['seconds'] = max(0.0, (player.gq_locked_until - now).total_seconds())
+        q = Question.objects.filter(id=pending.get('question')).first()
+        if q:
+            view['correct_choice'] = q.answer
+            view['review'] = {
+                'question': q.question,
+                'choices': [q.choice_a, q.choice_b, q.choice_c, q.choice_d],
+                'correct_choice': q.answer,
+                'your_choice': pending.get('choice'),
+                'explanation': q.explanation or '',
+            }
+        return view
+
+    if pending.get('kind') == 'chest':
+        options = pending.get('options') or []
+        picked = pending.get('picked')
+        if picked is not None and picked < len(options) and options[picked]['kind'] in ('steal', 'swap'):
+            # The chest opened onto a targeted event — the client picks who from
+            # the roster it already has.
+            view['phase'] = 'target'
+            view['reward'] = {'kind': options[picked]['kind']}
+            return view
+        view['phase'] = 'chest'
+        view['chest_count'] = len(options) or 3
+        return view
+
+    view['phase'] = 'question'
+    qid = player.gold_question_id()
+    q = Question.objects.filter(id=qid).first() if qid else None
+    if q:
+        view['question'] = {
+            'id': q.id,
+            'question': q.question,
+            'choices': [q.choice_a, q.choice_b, q.choice_c, q.choice_d],
+        }
+    return view
 
 
 def _team_standings(room, entries):
@@ -123,6 +192,8 @@ def create_party(request):
         max_players=_clamp(data.get('max_players'), 2, caps['max_players'], min(6, caps['max_players'])),
         num_questions=num_questions,
         seconds_per_question=_clamp(data.get('seconds_per_question'), 10, 300, 90),
+        # Gold Rush runs on a clock instead of a question count: 5/10/15 min.
+        time_limit=_clamp(data.get('time_limit'), 180, 1800, 600),
         subject=subject,
         difficulty=difficulty,
     )
@@ -177,7 +248,11 @@ def start_party(request, room_id):
     if not ids:
         return Response({'error': 'No questions available for these settings.'}, status=400)
 
-    room.question_ids = random.sample(ids, min(room.num_questions, len(ids)))
+    if room.mode == 'goldrush':
+        pool_size = GOLD_POOL['premium' if request.user.profile.has_premium else 'free']
+        room.question_ids = random.sample(ids, min(pool_size, len(ids)))
+    else:
+        room.question_ids = random.sample(ids, min(room.num_questions, len(ids)))
     if room.mode == 'jeopardy' and len(room.question_ids) < 2:
         return Response(
             {'error': 'Final Jeopardy needs at least 2 questions for these settings.'},
@@ -197,6 +272,16 @@ def start_party(request, room_id):
         room.lives = min(room.lives, party_lives_cap(room.last_standing, room.num_questions))
         room.save(update_fields=['lives'])
         room.players.update(lives=room.lives)
+    if room.mode == 'goldrush':
+        # Everyone walks their own shuffle of the same pool, so nobody is in lockstep.
+        for player in room.players.all():
+            deck = room.question_ids[:]
+            random.shuffle(deck)
+            player.gq_deck = deck
+            player.gq_index = 0
+            player.gq_pending = None
+            player.gq_locked_until = None
+            player.save(update_fields=['gq_deck', 'gq_index', 'gq_pending', 'gq_locked_until'])
     return Response({'status': 'countdown'})
 
 
@@ -293,6 +378,107 @@ def place_party_wager(request, room_id):
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
+def gold_rush_answer(request, room_id):
+    """Answer the player's current Gold Rush question. Correct earns a chest."""
+    with transaction.atomic():
+        room = get_object_or_404(PartyRoom.objects.select_for_update(), id=room_id)
+        room.advance()
+        if room.mode != 'goldrush' or room.status != 'playing':
+            return Response({'error': 'Not accepting answers right now.'}, status=400)
+
+        player = get_object_or_404(PartyPlayer, room=room, user=request.user)
+        now = timezone.now()
+        if player.gq_locked_until and now < player.gq_locked_until:
+            return Response({'error': 'Hold on a moment.'}, status=400)
+        if player.gq_pending:
+            return Response({'error': 'Open your chest first.'}, status=400)
+
+        choice = str(request.data.get('choice', '')).upper()
+        if choice not in ('A', 'B', 'C', 'D'):
+            return Response({'error': 'Invalid choice.'}, status=400)
+
+        question = Question.objects.get(id=player.gold_question_id())
+        if choice == question.answer:
+            player.gq_pending = {'kind': 'chest', 'options': [_roll_reward() for _ in range(3)], 'picked': None}
+            player.save()
+            return Response({'correct': True})
+
+        # Wrong: a short penalty, then the next question (handled by gold_rush_tick).
+        player.gq_locked_until = now + timezone.timedelta(seconds=GOLD_LOCKOUT_SECONDS)
+        player.gq_pending = {'kind': 'wrong', 'question': question.id, 'choice': choice}
+        player.save()
+        return Response({'correct': False, 'correct_choice': question.answer})
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def gold_rush_chest(request, room_id):
+    """Open a chosen Gold Rush chest, then apply its reward (targeted or not)."""
+    with transaction.atomic():
+        room = get_object_or_404(PartyRoom.objects.select_for_update(), id=room_id)
+        room.advance()
+        if room.mode != 'goldrush' or room.status != 'playing':
+            return Response({'error': 'The game is over.'}, status=400)
+
+        player = get_object_or_404(PartyPlayer, room=room, user=request.user)
+        pending = player.gq_pending or {}
+        if pending.get('kind') != 'chest':
+            return Response({'error': 'No chest to open.'}, status=400)
+
+        options = pending.get('options') or []
+        # A chosen chest is locked in, so the follow-up target step can't reroll it.
+        if pending.get('picked') is not None:
+            pick = pending['picked']
+        else:
+            pick = _clamp(request.data.get('pick'), 0, len(options) - 1, 0)
+        reward = options[pick]
+        kind = reward['kind']
+
+        target_id = request.data.get('target')
+        if kind in ('steal', 'swap') and target_id is None:
+            pending['picked'] = pick
+            player.gq_pending = pending
+            player.save()
+            return Response({'needs_target': True, 'kind': kind})
+
+        result = {'kind': kind}
+        if kind == 'gold':
+            player.score += reward['amount']
+            result['amount'] = reward['amount']
+        elif kind == 'double':
+            gain = player.score  # doubling adds a second copy of your pile
+            player.score += gain
+            result['amount'] = gain
+        elif kind == 'lose':
+            loss = player.score * reward['pct'] // 100
+            player.score -= loss
+            result['amount'] = -loss
+        else:  # steal / swap — both need a valid opponent
+            target = room.players.filter(user_id=target_id).exclude(user_id=player.user_id).first()
+            if not target:
+                return Response({'error': 'Pick another player.'}, status=400)
+            if kind == 'steal':
+                taken = target.score * reward['pct'] // 100
+                target.score -= taken
+                player.score += taken
+                result['amount'] = taken
+            else:
+                player.score, target.score = target.score, player.score
+                result['amount'] = player.score
+            result['target'] = target.user.username
+            target.save(update_fields=['score'])
+
+        player.gq_pending = None
+        player.gq_index += 1
+        player.save()
+        result['gold'] = player.score
+        return Response(result)
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def update_party_teams(request, room_id):
     """Host-only lobby controls for Teams mode: resize, rename, and seat players."""
     room = get_object_or_404(PartyRoom, id=room_id, host=request.user)
@@ -364,6 +550,7 @@ def party_state(request, room_id):
         'code': room.code,
         'status': room.status,
         'started': bool(room.question_ids),  # lets the UI tell "host closed the lobby" from "game over"
+        'you': request.user.id,
         'is_host': room.host_id == request.user.id,
         'host_username': room.host.username,
         'mode': room.mode,
@@ -388,6 +575,11 @@ def party_state(request, room_id):
         state['your_lives'] = player.lives
         state['you_are_out'] = room.eliminates() and player.lives <= 0
         state['survivors'] = len(room.survivors(roster))
+
+    if room.mode == 'goldrush' and room.status == 'playing':
+        player.gold_rush_tick()  # clear an expired wrong-answer lockout
+        state['seconds_left'] = max(0.0, (room.game_deadline() - now).total_seconds())
+        state['gold'] = _gold_view(player)
 
     if room.status == 'countdown':
         ends = room.phase_started_at + timezone.timedelta(seconds=PARTY_COUNTDOWN_SECONDS)
