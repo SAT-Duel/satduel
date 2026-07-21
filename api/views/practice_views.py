@@ -23,7 +23,7 @@ import hashlib
 import random
 
 from django.conf import settings
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Max, Q
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.decorators import (
@@ -40,6 +40,7 @@ from api.models import (
     PracticeActiveQuestion,
     PracticeAttempt,
     PracticeStats,
+    PracticeTestResult,
     PracticeTypeStats,
     Question,
     SavedQuestion,
@@ -900,3 +901,95 @@ def daily_snapshot(user):
         'day_ends_at': day_ends_at.isoformat(),
         'timezone': str(_user_tz(profile)),
     }
+
+
+# =========================================================
+# Full-length practice tests (saved results + history)
+# =========================================================
+
+def _test_result_payload(result):
+    return {
+        'id': result.id,
+        'test_id': result.test_id,
+        'test_name': result.test_name,
+        'score': result.score,
+        'correct': result.correct,
+        'total': result.total,
+        'time_used_seconds': result.time_used_seconds,
+        'questions': result.questions,
+        'created_at': result.created_at.isoformat(),
+    }
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def save_test_result(request):
+    """Persist a finished practice test.
+
+    Returns the user's previous best/last scores (from BEFORE this save) so
+    the result page can show "vs last test" and "new personal best" feedback
+    without a second round-trip.
+    """
+    data = request.data
+    try:
+        score = int(data['score'])
+        correct = int(data['correct'])
+        total = int(data['total'])
+    except (KeyError, TypeError, ValueError):
+        return Response(
+            {'error': 'score, correct and total are required integers'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    questions = data.get('questions')
+    if not isinstance(questions, list):
+        questions = []
+    try:
+        time_used = int(data['time_used_seconds'])
+    except (KeyError, TypeError, ValueError):
+        time_used = None
+
+    previous = PracticeTestResult.objects.filter(user=request.user)
+    previous_best = previous.aggregate(best=Max('score'))['best']
+    previous_last = previous.values_list('score', flat=True).first()
+
+    result = PracticeTestResult.objects.create(
+        user=request.user,
+        test_id=int(data.get('test_id') or 1),
+        test_name=str(data.get('test_name') or 'Practice Test')[:100],
+        score=score,
+        correct=correct,
+        total=total,
+        time_used_seconds=time_used,
+        questions=[
+            {
+                'question_id': q.get('question_id'),
+                'user_choice': q.get('user_choice'),
+                'correct': bool(q.get('correct')),
+            }
+            for q in questions if isinstance(q, dict)
+        ],
+    )
+    return Response({
+        'result': _test_result_payload(result),
+        'previous_best': previous_best,
+        'previous_last': previous_last,
+    })
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def test_history(request):
+    """All of the user's saved practice tests, newest first, plus summary stats."""
+    # ponytail: returns every row (tests are ~1/sitting); paginate if users
+    # ever accumulate hundreds.
+    rows = list(PracticeTestResult.objects.filter(user=request.user))
+    scores = [row.score for row in rows]
+    return Response({
+        'results': [_test_result_payload(row) for row in rows],
+        'tests_taken': len(rows),
+        'best_score': max(scores) if scores else None,
+        'average_score': round(sum(scores) / len(scores)) if scores else None,
+        'latest_score': scores[0] if scores else None,
+    })

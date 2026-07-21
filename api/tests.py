@@ -2795,3 +2795,75 @@ class PartyGoldRushModeTests(APITestCase):
         # Answers are refused once the clock is done.
         resp = self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'A'}, format='json')
         self.assertEqual(resp.status_code, 400)
+
+
+class PracticeTestResultTests(APITestCase):
+    """Save + history for full-length practice tests."""
+
+    def setUp(self):
+        from api.models import PracticeTestResult
+        self.PracticeTestResult = PracticeTestResult
+        self.user = User.objects.create_user(username='tester', password='x')
+        self.client.force_authenticate(user=self.user)
+
+    def _save(self, score, **extra):
+        payload = {
+            'score': score, 'correct': 7, 'total': 10,
+            'test_id': 1, 'test_name': 'SAT Diagnostic Test',
+            'time_used_seconds': 900,
+            'questions': [
+                {'question_id': 5, 'user_choice': 'A', 'correct': True},
+                {'question_id': 6, 'user_choice': None, 'correct': False},
+            ],
+            **extra,
+        }
+        return self.client.post(reverse('save_test_result'), payload, format='json')
+
+    def test_save_requires_auth(self):
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self._save(500).status_code, 401)
+
+    def test_save_rejects_missing_score(self):
+        resp = self.client.post(reverse('save_test_result'), {'correct': 1, 'total': 2}, format='json')
+        self.assertEqual(resp.status_code, 400)
+
+    def test_save_returns_previous_scores(self):
+        first = self._save(500)
+        self.assertEqual(first.status_code, 200)
+        self.assertIsNone(first.data['previous_best'])
+        self.assertIsNone(first.data['previous_last'])
+
+        second = self._save(540)
+        self.assertEqual(second.data['previous_best'], 500)
+        self.assertEqual(second.data['previous_last'], 500)
+
+        third = self._save(520)
+        self.assertEqual(third.data['previous_best'], 540)
+        self.assertEqual(third.data['previous_last'], 540)
+
+        saved = self.PracticeTestResult.objects.filter(user=self.user)
+        self.assertEqual(saved.count(), 3)
+        self.assertEqual(saved.first().questions[0]['question_id'], 5)
+
+    def test_history_summary(self):
+        empty = self.client.get(reverse('practice_test_history'))
+        self.assertEqual(empty.data['tests_taken'], 0)
+        self.assertIsNone(empty.data['best_score'])
+
+        for score in (500, 560, 530):
+            self._save(score)
+        resp = self.client.get(reverse('practice_test_history'))
+        self.assertEqual(resp.data['tests_taken'], 3)
+        self.assertEqual(resp.data['best_score'], 560)
+        self.assertEqual(resp.data['average_score'], 530)
+        self.assertEqual(resp.data['latest_score'], 530)
+        # Newest first, with per-question data intact for the review page.
+        self.assertEqual([r['score'] for r in resp.data['results']], [530, 560, 500])
+        self.assertEqual(resp.data['results'][0]['questions'][1]['user_choice'], None)
+
+    def test_history_is_per_user(self):
+        self._save(500)
+        other = User.objects.create_user(username='other', password='x')
+        self.client.force_authenticate(user=other)
+        resp = self.client.get(reverse('practice_test_history'))
+        self.assertEqual(resp.data['tests_taken'], 0)

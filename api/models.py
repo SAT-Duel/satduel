@@ -704,6 +704,33 @@ class PracticeAttempt(models.Model):
         return f"{self.user.username} - Q{self.question_id} - {'✓' if self.correct else '✗'}"
 
 
+class PracticeTestResult(models.Model):
+    """A completed full-length/diagnostic practice test.
+
+    Stores the final score plus per-question outcomes so the result page can
+    be reopened later; question text is re-fetched by id on review.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_test_results')
+    test_id = models.IntegerField(default=1)
+    test_name = models.CharField(max_length=100, default='SAT Diagnostic Test')
+    score = models.IntegerField()
+    correct = models.IntegerField()
+    total = models.IntegerField()
+    time_used_seconds = models.IntegerField(null=True, blank=True)
+    # [{"question_id": int, "user_choice": "A".."D" | null, "correct": bool}, ...]
+    questions = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['user', 'created_at']),   # history, newest-first
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.test_name} - {self.score}"
+
+
 class SavedQuestion(models.Model):
     """A question the user marked for review from practice.
 

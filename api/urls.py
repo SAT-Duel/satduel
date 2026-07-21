@@ -100,6 +100,10 @@ urlpatterns = [
     path('practice/saved/status/', practice_views.saved_question_status, name='saved_question_status'),
     path('practice/saved/<int:question_id>/', practice_views.unsave_question, name='unsave_question'),
 
+    # Full-length practice tests
+    path('practice_test/save/', practice_views.save_test_result, name='save_test_result'),
+    path('practice_test/history/', practice_views.test_history, name='practice_test_history'),
+
     # Billing
     path('billing/create_checkout_session/', billing_views.create_checkout_session, name='billing_create_checkout_session'),
     path('billing/create_portal_session/', billing_views.create_portal_session, name='billing_create_portal_session'),
