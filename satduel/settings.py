@@ -202,6 +202,14 @@ EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
 
+# Resend marketing-audience sync. Bulk/campaign email is sent from Resend
+# (dashboard Broadcasts) — deliberately separate from the transactional SMTP
+# above so campaigns never affect password-reset / confirmation deliverability.
+# RESEND_API_KEY enables contact sync; RESEND_WEBHOOK_SECRET (whsec_...) verifies
+# the inbound unsubscribe webhook. Unset in dev = sync silently no-ops.
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+RESEND_WEBHOOK_SECRET = os.environ.get('RESEND_WEBHOOK_SECRET', '')
+
 ACCOUNT_ADAPTER = 'api.adapters.CustomAccountAdapter'
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://satduel.com')
 PASSWORD_RESET_TIMEOUT = 60 * 60 * 24  # 1 day, in seconds

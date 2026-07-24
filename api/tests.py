@@ -2867,3 +2867,117 @@ class PracticeTestResultTests(APITestCase):
         self.client.force_authenticate(user=other)
         resp = self.client.get(reverse('practice_test_history'))
         self.assertEqual(resp.data['tests_taken'], 0)
+
+
+class MarketingSyncTests(TransactionTestCase):
+    """Resend audience sync: subscription mirroring, signals, and webhook."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='mktg', email='mktg@example.com',
+            first_name='Mk', last_name='Tg',
+        )
+        self.profile = Profile.objects.create(user=self.user)
+
+    def _verify_email(self):
+        EmailAddress.objects.create(
+            user=self.user, email=self.user.email, verified=True, primary=True,
+        )
+
+    def _set_opt_in(self, value):
+        # Bypass the post_save signal so seeding does not make a network call.
+        Profile.objects.filter(pk=self.profile.pk).update(marketing_opt_in=value)
+        self.profile.refresh_from_db()
+
+    @override_settings(RESEND_API_KEY='re_test')
+    def test_opted_in_unverified_syncs_as_unsubscribed(self):
+        from api import marketing
+        self._set_opt_in(True)
+        with patch.object(marketing.requests, 'patch') as mock_patch:
+            mock_patch.return_value = SimpleNamespace(
+                status_code=200, raise_for_status=lambda: None,
+            )
+            marketing.sync_marketing_contact(self.user)
+        # No verified email yet -> suppressed.
+        self.assertTrue(mock_patch.call_args.kwargs['json']['unsubscribed'])
+
+    @override_settings(RESEND_API_KEY='re_test')
+    def test_opted_in_verified_syncs_as_subscribed(self):
+        from api import marketing
+        self._set_opt_in(True)
+        self._verify_email()
+        with patch.object(marketing.requests, 'patch') as mock_patch:
+            mock_patch.return_value = SimpleNamespace(
+                status_code=200, raise_for_status=lambda: None,
+            )
+            marketing.sync_marketing_contact(self.user)
+        self.assertFalse(mock_patch.call_args.kwargs['json']['unsubscribed'])
+
+    @override_settings(RESEND_API_KEY='re_test')
+    def test_upsert_falls_back_to_post_on_404(self):
+        from api import marketing
+        with patch.object(marketing.requests, 'patch') as mock_patch, \
+                patch.object(marketing.requests, 'post') as mock_post:
+            mock_patch.return_value = SimpleNamespace(
+                status_code=404, raise_for_status=lambda: None,
+            )
+            mock_post.return_value = SimpleNamespace(
+                status_code=201, raise_for_status=lambda: None,
+            )
+            ok = marketing.sync_marketing_contact(self.user)
+        self.assertTrue(ok)
+        self.assertTrue(mock_post.called)
+
+    @override_settings(RESEND_API_KEY='re_test')
+    def test_signal_syncs_on_opt_in_change_only(self):
+        with patch('api.signals.sync_marketing_contact') as mock_sync:
+            # Unrelated field save must NOT hit Resend.
+            self.profile.elo_rating = 1300
+            self.profile.save(update_fields=['elo_rating'])
+            self.assertFalse(mock_sync.called)
+            # Opt-in change must sync.
+            self.profile.marketing_opt_in = True
+            self.profile.save(update_fields=['marketing_opt_in'])
+            self.assertTrue(mock_sync.called)
+
+    @override_settings(RESEND_API_KEY='re_test')
+    def test_webhook_unsubscribe_flips_flag(self):
+        import base64 as _b64
+        import hashlib as _hl
+        import hmac as _hm
+        import json as _json
+
+        self._set_opt_in(True)
+
+        secret = 'whsec_' + _b64.b64encode(b'0123456789abcdef').decode()
+        body = _json.dumps({
+            'type': 'contact.updated',
+            'data': {'email': 'mktg@example.com', 'unsubscribed': True},
+        }).encode()
+        svix_id, svix_ts = 'msg_1', '1614265330'
+        signed = f'{svix_id}.{svix_ts}.'.encode() + body
+        sig = _b64.b64encode(_hm.new(
+            _b64.b64decode(secret[len('whsec_'):]), signed, _hl.sha256,
+        ).digest()).decode()
+
+        with override_settings(RESEND_WEBHOOK_SECRET=secret):
+            resp = self.client.post(
+                reverse('resend_webhook'), data=body,
+                content_type='application/json',
+                HTTP_SVIX_ID=svix_id, HTTP_SVIX_TIMESTAMP=svix_ts,
+                HTTP_SVIX_SIGNATURE=f'v1,{sig}',
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.marketing_opt_in)
+
+    @override_settings(RESEND_WEBHOOK_SECRET='whsec_' + 'YWJjZGVmZ2hpamtsbW5vcA==')
+    def test_webhook_rejects_bad_signature(self):
+        resp = self.client.post(
+            reverse('resend_webhook'),
+            data=b'{"type": "contact.updated", "data": {}}',
+            content_type='application/json',
+            HTTP_SVIX_ID='msg_1', HTTP_SVIX_TIMESTAMP='1',
+            HTTP_SVIX_SIGNATURE='v1,deadbeef',
+        )
+        self.assertEqual(resp.status_code, 400)

@@ -4,6 +4,7 @@ from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
+from api.views import marketing_views
 from api.views import party_views
 
 urlpatterns = [
@@ -108,6 +109,8 @@ urlpatterns = [
     path('billing/create_checkout_session/', billing_views.create_checkout_session, name='billing_create_checkout_session'),
     path('billing/create_portal_session/', billing_views.create_portal_session, name='billing_create_portal_session'),
     path('billing/webhook/', billing_views.stripe_webhook, name='stripe_webhook'),
+
+    path('marketing/resend_webhook/', marketing_views.resend_webhook, name='resend_webhook'),
 
     # Admin: AI question generation
     path('admin/generation/taxonomy/', generation_views.generation_taxonomy, name='generation_taxonomy'),
