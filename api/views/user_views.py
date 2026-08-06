@@ -1,26 +1,18 @@
 import json
-from dj_rest_auth.registration.views import RegisterView
 from django.contrib.auth.forms import PasswordResetForm, SetPasswordForm
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.http import JsonResponse
-from django.utils.decorators import method_decorator
 from django.utils.http import urlsafe_base64_decode
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.http import require_POST
 from rest_framework import status
-from rest_framework.decorators import api_view, authentication_classes, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework_simplejwt.authentication import JWTAuthentication
-
-from api.models import Profile
 
 from allauth.account.models import EmailAddress
 
-from api.views.serializers import CustomRegisterSerializer
 from satduel import settings
 
 
@@ -63,56 +55,6 @@ def logout_view(request):
     return JsonResponse({'message': 'Logged out successfully'})
 
 
-@csrf_exempt  # Disable CSRF for the API view (not recommended for production)
-def register(request):
-    if request.method == 'POST':
-        data = json.loads(request.body)
-        username = data.get('username')
-        email = data.get('email')
-        first_name = data.get('first_name')
-        last_name = data.get('last_name')
-        password = data.get('password')
-        grade = data.get('grade')
-
-        if not all([username, email, first_name, last_name, password]):
-            return JsonResponse({'error': 'All fields are required'}, status=400)
-
-        if User.objects.filter(username=username).exists():
-            return JsonResponse({'error': 'Username already exists'}, status=400)
-
-        user = User.objects.create_user(
-            username=username,
-            email=email,
-            first_name=first_name,
-            last_name=last_name,
-            password=password
-        )
-        Profile.objects.create(
-            user=user,
-            biography="This user is lazy and didn't write anything yet",
-            grade=str(grade)
-        )
-        if user:
-            login(request, user)
-            return JsonResponse({
-                'message': 'User registered and logged in successfully',
-                'username': user.username,
-                'email': user.email,
-                'id': user.id,
-                'is_admin': user.is_staff,
-            }, status=201)
-
-        else:
-            return JsonResponse({'error': 'Registration successful but login failed'}, status=400)
-    else:
-        return JsonResponse({'error': 'Invalid HTTP method'}, status=405)
-
-
-@method_decorator(csrf_exempt, name='dispatch')
-class CustomRegisterView(RegisterView):
-    serializer_class = CustomRegisterSerializer
-
-
 class PasswordResetRequestView(APIView):
     def post(self, request):
         email = request.data.get('email')
@@ -148,4 +90,3 @@ class PasswordResetConfirmView(APIView):
                 return Response({"message": "Password reset successful."}, status=status.HTTP_200_OK)
             return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
         return Response({"error": "Invalid token or user ID."}, status=status.HTTP_400_BAD_REQUEST)
-

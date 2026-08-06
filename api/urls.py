@@ -1,6 +1,4 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenObtainPairView
-from api.views.user_views import CustomRegisterView
 from api.views import views, user_views, tournaments_views, shop_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
@@ -35,10 +33,11 @@ urlpatterns = [
 
     path('login/', user_views.login_view, name='login'),
     path('logout/', user_views.logout_view, name='logout'),
-    path('register/', CustomRegisterView.as_view(), name='register'),
+    path('register/', auth_views.register, name='register'),
 
     # Unified auth (single-request JWT login + Google + profile completion)
     path('auth/login/', auth_views.login_view, name='auth_login'),
+    path('auth/verify-registration/', auth_views.verify_registration, name='auth_verify_registration'),
     path('auth/google/', auth_views.google_login, name='auth_google'),
     path('auth/sat_exam_dates/', auth_views.sat_exam_dates, name='sat_exam_dates'),
     path('auth/complete_profile/', auth_views.complete_profile, name='auth_complete_profile'),
@@ -78,7 +77,7 @@ urlpatterns = [
     path('tournaments/join_from_code/', tournaments_views.join_from_code, name='join-tournament-from-code'),
     path('tournaments/my_tournaments/', tournaments_views.get_my_tournaments, name='get_my_tournaments'),
 
-    path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('token/', auth_views.VerifiedTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', auth_views.AccountTokenRefreshView.as_view(), name='api_token_refresh'),
 
     path('buy_pet/', shop_views.buy_pet, name='buy_pet'),

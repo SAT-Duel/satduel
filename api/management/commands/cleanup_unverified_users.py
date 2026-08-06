@@ -13,6 +13,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from allauth.account.models import EmailAddress
+from api.models import PendingRegistration
 
 # Tables left behind by auth libraries that were uninstalled (django-oauth-toolkit,
 # social-auth-app-django). They still hold FK constraints to auth_user but are no
@@ -62,8 +63,11 @@ class Command(BaseCommand):
         )
 
         count = stale.count()
+        stale_pending = PendingRegistration.objects.filter(created_at__lt=cutoff)
+        pending_count = stale_pending.count()
         self.stdout.write(f"Matched {count} stale account(s) "
                           f"(unverified, never logged in, joined before {cutoff.date()}).")
+        self.stdout.write(f"Matched {pending_count} expired pending registration(s).")
         for u in stale[:100]:
             self.stdout.write(f"  - {u.username} <{u.email}> joined {u.date_joined.date()}")
         if count > 100:
@@ -78,4 +82,7 @@ class Command(BaseCommand):
         with transaction.atomic():
             _clear_legacy_references(stale_ids)
             deleted, _ = User.objects.filter(id__in=stale_ids).delete()
-        self.stdout.write(self.style.SUCCESS(f"\nDeleted {count} account(s) ({deleted} rows total)."))
+            stale_pending.delete()
+        self.stdout.write(self.style.SUCCESS(
+            f"\nDeleted {count} account(s), {pending_count} pending registration(s) ({deleted} account rows total)."
+        ))
