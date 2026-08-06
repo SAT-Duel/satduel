@@ -16,14 +16,15 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from dj_rest_auth.registration.views import VerifyEmailView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
 
     path('api/', include('api.urls')),
 
-    path('auth/', include('dj_rest_auth.urls')),
-    path('auth/registration/', include('dj_rest_auth.registration.urls')),
-    path('accounts/', include('allauth.urls')),  # allauth urls
+    # Backward compatibility for verification links sent before pending
+    # registrations replaced allauth's account-before-verification signup.
+    path('auth/registration/verify-email/', VerifyEmailView.as_view()),
     path('classes/', include('classes.urls')),
 ]

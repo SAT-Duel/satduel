@@ -155,7 +155,6 @@ REST_FRAMEWORK = {
 
 REST_AUTH = {
     'USE_JWT': True,
-    'REGISTER_SERIALIZER': 'api.views.serializers.CustomRegisterSerializer',
 }
 
 # Internationalization
@@ -200,7 +199,7 @@ EMAIL_PORT = int(os.getenv('EMAIL_PORT', 587))  # Default to 587 if not set
 EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'  # Convert string to boolean
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER or 'SAT Duel <no-reply@satduel.com>'
 
 ACCOUNT_ADAPTER = 'api.adapters.CustomAccountAdapter'
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://satduel.com')

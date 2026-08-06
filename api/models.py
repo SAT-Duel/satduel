@@ -3,6 +3,7 @@ from django.db import models, transaction
 from django.utils import timezone
 import math
 import random
+import uuid
 import pytz
 
 
@@ -136,6 +137,21 @@ class SATExamDate(models.Model):
         return f'{self.date:%B} {self.date.day}, {self.date.year}'
 
 
+class PendingRegistration(models.Model):
+    """Unverified credentials waiting for proof that the email is owned."""
+    email = models.EmailField(unique=True)
+    password_hash = models.CharField(max_length=128)
+    verification_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    terms_accepted_at = models.DateTimeField()
+    next_path = models.CharField(max_length=500, blank=True)
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.email
+
+
 class Profile(models.Model):
     """Extended user profile with additional attributes and game statistics."""
     AVATAR_CHOICES = [
@@ -204,6 +220,8 @@ class Profile(models.Model):
     stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     stripe_price_id = models.CharField(max_length=255, blank=True, null=True)
     username_changed_at = models.DateTimeField(null=True, blank=True)
+    username_finalized = models.BooleanField(default=True)
+    grade_selected = models.BooleanField(default=True)
 
     # Account setup and communication preferences. `sat_exam_date_selected`
     # distinguishes "I don't know yet" from an existing account that has not
@@ -229,7 +247,9 @@ class Profile(models.Model):
     @property
     def onboarding_required(self):
         return (
-            not self.sat_exam_date_selected
+            not self.username_finalized
+            or not self.grade_selected
+            or not self.sat_exam_date_selected
             or self.marketing_opt_in is None
             or self.terms_accepted_at is None
         )

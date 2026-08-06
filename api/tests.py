@@ -4,6 +4,7 @@ from importlib import import_module
 from types import SimpleNamespace
 
 from django.contrib.auth.models import User
+from django.core import mail
 from django.db import connection
 from django.test import override_settings, TransactionTestCase
 from django.urls import reverse
@@ -12,7 +13,7 @@ from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
 from api import generation
-from api.models import DuelEmote, Profile, Question, QuestionReport, Ranking, Room, SATExamDate, TrackedQuestion
+from api.models import DuelEmote, PendingRegistration, Profile, Question, QuestionReport, Ranking, Room, SATExamDate, TrackedQuestion
 from api.views.serializers import QuestionSerializer
 
 
@@ -60,6 +61,103 @@ class PasswordLoginTests(APITestCase):
             'username': 'alice', 'password': 'wrong',
         }, format='json')
         self.assertEqual(resp.status_code, 401)
+
+    def test_legacy_token_endpoint_requires_verified_email(self):
+        resp = self.client.post(reverse('token_obtain_pair'), {
+            'username': 'alice', 'password': 'Secret123',
+        }, format='json')
+        self.assertEqual(resp.status_code, 401)
+
+    def test_refresh_token_requires_verified_email(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        response = self.client.post(reverse('api_token_refresh'), {
+            'refresh': str(RefreshToken.for_user(self.user)),
+        }, format='json')
+        self.assertEqual(response.status_code, 401)
+
+    def test_verified_user_can_refresh_token(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+        EmailAddress.objects.create(user=self.user, email=self.user.email, verified=True, primary=True)
+        response = self.client.post(reverse('api_token_refresh'), {
+            'refresh': str(RefreshToken.for_user(self.user)),
+        }, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('access', response.data)
+
+    def test_duplicate_auth_login_surface_is_not_exposed(self):
+        response = self.client.post('/auth/login/', {
+            'email': 'alice@example.com', 'password': 'Secret123',
+        }, format='json')
+        self.assertEqual(response.status_code, 404)
+
+
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    FRONTEND_URL='https://satduel.test',
+)
+class PendingRegistrationTests(APITestCase):
+    def payload(self, **updates):
+        data = {
+            'email': 'new.student@example.com',
+            'password1': 'StrongPass123',
+            'password2': 'StrongPass123',
+            'terms_accepted': True,
+            'next_path': '/trainer?subject=math',
+        }
+        data.update(updates)
+        return data
+
+    def register(self):
+        return self.client.post(reverse('register'), self.payload(), format='json')
+
+    def verification_key(self):
+        marker = '/confirm-email/'
+        line = next(line for line in mail.outbox[-1].body.splitlines() if marker in line)
+        return line.split(marker, 1)[1].rstrip('/')
+
+    def test_registration_creates_only_pending_credentials(self):
+        response = self.register()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(PendingRegistration.objects.filter(email='new.student@example.com').exists())
+        self.assertFalse(User.objects.filter(email='new.student@example.com').exists())
+        self.assertFalse(Profile.objects.filter(user__email='new.student@example.com').exists())
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_verification_creates_account_profile_and_session(self):
+        self.register()
+        response = self.client.post(reverse('auth_verify_registration'), {
+            'key': self.verification_key(),
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('access', response.data)
+        self.assertEqual(response.data['user']['next_path'], '/trainer?subject=math')
+        user = User.objects.get(email='new.student@example.com')
+        self.assertTrue(EmailAddress.objects.filter(user=user, verified=True).exists())
+        self.assertTrue(user.profile.onboarding_required)
+        self.assertFalse(user.profile.username_finalized)
+        self.assertFalse(user.profile.grade_selected)
+        self.assertFalse(PendingRegistration.objects.exists())
+
+    def test_pending_login_explains_that_verification_is_required(self):
+        self.register()
+        response = self.client.post(reverse('auth_login'), {
+            'username': 'new.student@example.com',
+            'password': 'StrongPass123',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data['code'], 'email_not_verified')
+
+    def test_repeated_registration_is_rate_limited_per_email(self):
+        self.register()
+        response = self.register()
+        self.assertEqual(response.status_code, 429)
+
+    def test_stock_registration_endpoint_is_not_exposed(self):
+        response = self.client.post('/auth/registration/', self.payload(), format='json')
+        self.assertEqual(response.status_code, 404)
 
 
 class QuestionFilterSubjectTests(APITestCase):
@@ -298,6 +396,25 @@ class CompleteProfileTests(APITestCase):
         self.assertTrue(self.user.profile.sat_exam_date_selected)
         self.assertTrue(self.user.profile.marketing_opt_in)
         self.assertIsNotNone(self.user.profile.terms_accepted_at)
+
+    def test_new_account_chooses_identity_only_after_verification(self):
+        self.user.profile.username_finalized = False
+        self.user.profile.grade_selected = False
+        self.user.profile.save(update_fields=['username_finalized', 'grade_selected'])
+
+        resp = self.client.post(reverse('auth_complete_profile'), self.payload(
+            username='carol_sat',
+            first_name='Carol',
+            last_name='Ng',
+        ), format='json')
+
+        self.assertEqual(resp.status_code, 200)
+        self.user.refresh_from_db()
+        self.user.profile.refresh_from_db()
+        self.assertEqual(self.user.username, 'carol_sat')
+        self.assertEqual(self.user.first_name, 'Carol')
+        self.assertTrue(self.user.profile.username_finalized)
+        self.assertTrue(self.user.profile.grade_selected)
         self.assertFalse(self.user.profile.onboarding_required)
 
     def test_invalid_grade_rejected(self):
@@ -582,6 +699,7 @@ class RegistrationAbuseTests(APITestCase):
         self.assertEqual(User.objects.filter(email__iexact='student@example.com').count(), 1)
 
 
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
 class RegistrationOnboardingTests(APITestCase):
     def setUp(self):
         self.exam_date = timezone.localdate() + timedelta(days=45)
@@ -603,16 +721,13 @@ class RegistrationOnboardingTests(APITestCase):
         data.update(updates)
         return data
 
-    def test_registration_stores_onboarding_choices(self):
+    def test_registration_defers_identity_and_onboarding_choices(self):
         response = self.client.post(reverse('register'), self.registration_data(), format='json')
 
         self.assertEqual(response.status_code, 201)
-        profile = Profile.objects.get(user__username='new_student')
-        self.assertEqual(profile.sat_exam_date, self.exam_date)
-        self.assertTrue(profile.sat_exam_date_selected)
-        self.assertFalse(profile.marketing_opt_in)
-        self.assertIsNotNone(profile.terms_accepted_at)
-        self.assertFalse(profile.onboarding_required)
+        self.assertTrue(PendingRegistration.objects.filter(email='new_student@example.com').exists())
+        self.assertFalse(User.objects.filter(username='new_student').exists())
+        self.assertFalse(Profile.objects.filter(user__email='new_student@example.com').exists())
 
     def test_registration_rejects_unaccepted_terms(self):
         response = self.client.post(

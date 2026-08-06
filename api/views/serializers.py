@@ -1,11 +1,8 @@
 from django.contrib.auth.models import User
-from django.utils import timezone
 from api import generation
-from api.models import DUEL_EMOJIS, Question, Profile, SATExamDate, Room, TrackedQuestion, FriendRequest, UserStatistics, \
+from api.models import DUEL_EMOJIS, Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
     Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
-from allauth.account.models import EmailAddress
-from dj_rest_auth.registration.serializers import RegisterSerializer
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -160,64 +157,6 @@ class FriendRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = FriendRequest
         fields = ['id', 'from_user', 'to_user', 'timestamp', 'status']
-
-
-class CustomRegisterSerializer(RegisterSerializer):
-    first_name = serializers.CharField(required=True, write_only=True)
-    last_name = serializers.CharField(required=True, write_only=True)
-    grade = serializers.CharField(required=True, write_only=True)
-    sat_exam_date = serializers.DateField(required=True, allow_null=True, write_only=True)
-    marketing_opt_in = serializers.BooleanField(required=True, write_only=True)
-    terms_accepted = serializers.BooleanField(required=True, write_only=True)
-
-    def get_cleaned_data(self):
-        data_dict = super().get_cleaned_data()
-        data_dict['first_name'] = self.validated_data.get('first_name', '')
-        data_dict['last_name'] = self.validated_data.get('last_name', '')
-        data_dict['grade'] = self.validated_data.get('grade')
-        data_dict['sat_exam_date'] = self.validated_data.get('sat_exam_date')
-        data_dict['marketing_opt_in'] = self.validated_data.get('marketing_opt_in')
-        return data_dict
-
-    def save(self, request):
-        # allauth 65 expects this form-only flag while dj-rest-auth passes a
-        # serializer. Keep their standard save path and supply the missing flag.
-        self._has_phone_field = False
-        return super().save(request)
-
-    def custom_signup(self, request, user):
-        Profile.objects.create(
-            user=user,
-            biography='This user is lazy, he did not write anything yet',
-            grade=self.cleaned_data.get('grade'),
-            sat_exam_date=self.cleaned_data.get('sat_exam_date'),
-            sat_exam_date_selected=True,
-            marketing_opt_in=self.cleaned_data.get('marketing_opt_in'),
-            terms_accepted_at=timezone.now(),
-        )
-
-    def validate(self, data):
-        data = super().validate(data)
-        if data.get('terms_accepted') is not True:
-            raise serializers.ValidationError({
-                'terms_accepted': 'You must accept the Terms of Service to create an account.',
-            })
-        sat_exam_date = data.get('sat_exam_date')
-        if sat_exam_date and not SATExamDate.objects.filter(
-            date=sat_exam_date,
-            date__gte=timezone.localdate(),
-            active=True,
-        ).exists():
-            raise serializers.ValidationError({'sat_exam_date': 'Choose one of the available SAT dates.'})
-        email = data.get('email', '').strip()
-        if email and (
-            User.objects.filter(email__iexact=email).exists()
-            or EmailAddress.objects.filter(email__iexact=email).exists()
-        ):
-            raise serializers.ValidationError({
-                'email': 'An account with this email already exists. Verify it or sign in instead.',
-            })
-        return data
 
 
 class TournamentSerializer(serializers.ModelSerializer):
