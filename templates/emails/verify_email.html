@@ -1,0 +1,11 @@
+{% extends "emails/base.html" %}
+{% block title %}Verify your SAT Duel email{% endblock %}
+{% block preheader %}Verify your email to create your SAT Duel account.{% endblock %}
+{% block content %}
+<p style="margin:0 0 8px;font-size:12px;line-height:18px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:#5b4bdb;">One step left</p>
+<h1 style="margin:0 0 16px;font-size:28px;line-height:35px;color:#0f172a;letter-spacing:-.5px;">Verify your email</h1>
+<p style="margin:0 0 24px;font-size:16px;line-height:26px;color:#475569;">Confirm that this email belongs to you to create your SAT Duel account. Your username and public profile are not created until you verify.</p>
+<table role="presentation" cellspacing="0" cellpadding="0" border="0"><tr><td style="border-radius:12px;background:#5b4bdb;"><a href="{{ action_url }}" style="display:inline-block;padding:14px 22px;color:#ffffff;text-decoration:none;font-size:15px;line-height:20px;font-weight:800;">Verify email</a></td></tr></table>
+<p style="margin:24px 0 0;font-size:13px;line-height:21px;color:#64748b;">This link expires in 24 hours. If you did not request an account, you can safely ignore this email.</p>
+<p style="margin:18px 0 0;padding-top:18px;border-top:1px solid #e2e8f0;font-size:12px;line-height:19px;color:#94a3b8;word-break:break-all;">Button not working? Copy this link:<br><a href="{{ action_url }}" style="color:#5b4bdb;">{{ action_url }}</a></p>
+{% endblock %}

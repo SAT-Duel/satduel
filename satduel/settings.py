@@ -200,6 +200,7 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'  # Convert string t
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
 DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER or 'SAT Duel <no-reply@satduel.com>'
+SUPPORT_EMAIL = os.getenv('SUPPORT_EMAIL', 'satduel@gmail.com')
 
 # Resend marketing-audience sync. Bulk/campaign email is sent from Resend
 # (dashboard Broadcasts) — deliberately separate from the transactional SMTP

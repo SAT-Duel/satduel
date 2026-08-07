@@ -20,7 +20,7 @@ class ProfileInline(admin.StackedInline):
     model = Profile
     can_delete = False
     fields = [
-        'role', 'grade', 'country', 'elo_rating', 'is_bot',
+        'role', 'grade', 'grade_last_promoted_year', 'country', 'elo_rating', 'is_bot',
         'avatar', 'avatar_icon', 'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
         'username_finalized', 'grade_selected',
         'sat_exam_date', 'sat_exam_date_selected', 'marketing_opt_in', 'terms_accepted_at',
@@ -104,7 +104,7 @@ class QuestionReportAdmin(admin.ModelAdmin):
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = [
-        'user', 'role', 'grade', 'grade_selected', 'username_finalized', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
+        'user', 'role', 'grade', 'grade_last_promoted_year', 'grade_selected', 'username_finalized', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
         'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
         'marketing_opt_in',
     ]

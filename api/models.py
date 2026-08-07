@@ -153,6 +153,12 @@ class PendingRegistration(models.Model):
         return self.email
 
 
+def current_school_year():
+    """Return the year in which the current September-starting school year began."""
+    today = timezone.localdate()
+    return today.year if today.month >= 9 else today.year - 1
+
+
 class Profile(models.Model):
     """Extended user profile with additional attributes and game statistics."""
     AVATAR_CHOICES = [
@@ -183,8 +189,12 @@ class Profile(models.Model):
     biography = models.TextField(blank=True, null=True)
     grade = models.CharField(
         max_length=3,
-        choices=[(str(i), str(i)) for i in range(1, 13)] + [('<1', '<1'), ('>12', '>12')],
+        choices=[(str(i), str(i)) for i in range(8, 13)] + [('>12', '>12')],
         default='11'
+    )
+    grade_last_promoted_year = models.PositiveSmallIntegerField(
+        default=current_school_year,
+        help_text='September school-year start most recently applied to this grade.',
     )
     role = models.CharField(
         max_length=7,
@@ -254,6 +264,21 @@ class Profile(models.Model):
             or self.marketing_opt_in is None
             or self.terms_accepted_at is None
         )
+
+    def promote_grade_for_school_year(self, today=None):
+        """Advance a student's grade once per September, catching up missed years."""
+        today = today or timezone.localdate()
+        school_year = today.year if today.month >= 9 else today.year - 1
+        if self.grade_last_promoted_year >= school_year:
+            return False
+
+        grades = ['8', '9', '10', '11', '12', '>12']
+        current_index = grades.index(self.grade) if self.grade in grades else 0
+        years = school_year - self.grade_last_promoted_year
+        self.grade = grades[min(current_index + years, len(grades) - 1)]
+        self.grade_last_promoted_year = school_year
+        self.save(update_fields=['grade', 'grade_last_promoted_year'])
+        return True
 
     def sigma(self, r, kappa, s=400):
         """

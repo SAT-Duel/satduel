@@ -1,0 +1,9 @@
+Verify your SAT Duel email
+
+Verify your email to create your SAT Duel account. Your username and public profile are not created until you verify.
+
+{{ action_url }}
+
+This link expires in 24 hours. If you did not request an account, you can safely ignore this email.
+
+Need help? {{ support_email }}
