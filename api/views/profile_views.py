@@ -77,6 +77,7 @@ def _username_change_available_at(profile):
 
 
 def _current_profile_payload(profile):
+    profile.promote_grade_for_school_year()
     data = dict(ProfileSerializer(profile).data)
     available_at = _username_change_available_at(profile)
     data['account'] = {

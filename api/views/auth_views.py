@@ -16,11 +16,9 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth import password_validation
-from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import User, update_last_login
 from django.core import signing
-from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers, status
@@ -32,7 +30,7 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
@@ -45,6 +43,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 from api.account_deletion import AccountDeletionError, delete_user_account
+from api.emails import send_password_link_email, send_registration_verification_email
 from api.models import PendingRegistration, Profile, SATExamDate
 
 
@@ -59,6 +58,11 @@ class RegistrationThrottle(AnonRateThrottle):
 
 class VerificationThrottle(AnonRateThrottle):
     rate = '30/hour'
+
+
+class PasswordEmailThrottle(UserRateThrottle):
+    scope = 'password_email'
+    rate = '10/hour'
 
 
 class PendingRegistrationSerializer(serializers.Serializer):
@@ -136,6 +140,8 @@ def _tokens_for_user(user):
 
 def _user_payload(user, is_first_login):
     profile = getattr(user, 'profile', None)
+    if profile:
+        profile.promote_grade_for_school_year()
     return {
         'id': user.id,
         'username': user.username,
@@ -252,27 +258,7 @@ def login_view(request):
 
 def _send_registration_email(email, key):
     activate_url = f"{settings.FRONTEND_URL.rstrip('/')}/confirm-email/{key}/"
-    message = (
-        'Welcome to SAT Duel!\n\n'
-        'Verify your email to create your account:\n'
-        f'{activate_url}\n\n'
-        'This link expires in 24 hours. If you did not request it, you can ignore this email.'
-    )
-    html_message = (
-        '<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;color:#1e293b">'
-        '<h1 style="font-size:24px">Verify your SAT Duel email</h1>'
-        '<p>One click creates your account. Until then, no username or public profile is reserved.</p>'
-        f'<p><a href="{activate_url}" style="display:inline-block;padding:12px 18px;background:#7c5cf0;color:white;text-decoration:none;border-radius:10px;font-weight:700">Verify email</a></p>'
-        '<p style="font-size:13px;color:#64748b">This link expires in 24 hours. If you did not request it, ignore this email.</p>'
-        '</div>'
-    )
-    send_mail(
-        'Verify your SAT Duel email',
-        message,
-        settings.DEFAULT_FROM_EMAIL,
-        [email],
-        html_message=html_message,
-    )
+    send_registration_verification_email(email, activate_url)
 
 
 @api_view(['POST'])
@@ -577,20 +563,17 @@ def complete_profile(request):
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
+@throttle_classes([PasswordEmailThrottle])
 def set_password(request):
-    """Let a verified Google-only account add its first password."""
-    if request.user.has_usable_password():
-        return Response(
-            {'error': 'This account already has a password. Use password reset to change it.'},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+    """Email the signed-in user a verified link to set or change their password."""
+    if not request.user.email or not _has_verified_email(request.user):
+        return Response({'error': 'This account does not have a verified email.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    form = SetPasswordForm(request.user, request.data)
-    if not form.is_valid():
-        return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    form.save()
-    return Response({'message': 'Password set successfully.', 'has_usable_password': True})
+    send_password_link_email(request.user)
+    return Response({
+        'message': 'Password link sent.',
+        'email': request.user.email,
+    })
 
 
 @api_view(['DELETE'])

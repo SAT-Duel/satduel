@@ -1,5 +1,5 @@
 import json
-from django.contrib.auth.forms import PasswordResetForm, SetPasswordForm
+from django.contrib.auth.forms import SetPasswordForm
 from django.contrib.auth.models import User
 from django.contrib.auth.tokens import default_token_generator
 from django.http import JsonResponse
@@ -9,11 +9,12 @@ from django.contrib.auth import authenticate, login, logout
 from django.views.decorators.http import require_POST
 from rest_framework import status
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
 from allauth.account.models import EmailAddress
 
-from satduel import settings
+from api.emails import send_password_changed_email, send_password_link_email
 
 
 @csrf_exempt
@@ -55,24 +56,31 @@ def logout_view(request):
     return JsonResponse({'message': 'Logged out successfully'})
 
 
+class PasswordResetThrottle(AnonRateThrottle):
+    scope = 'password_reset'
+    rate = '10/hour'
+
+
 class PasswordResetRequestView(APIView):
+    throttle_classes = [PasswordResetThrottle]
+
     def post(self, request):
-        email = request.data.get('email')
-        if email:
-            form = PasswordResetForm({'email': email})
-            if form.is_valid():
-                form.save(
-                    request=request,
-                    use_https=True,
-                    token_generator=default_token_generator,
-                    from_email=None,
-                    email_template_name='registration/password_reset_email.html',
-                    subject_template_name='registration/password_reset_subject.txt',
-                    domain_override=settings.FRONTEND_URL.replace("https://", ""),
-                )
-                return Response({"message": "Password reset link sent."}, status=status.HTTP_200_OK)
-            return Response({"error": "Invalid email address."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+        email = str(request.data.get('email', '')).strip().lower()
+        if not email:
+            return Response({"error": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        email_address = (
+            EmailAddress.objects
+            .filter(email__iexact=email, verified=True, user__is_active=True)
+            .select_related('user')
+            .order_by('user_id')
+            .first()
+        )
+        if email_address:
+            send_password_link_email(email_address.user)
+
+        # Do not reveal whether an address has an account.
+        return Response({"message": "If that account exists, a password link has been sent."}, status=status.HTTP_200_OK)
 
 
 class PasswordResetConfirmView(APIView):
@@ -87,6 +95,7 @@ class PasswordResetConfirmView(APIView):
             form = SetPasswordForm(user, request.data)
             if form.is_valid():
                 form.save()
+                send_password_changed_email(user)
                 return Response({"message": "Password reset successful."}, status=status.HTTP_200_OK)
             return Response(form.errors, status=status.HTTP_400_BAD_REQUEST)
         return Response({"error": "Invalid token or user ID."}, status=status.HTTP_400_BAD_REQUEST)

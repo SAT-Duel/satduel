@@ -1,5 +1,5 @@
 from unittest.mock import patch
-from datetime import timedelta
+from datetime import date, timedelta
 from importlib import import_module
 from types import SimpleNamespace
 
@@ -14,6 +14,7 @@ from rest_framework.test import APITestCase
 from allauth.account.models import EmailAddress
 from api import generation
 from api.models import DuelEmote, PendingRegistration, Profile, Question, QuestionReport, Ranking, Room, SATExamDate, TrackedQuestion
+from api.views.auth_views import PendingRegistrationSerializer
 from api.views.serializers import QuestionSerializer
 
 
@@ -161,6 +162,12 @@ class PendingRegistrationTests(APITestCase):
     def test_stock_registration_endpoint_is_not_exposed(self):
         response = self.client.post('/auth/registration/', self.payload(), format='json')
         self.assertEqual(response.status_code, 404)
+
+    def test_registration_rejects_grade_below_eight(self):
+        serializer = PendingRegistrationSerializer(data=self.payload(grade='7'))
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('grade', serializer.errors)
 
 
 class QuestionFilterSubjectTests(APITestCase):
@@ -458,6 +465,10 @@ class SATExamDateTests(APITestCase):
         ])
 
 
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    FRONTEND_URL='https://satduel.test',
+)
 class AccountSettingsTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='google_user', email='google@example.com')
@@ -497,26 +508,112 @@ class AccountSettingsTests(APITestCase):
         self.assertEqual(self.user.email, 'google@example.com')
         self.assertEqual(self.user.first_name, 'Updated')
 
-    def test_google_only_user_can_set_a_password(self):
-        response = self.client.post(reverse('auth_set_password'), {
+    def _password_link_path(self):
+        marker = '/api/reset/'
+        line = next(line for line in mail.outbox[-1].body.splitlines() if marker in line)
+        return line.split('satduel.test', 1)[1]
+
+    def test_google_only_user_sets_password_through_emailed_link(self):
+        response = self.client.post(reverse('auth_set_password'), {}, format='json')
+
+        self.user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['email'], self.user.email)
+        self.assertFalse(self.user.has_usable_password())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject, 'Set your SAT Duel password')
+        self.assertEqual(len(mail.outbox[0].alternatives), 1)
+
+        confirm = self.client.post(self._password_link_path(), {
             'new_password1': 'NewSecret123!',
             'new_password2': 'NewSecret123!',
         }, format='json')
 
         self.user.refresh_from_db()
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(confirm.status_code, 200)
         self.assertTrue(self.user.check_password('NewSecret123!'))
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertEqual(mail.outbox[-1].subject, 'Your SAT Duel password was changed')
 
-    def test_existing_password_cannot_be_overwritten(self):
+    def test_existing_password_is_changed_only_through_emailed_link(self):
         self.user.set_password('ExistingSecret123!')
         self.user.save(update_fields=['password'])
 
-        response = self.client.post(reverse('auth_set_password'), {
-            'new_password1': 'NewSecret123!',
-            'new_password2': 'NewSecret123!',
+        response = self.client.post(reverse('auth_set_password'), {}, format='json')
+
+        self.user.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.user.check_password('ExistingSecret123!'))
+        self.assertEqual(mail.outbox[-1].subject, 'Change your SAT Duel password')
+
+
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    FRONTEND_URL='https://satduel.test',
+)
+class PasswordResetEmailTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='reset_user', email='reset@example.com', password='ExistingSecret123!',
+        )
+        Profile.objects.create(user=self.user)
+        EmailAddress.objects.create(user=self.user, email=self.user.email, verified=True, primary=True)
+
+    def test_reset_request_and_confirmation_use_branded_emails(self):
+        request_response = self.client.post(
+            reverse('password_reset'), {'email': self.user.email}, format='json',
+        )
+
+        self.assertEqual(request_response.status_code, 200)
+        self.assertEqual(mail.outbox[0].subject, 'Change your SAT Duel password')
+        self.assertIn('SAT Duel', mail.outbox[0].body)
+        self.assertEqual(len(mail.outbox[0].alternatives), 1)
+
+        marker = '/api/reset/'
+        line = next(line for line in mail.outbox[0].body.splitlines() if marker in line)
+        confirm_response = self.client.post(line.split('satduel.test', 1)[1], {
+            'new_password1': 'Replacement123!',
+            'new_password2': 'Replacement123!',
         }, format='json')
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(confirm_response.status_code, 200)
+        self.assertEqual(mail.outbox[-1].subject, 'Your SAT Duel password was changed')
+
+    def test_reset_request_does_not_reveal_unknown_email(self):
+        response = self.client.post(
+            reverse('password_reset'), {'email': 'unknown@example.com'}, format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 0)
+
+
+class ProfileGradePromotionTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='grade_user', email='grade@example.com')
+
+    def test_grade_advances_once_each_september_and_catches_up(self):
+        profile = Profile.objects.create(
+            user=self.user,
+            grade='8',
+            grade_last_promoted_year=2024,
+        )
+
+        self.assertTrue(profile.promote_grade_for_school_year(date(2026, 9, 1)))
+        self.assertEqual(profile.grade, '10')
+        self.assertEqual(profile.grade_last_promoted_year, 2026)
+        self.assertFalse(profile.promote_grade_for_school_year(date(2026, 12, 1)))
+
+    def test_grade_caps_above_grade_twelve(self):
+        profile = Profile.objects.create(
+            user=self.user,
+            grade='12',
+            grade_last_promoted_year=2025,
+        )
+
+        profile.promote_grade_for_school_year(date(2026, 9, 1))
+
+        self.assertEqual(profile.grade, '>12')
 
 
 class AccountDeletionTests(APITestCase):
