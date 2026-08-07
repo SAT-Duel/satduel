@@ -6,7 +6,7 @@ from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 
 from api.account_deletion import delete_user_account
-from api.models import Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
+from api.models import PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
     Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats, \
     PartyRoom, PartyPlayer
@@ -22,6 +22,7 @@ class ProfileInline(admin.StackedInline):
     fields = [
         'role', 'grade', 'country', 'elo_rating', 'is_bot',
         'avatar', 'avatar_icon', 'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
+        'username_finalized', 'grade_selected',
         'sat_exam_date', 'sat_exam_date_selected', 'marketing_opt_in', 'terms_accepted_at',
     ]
     extra = 0
@@ -103,11 +104,22 @@ class QuestionReportAdmin(admin.ModelAdmin):
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = [
-        'user', 'role', 'grade', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
+        'user', 'role', 'grade', 'grade_selected', 'username_finalized', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
         'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
     ]
-    list_filter = ['role', 'grade', 'is_premium', 'is_bot']
+    list_filter = ['role', 'grade', 'grade_selected', 'username_finalized', 'is_premium', 'is_bot']
     search_fields = ['user__username', 'user__email', 'stripe_customer_id', 'stripe_subscription_id']
+
+
+@admin.register(PendingRegistration)
+class PendingRegistrationAdmin(admin.ModelAdmin):
+    list_display = ['email', 'grade', 'email_sent_at', 'created_at', 'updated_at']
+    search_fields = ['email']
+    readonly_fields = ['verification_token', 'terms_accepted_at', 'email_sent_at', 'created_at', 'updated_at']
+    fields = [
+        'email', 'grade', 'verification_token', 'terms_accepted_at',
+        'next_path', 'email_sent_at', 'created_at', 'updated_at',
+    ]
 
 
 @admin.register(SATExamDate)
