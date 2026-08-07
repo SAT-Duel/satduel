@@ -3,6 +3,7 @@ import logging
 import stripe
 from django.db import transaction
 
+from api.marketing import remove_marketing_contact
 from api.models import Profile, QuestionReport
 from api.views.billing_views import (
     StripeError,
@@ -41,8 +42,13 @@ def delete_user_account(user):
                     'Could not cancel your billing account. Your SAT Duel account was not deleted.',
                 ) from exc
 
+    email = user.email
+
     with transaction.atomic():
         # Reports otherwise anonymize via SET_NULL; permanent account deletion
         # should remove the user's submitted content too.
         QuestionReport.objects.filter(reporter=user).delete()
         user.delete()
+
+    # Best-effort GDPR cleanup: drop the contact from the marketing audience.
+    remove_marketing_contact(email)

@@ -106,8 +106,12 @@ class ProfileAdmin(admin.ModelAdmin):
     list_display = [
         'user', 'role', 'grade', 'grade_selected', 'username_finalized', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
         'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
+        'marketing_opt_in',
     ]
-    list_filter = ['role', 'grade', 'grade_selected', 'username_finalized', 'is_premium', 'is_bot']
+    list_filter = [
+        'role', 'grade', 'grade_selected', 'username_finalized',
+        'is_premium', 'is_bot', 'marketing_opt_in',
+    ]
     search_fields = ['user__username', 'user__email', 'stripe_customer_id', 'stripe_subscription_id']
 
 
