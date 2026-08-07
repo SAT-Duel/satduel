@@ -140,6 +140,7 @@ class SATExamDate(models.Model):
 class PendingRegistration(models.Model):
     """Unverified credentials waiting for proof that the email is owned."""
     email = models.EmailField(unique=True)
+    grade = models.CharField(max_length=3)
     password_hash = models.CharField(max_length=128)
     verification_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     terms_accepted_at = models.DateTimeField()

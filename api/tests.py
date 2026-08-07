@@ -99,6 +99,7 @@ class PendingRegistrationTests(APITestCase):
     def payload(self, **updates):
         data = {
             'email': 'new.student@example.com',
+            'grade': '10',
             'password1': 'StrongPass123',
             'password2': 'StrongPass123',
             'terms_accepted': True,
@@ -120,6 +121,7 @@ class PendingRegistrationTests(APITestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertTrue(PendingRegistration.objects.filter(email='new.student@example.com').exists())
+        self.assertEqual(PendingRegistration.objects.get(email='new.student@example.com').grade, '10')
         self.assertFalse(User.objects.filter(email='new.student@example.com').exists())
         self.assertFalse(Profile.objects.filter(user__email='new.student@example.com').exists())
         self.assertEqual(len(mail.outbox), 1)
@@ -136,8 +138,9 @@ class PendingRegistrationTests(APITestCase):
         user = User.objects.get(email='new.student@example.com')
         self.assertTrue(EmailAddress.objects.filter(user=user, verified=True).exists())
         self.assertTrue(user.profile.onboarding_required)
+        self.assertEqual(user.profile.grade, '10')
         self.assertFalse(user.profile.username_finalized)
-        self.assertFalse(user.profile.grade_selected)
+        self.assertTrue(user.profile.grade_selected)
         self.assertFalse(PendingRegistration.objects.exists())
 
     def test_pending_login_explains_that_verification_is_required(self):
@@ -726,6 +729,7 @@ class RegistrationOnboardingTests(APITestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertTrue(PendingRegistration.objects.filter(email='new_student@example.com').exists())
+        self.assertEqual(PendingRegistration.objects.get(email='new_student@example.com').grade, '11')
         self.assertFalse(User.objects.filter(username='new_student').exists())
         self.assertFalse(Profile.objects.filter(user__email='new_student@example.com').exists())
 

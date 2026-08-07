@@ -63,6 +63,7 @@ class VerificationThrottle(AnonRateThrottle):
 
 class PendingRegistrationSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    grade = serializers.ChoiceField(choices=Profile._meta.get_field('grade').choices)
     password1 = serializers.CharField(write_only=True)
     password2 = serializers.CharField(write_only=True)
     terms_accepted = serializers.BooleanField(write_only=True)
@@ -141,6 +142,8 @@ def _user_payload(user, is_first_login):
         'email': user.email,
         'first_name': user.first_name,
         'last_name': user.last_name,
+        'grade': profile.grade if profile else None,
+        'grade_selected': bool(profile and profile.grade_selected),
         'is_admin': user.is_staff,
         'is_first_login': is_first_login,
         'role': profile.role if profile else 'STUDENT',
@@ -291,6 +294,7 @@ def register(request):
         )
 
     if pending:
+        pending.grade = data['grade']
         pending.password_hash = make_password(data['password1'])
         pending.verification_token = uuid.uuid4()
         pending.terms_accepted_at = now
@@ -299,6 +303,7 @@ def register(request):
     else:
         pending = PendingRegistration.objects.create(
             email=data['email'],
+            grade=data['grade'],
             password_hash=make_password(data['password1']),
             terms_accepted_at=now,
             next_path=data.get('next_path', ''),
@@ -337,8 +342,9 @@ def verify_registration(request):
     Profile.objects.create(
         user=user,
         biography="This user hasn't written anything yet.",
+        grade=pending.grade,
         username_finalized=False,
-        grade_selected=False,
+        grade_selected=True,
         terms_accepted_at=pending.terms_accepted_at,
     )
     EmailAddress.objects.create(user=user, email=user.email, verified=True, primary=True)
