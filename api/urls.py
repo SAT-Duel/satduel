@@ -27,6 +27,8 @@ urlpatterns = [
     path('profile/send_friend_request/', profile_views.send_friend_request, name='send_friend_request'),
     path('profile/respond_friend_request/<int:request_id>/', profile_views.respond_friend_request,
          name='respond_friend_request'),
+    path('profile/cancel_friend_request/<int:request_id>/', profile_views.cancel_friend_request,
+         name='cancel_friend_request'),
     path('profile/friend_requests/', profile_views.list_friend_requests, name='list_friend_requests'),
     path('profile/friends/', profile_views.list_friends, name='list_friends'),
     path('profile/remove_friend/', profile_views.remove_friend, name='remove_friend'),

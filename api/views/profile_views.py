@@ -7,7 +7,7 @@ from django.db.models import IntegerField, OuterRef, Q, Subquery
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.response import Response
-from api.models import Profile, FriendRequest, PracticeStats
+from api.models import DirectMessage, Profile, FriendRequest, PracticeStats
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -249,7 +249,7 @@ def update_streak(request):
 @api_view(['GET'])
 def search_users(request):
     query = request.query_params.get('q', '')
-    users = User.objects.filter(username__icontains=query).select_related('profile')[:20]
+    users = User.objects.filter(username__icontains=query).exclude(id=request.user.id).select_related('profile')[:20]
     serializer = DuelUserSerializer(users, many=True)
     return Response(serializer.data)
 
@@ -280,7 +280,11 @@ def send_friend_request(request):
 @permission_classes([IsAuthenticated])
 def respond_friend_request(request, request_id):
     try:
-        friend_request = FriendRequest.objects.get(id=request_id)
+        friend_request = FriendRequest.objects.get(
+            id=request_id,
+            to_user=request.user,
+            status='pending',
+        )
         status_response = request.data.get('status')
         if status_response == 'accepted':
             friend_request.accept()
@@ -297,9 +301,30 @@ def respond_friend_request(request, request_id):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def list_friend_requests(request):
-    friend_requests = FriendRequest.objects.filter(to_user=request.user, status='pending')
-    serializer = FriendRequestSerializer(friend_requests, many=True)
-    return Response(serializer.data)
+    incoming = FriendRequest.objects.filter(to_user=request.user, status='pending').select_related('from_user', 'to_user')
+    incoming_data = FriendRequestSerializer(incoming, many=True).data
+    if request.query_params.get('scope') != 'all':
+        return Response(incoming_data)
+
+    outgoing = FriendRequest.objects.filter(from_user=request.user, status='pending').select_related('from_user', 'to_user')
+    return Response({
+        'incoming': incoming_data,
+        'outgoing': FriendRequestSerializer(outgoing, many=True).data,
+    })
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def cancel_friend_request(request, request_id):
+    deleted, _ = FriendRequest.objects.filter(
+        id=request_id,
+        from_user=request.user,
+        status='pending',
+    ).delete()
+    if not deleted:
+        return Response({'detail': 'Pending friend request not found.'}, status=status.HTTP_404_NOT_FOUND)
+    return Response({'detail': 'Friend request cancelled.'}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
@@ -317,12 +342,7 @@ def list_friends(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def remove_friend(request):
-    """Drop a friendship in both directions.
-
-    Any past friend requests between the two are cleared as well, otherwise the
-    old accepted row would block a fresh request later. Direct messages are
-    deliberately kept: the history reappears if the two re-friend.
-    """
+    """Drop a friendship and permanently delete the pair's chat history."""
     user = request.user
     friend_id = request.data.get('friend_id')
     try:
@@ -340,6 +360,9 @@ def remove_friend(request):
         friend.profile.friends.remove(user)
         FriendRequest.objects.filter(
             Q(from_user=user, to_user=friend) | Q(from_user=friend, to_user=user)
+        ).delete()
+        DirectMessage.objects.filter(
+            Q(sender=user, recipient=friend) | Q(sender=friend, recipient=user)
         ).delete()
 
     return Response({'detail': 'Friend removed.'}, status=status.HTTP_200_OK)
