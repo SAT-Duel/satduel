@@ -24,6 +24,15 @@ def default_duel_emotes():
 
 class Question(models.Model):
     """Model representing a learning question with multiple choice answers."""
+    SOURCE_SAT_QUESTION_BANK = 'sat_question_bank'
+    SOURCE_AI_GENERATED = 'ai_generated'
+    SOURCE_OTHER = 'other'
+    SOURCE_CHOICES = [
+        (SOURCE_SAT_QUESTION_BANK, 'SAT Question Bank'),
+        (SOURCE_AI_GENERATED, 'AI Generated'),
+        (SOURCE_OTHER, 'Other'),
+    ]
+
     question = models.TextField(null=False, blank=False)
     choice_a = models.CharField(max_length=1000)
     choice_b = models.CharField(max_length=1000)
@@ -32,6 +41,8 @@ class Question(models.Model):
     answer = models.CharField(max_length=1, choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')])
     difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)], db_index=True)
     question_type = models.CharField(max_length=1000, null=True, blank=True, db_index=True)
+    source = models.CharField(max_length=32, choices=SOURCE_CHOICES, default=SOURCE_OTHER, db_index=True)
+    source_other = models.CharField(max_length=255, blank=True)
     explanation = models.TextField(null=True, blank=True)
     sp_elo_rating = models.IntegerField(default=0)
 
@@ -45,6 +56,11 @@ class Question(models.Model):
         return self.question
 
     def save(self, *args, **kwargs):
+        from api.generation import normalize_question_type
+        self.question_type = normalize_question_type(self.question_type)
+        if self.source != self.SOURCE_OTHER:
+            self.source_other = ''
+
         # If this is a newly created object with no Elo yet, initialize based on difficulty
         if self.pk is None and self.sp_elo_rating == 0:
             if self.difficulty == 1:

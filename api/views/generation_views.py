@@ -90,6 +90,12 @@ def generation_import(request):
     if not isinstance(drafts, list) or not drafts:
         return Response({'error': 'questions must be a non-empty list'},
                         status=status.HTTP_400_BAD_REQUEST)
+    source = request.data.get('source', Question.SOURCE_AI_GENERATED)
+    source_other = str(request.data.get('source_other', '')).strip()
+    if source not in dict(Question.SOURCE_CHOICES):
+        return Response({'error': 'Invalid question source'}, status=status.HTTP_400_BAD_REQUEST)
+    if source == Question.SOURCE_OTHER and not source_other:
+        return Response({'error': 'Describe the other question source'}, status=status.HTTP_400_BAD_REQUEST)
     created = []
     for q in drafts:
         try:
@@ -102,6 +108,8 @@ def generation_import(request):
                 answer=str(q['answer']).upper(),
                 difficulty=max(1, min(5, int(q['difficulty']))),
                 question_type=q['question_type'],
+                source=source,
+                source_other=source_other,
                 explanation=q.get('explanation', ''),
             )
         except (KeyError, TypeError, ValueError) as exc:
