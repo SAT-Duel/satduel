@@ -14,11 +14,81 @@ from rest_framework.test import APITestCase
 from allauth.account.models import EmailAddress
 from api import generation
 from api.models import (
-    DuelEmote, PendingRegistration, PracticeAttempt, Profile, Question, QuestionReport, Ranking,
-    Room, SATExamDate, SavedQuestion, TrackedQuestion,
+    DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, Profile, Question,
+    QuestionReport, Ranking, Room, SATExamDate, SavedQuestion, TrackedQuestion,
 )
 from api.views.auth_views import PendingRegistrationSerializer
 from api.views.serializers import QuestionSerializer
+
+
+class FriendManagementTests(APITestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user(username='alice', password='x')
+        self.bob = User.objects.create_user(username='bob', password='x')
+        self.carol = User.objects.create_user(username='carol', password='x')
+        for user in (self.alice, self.bob, self.carol):
+            Profile.objects.create(user=user)
+        self.client.force_authenticate(user=self.alice)
+
+    def test_all_requests_returns_incoming_and_outgoing(self):
+        FriendRequest.objects.create(from_user=self.bob, to_user=self.alice)
+        FriendRequest.objects.create(from_user=self.alice, to_user=self.carol)
+
+        response = self.client.get(reverse('list_friend_requests'), {'scope': 'all'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['incoming'][0]['from_user']['username'], 'bob')
+        self.assertEqual(response.data['outgoing'][0]['to_user']['username'], 'carol')
+
+    def test_cancel_only_deletes_own_outgoing_request(self):
+        own_request = FriendRequest.objects.create(from_user=self.alice, to_user=self.bob)
+        someone_elses = FriendRequest.objects.create(from_user=self.bob, to_user=self.carol)
+
+        self.assertEqual(
+            self.client.post(reverse('cancel_friend_request', args=[own_request.id])).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(reverse('cancel_friend_request', args=[someone_elses.id])).status_code,
+            404,
+        )
+        self.assertFalse(FriendRequest.objects.filter(id=own_request.id).exists())
+        self.assertTrue(FriendRequest.objects.filter(id=someone_elses.id).exists())
+
+    def test_remove_friend_deletes_chat_history(self):
+        self.alice.profile.friends.add(self.bob)
+        self.bob.profile.friends.add(self.alice)
+        DirectMessage.objects.create(sender=self.alice, recipient=self.bob, content='hello')
+        DirectMessage.objects.create(sender=self.bob, recipient=self.alice, content='hi')
+        DirectMessage.objects.create(sender=self.carol, recipient=self.alice, content='keep me')
+
+        response = self.client.post(reverse('remove_friend'), {'friend_id': self.bob.id}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(DirectMessage.objects.filter(sender=self.alice, recipient=self.bob).exists())
+        self.assertFalse(DirectMessage.objects.filter(sender=self.bob, recipient=self.alice).exists())
+        self.assertTrue(DirectMessage.objects.filter(sender=self.carol, recipient=self.alice).exists())
+
+    def test_notification_count_includes_messages_and_requests(self):
+        DirectMessage.objects.create(sender=self.bob, recipient=self.alice, content='hello')
+        FriendRequest.objects.create(from_user=self.carol, to_user=self.alice)
+
+        response = self.client.get(reverse('messages_unread_count'))
+
+        self.assertEqual(response.data, {'unread_count': 1, 'friend_request_count': 1})
+
+    def test_only_recipient_can_respond_to_request(self):
+        request = FriendRequest.objects.create(from_user=self.bob, to_user=self.carol)
+
+        response = self.client.post(
+            reverse('respond_friend_request', args=[request.id]),
+            {'status': 'accepted'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 404)
+        request.refresh_from_db()
+        self.assertEqual(request.status, 'pending')
 
 
 class PasswordLoginTests(APITestCase):

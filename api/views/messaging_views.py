@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from api.models import DirectMessage, Profile
+from api.models import DirectMessage, FriendRequest, Profile
 from api.views.serializers import DirectMessageSerializer, ProfileSerializer
 
 # How many messages a thread returns without a cursor. Older messages load on
@@ -188,6 +188,10 @@ def send_message(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def unread_count(request):
-    """Total unread messages, for the sidebar badge."""
+    """Small notification summary for the profile and friends entry points."""
     count = DirectMessage.objects.filter(recipient=request.user, read_at__isnull=True).count()
-    return Response({'unread_count': count})
+    friend_request_count = FriendRequest.objects.filter(to_user=request.user, status='pending').count()
+    return Response({
+        'unread_count': count,
+        'friend_request_count': friend_request_count,
+    })

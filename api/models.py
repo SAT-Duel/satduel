@@ -668,8 +668,8 @@ class DirectMessage(models.Model):
     Conversations are not modelled separately: a thread is every row where the
     two users appear as sender/recipient in either direction, which keeps the
     friends list (small, already loaded) the source of truth for who you can
-    talk to. Sending requires an active friendship; rows survive an unfriend so
-    the history is still there if the two reconnect.
+    talk to. Sending requires an active friendship; removing a friend deletes
+    the pair's rows as part of that explicit user action.
     """
     MAX_LENGTH = 2000
 
