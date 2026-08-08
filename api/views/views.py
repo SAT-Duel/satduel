@@ -108,6 +108,21 @@ def edit_question(request, question_id):
     return JsonResponse({'status': 'success'})
 
 
+@api_view(['DELETE'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def delete_question(request, question_id):
+    """Permanently remove a question from the bank.
+
+    Every relation to Question cascades, so this also drops the question's
+    practice attempts, saved/tracked rows, reports, and its membership in
+    tournaments, rooms, and problem sets. The admin editor confirms first.
+    """
+    question = get_object_or_404(Question, id=question_id)
+    question.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAdminUser])

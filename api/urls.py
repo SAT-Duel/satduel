@@ -13,6 +13,7 @@ urlpatterns = [
     path('get_answer/', views.get_answer, name='get_answer'),
     path('filter_questions/', views.list_questions, name='list_questions'),
     path('edit_question/<int:question_id>', views.edit_question, name='edit_question'),
+    path('delete_question/<int:question_id>', views.delete_question, name='delete_question'),
     path('create_question/', views.create_question, name='create_question'),
     path('question_reports/', views.create_question_report, name='create_question_report'),
     path('admin/question_reports/', views.list_question_reports, name='list_question_reports'),
