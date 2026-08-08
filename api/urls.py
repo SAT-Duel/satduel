@@ -3,6 +3,7 @@ from api.views import views, user_views, tournaments_views, shop_views, duel_vie
 from api.views import trainer_views as trainer_view
 from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
 from api.views import marketing_views
+from api.views import messaging_views
 from api.views import party_views
 
 urlpatterns = [
@@ -27,6 +28,12 @@ urlpatterns = [
          name='respond_friend_request'),
     path('profile/friend_requests/', profile_views.list_friend_requests, name='list_friend_requests'),
     path('profile/friends/', profile_views.list_friends, name='list_friends'),
+    path('profile/remove_friend/', profile_views.remove_friend, name='remove_friend'),
+
+    path('messages/conversations/', messaging_views.conversations, name='message_conversations'),
+    path('messages/thread/<int:user_id>/', messaging_views.thread, name='message_thread'),
+    path('messages/send/', messaging_views.send_message, name='send_message'),
+    path('messages/unread_count/', messaging_views.unread_count, name='messages_unread_count'),
     path('profile/view_profile/<int:user_id>/', profile_views.view_profile, name='view_profile'),
     path('infinite_questions_profile/', profile_views.infinite_questions_profile_view, name='infinite_questions_profile'),
     path('leaderboard/', profile_views.leaderboard_view, name='leaderboard'),

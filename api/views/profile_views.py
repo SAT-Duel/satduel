@@ -3,7 +3,7 @@ import re
 
 from django.contrib.auth.models import User
 from django.db import transaction
-from django.db.models import IntegerField, OuterRef, Subquery
+from django.db.models import IntegerField, OuterRef, Q, Subquery
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.response import Response
@@ -311,6 +311,38 @@ def list_friends(request):
     profiles = Profile.objects.filter(user__in=friends)
     serializer = ProfileSerializer(profiles, many=True)
     return Response(serializer.data)
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def remove_friend(request):
+    """Drop a friendship in both directions.
+
+    Any past friend requests between the two are cleared as well, otherwise the
+    old accepted row would block a fresh request later. Direct messages are
+    deliberately kept: the history reappears if the two re-friend.
+    """
+    user = request.user
+    friend_id = request.data.get('friend_id')
+    try:
+        friend = User.objects.get(id=friend_id)
+    except User.DoesNotExist:
+        return Response({'detail': 'User not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if friend == user:
+        return Response({'detail': 'You cannot remove yourself.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not user.profile.friends.filter(id=friend.id).exists():
+        return Response({'detail': 'You are not friends with this user.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    with transaction.atomic():
+        user.profile.friends.remove(friend)
+        friend.profile.friends.remove(user)
+        FriendRequest.objects.filter(
+            Q(from_user=user, to_user=friend) | Q(from_user=friend, to_user=user)
+        ).delete()
+
+    return Response({'detail': 'Friend removed.'}, status=status.HTTP_200_OK)
 
 
 @api_view(['GET'])
