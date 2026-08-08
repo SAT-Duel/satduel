@@ -40,6 +40,16 @@ MATH_QUESTION_TYPES = [
 ]
 
 
+def question_source_values(data, default):
+    source = data.get('source', default)
+    source_other = str(data.get('source_other', '')).strip()
+    if source not in dict(Question.SOURCE_CHOICES):
+        raise ValueError('Invalid question source')
+    if source == Question.SOURCE_OTHER and not source_other:
+        raise ValueError('Describe the other question source')
+    return source, source_other
+
+
 @api_view(['GET'])
 def get_random_questions(request):
     try:
@@ -95,6 +105,10 @@ def list_questions(request):
 def edit_question(request, question_id):
     question = get_object_or_404(Question, id=question_id)
     data = request.data
+    try:
+        source, source_other = question_source_values(data, question.source)
+    except ValueError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     question.question = data['question']
     question.choice_a = data['choice_a']
     question.choice_b = data['choice_b']
@@ -103,6 +117,8 @@ def edit_question(request, question_id):
     question.answer = data['answer']
     question.difficulty = data['difficulty']
     question.question_type = data['question_type']
+    question.source = source
+    question.source_other = source_other
     question.explanation = data['explanation']
     question.save()
     return JsonResponse({'status': 'success'})
@@ -128,6 +144,10 @@ def delete_question(request, question_id):
 @permission_classes([IsAdminUser])
 def create_question(request):
     data = request.data
+    try:
+        source, source_other = question_source_values(data, Question.SOURCE_SAT_QUESTION_BANK)
+    except ValueError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     question = Question.objects.create(
         question=data['question'],
         choice_a=data['choice_a'],
@@ -137,6 +157,8 @@ def create_question(request):
         answer=data['answer'],
         difficulty=data['difficulty'],
         question_type=data['question_type'],
+        source=source,
+        source_other=source_other,
         explanation=data['explanation']
     )
     question.save()

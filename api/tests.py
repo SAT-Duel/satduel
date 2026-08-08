@@ -387,6 +387,57 @@ class QuestionSubjectFieldTests(APITestCase):
         self.assertEqual(generation.MATH_SKILL_NAMES & generation.ENGLISH_SKILL_NAMES, set())
 
 
+class QuestionMetadataTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(username='question-admin', is_staff=True)
+        self.client.force_authenticate(user=self.admin)
+
+    @staticmethod
+    def draft(question_type='One-Variable Data: Distributions and Measures of Center and Spread'):
+        return {
+            'question': 'What is the answer?',
+            'choice_a': '1',
+            'choice_b': '2',
+            'choice_c': '3',
+            'choice_d': '4',
+            'answer': 'B',
+            'difficulty': 2,
+            'question_type': question_type,
+            'explanation': 'The answer is 2.',
+        }
+
+    def test_question_type_case_is_normalized_on_save(self):
+        question = Question.objects.create(**self.draft())
+
+        self.assertEqual(
+            question.question_type,
+            'One-variable data: distributions and measures of center and spread',
+        )
+        self.assertEqual(generation.subject_of_type(question.question_type), 'math')
+
+    def test_generator_import_applies_one_source_to_the_batch(self):
+        response = self.client.post(reverse('generation_import'), {
+            'questions': [self.draft(), self.draft('Two-Variable Data: Models and Scatterplots')],
+            'source': Question.SOURCE_OTHER,
+            'source_other': 'Teacher-authored set',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        questions = Question.objects.filter(id__in=response.data['created_ids'])
+        self.assertEqual(questions.count(), 2)
+        self.assertTrue(all(q.source == Question.SOURCE_OTHER for q in questions))
+        self.assertTrue(all(q.source_other == 'Teacher-authored set' for q in questions))
+
+    def test_other_source_requires_description(self):
+        response = self.client.post(reverse('generation_import'), {
+            'questions': [self.draft()],
+            'source': Question.SOURCE_OTHER,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error'], 'Describe the other question source')
+
+
 def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):
     return {
         'email': email,

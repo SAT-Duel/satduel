@@ -9,10 +9,15 @@ class QuestionSerializer(serializers.ModelSerializer):
     """Public question payload — must never include the correct answer or explanation."""
     choices = serializers.SerializerMethodField()
     subject = serializers.SerializerMethodField()
+    source_display = serializers.CharField(source='get_source_display', read_only=True)
 
     class Meta:
         model = Question
-        fields = ['id', 'question', 'choices', 'difficulty', 'question_type', 'subject', 'choice_a', 'choice_b', 'choice_c', 'choice_d']
+        fields = [
+            'id', 'question', 'choices', 'difficulty', 'question_type', 'subject',
+            'source', 'source_display', 'source_other',
+            'choice_a', 'choice_b', 'choice_c', 'choice_d',
+        ]
 
     def get_choices(self, obj):
         return [obj.choice_a, obj.choice_b, obj.choice_c, obj.choice_d]

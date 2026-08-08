@@ -1330,11 +1330,23 @@ SKILL_INDEX = {
     for skill in domain["skills"]
 }
 
+QUESTION_TYPE_BY_CASEFOLD = {
+    name.casefold(): name for name in SKILL_INDEX
+}
+
+
+def normalize_question_type(question_type):
+    """Return the official taxonomy spelling for case-only variants."""
+    if not isinstance(question_type, str):
+        return question_type
+    stripped = question_type.strip()
+    return QUESTION_TYPE_BY_CASEFOLD.get(stripped.casefold(), stripped)
+
 
 def subject_of_type(question_type):
     """Which subject a question_type belongs to. Unknown types read as english,
     matching the practice lanes' default."""
-    return 'math' if question_type in MATH_SKILL_NAMES else 'english'
+    return 'math' if normalize_question_type(question_type) in MATH_SKILL_NAMES else 'english'
 
 
 def build_prompt(skill_name, difficulty, count):

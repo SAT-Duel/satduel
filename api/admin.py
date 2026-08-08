@@ -88,8 +88,8 @@ admin.site.register(User, UserAdmin)
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
-    list_display = ['id', 'question_type', 'difficulty', 'answer', 'sp_elo_rating']
-    list_filter = ['question_type', 'difficulty']
+    list_display = ['id', 'question_type', 'source', 'source_other', 'difficulty', 'answer', 'sp_elo_rating']
+    list_filter = ['question_type', 'source', 'difficulty']
     search_fields = ['question']
 
 
