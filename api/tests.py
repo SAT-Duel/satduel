@@ -13,7 +13,10 @@ from rest_framework.test import APITestCase
 
 from allauth.account.models import EmailAddress
 from api import generation
-from api.models import DuelEmote, PendingRegistration, Profile, Question, QuestionReport, Ranking, Room, SATExamDate, TrackedQuestion
+from api.models import (
+    DuelEmote, PendingRegistration, PracticeAttempt, Profile, Question, QuestionReport, Ranking,
+    Room, SATExamDate, SavedQuestion, TrackedQuestion,
+)
 from api.views.auth_views import PendingRegistrationSerializer
 from api.views.serializers import QuestionSerializer
 
@@ -231,6 +234,57 @@ class QuestionReportTests(APITestCase):
         self.assertEqual(listed.data[0]['question']['explanation'], self.question.explanation)
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(QuestionReport.objects.exists())
+
+
+class AdminQuestionDeleteTests(APITestCase):
+    """The admin editor's delete button drops the question for good, so the
+    endpoint must stay staff-only and take its cascading rows with it."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username='student', password='Secret123')
+        self.admin = User.objects.create_user(username='staff', password='Secret123', is_staff=True)
+        self.question = Question.objects.create(
+            question='Which choice is correct?',
+            choice_a='First', choice_b='Second', choice_c='Third', choice_d='Fourth',
+            answer='B', difficulty=1, question_type='Words in Context',
+            explanation='The second choice is correct.',
+        )
+
+    def test_non_staff_cannot_delete_a_question(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.delete(reverse('delete_question', args=[self.question.id]))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Question.objects.filter(id=self.question.id).exists())
+
+    def test_staff_delete_removes_the_question_and_its_related_rows(self):
+        PracticeAttempt.objects.create(
+            user=self.user, question=self.question, subject='english', correct=True,
+        )
+        SavedQuestion.objects.create(user=self.user, question=self.question, subject='english')
+        QuestionReport.objects.create(
+            question=self.question,
+            reporter=self.user,
+            reason='bad_explanation',
+            details='The explanation skips the key reasoning step.',
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.delete(reverse('delete_question', args=[self.question.id]))
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Question.objects.filter(id=self.question.id).exists())
+        self.assertFalse(PracticeAttempt.objects.exists())
+        self.assertFalse(SavedQuestion.objects.exists())
+        self.assertFalse(QuestionReport.objects.exists())
+
+    def test_deleting_a_missing_question_is_a_404(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.delete(reverse('delete_question', args=[self.question.id + 999]))
+
+        self.assertEqual(response.status_code, 404)
 
 
 class QuestionSubjectFieldTests(APITestCase):
