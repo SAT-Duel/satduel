@@ -662,6 +662,35 @@ class FriendRequest(models.Model):
         self.save()
 
 
+class DirectMessage(models.Model):
+    """A one-to-one message between two students.
+
+    Conversations are not modelled separately: a thread is every row where the
+    two users appear as sender/recipient in either direction, which keeps the
+    friends list (small, already loaded) the source of truth for who you can
+    talk to. Sending requires an active friendship; rows survive an unfriend so
+    the history is still there if the two reconnect.
+    """
+    MAX_LENGTH = 2000
+
+    sender = models.ForeignKey(User, related_name='sent_messages', on_delete=models.CASCADE)
+    recipient = models.ForeignKey(User, related_name='received_messages', on_delete=models.CASCADE)
+    content = models.TextField(max_length=MAX_LENGTH)
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']
+        indexes = [
+            # Thread reads and unread counts both filter on the pair of users.
+            models.Index(fields=['sender', 'recipient', 'created_at']),
+            models.Index(fields=['recipient', 'read_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.sender} → {self.recipient} at {self.created_at:%Y-%m-%d %H:%M}"
+
+
 class Ranking(models.Model):
     """Global user rankings based on performance."""
     user = models.OneToOneField(User, on_delete=models.CASCADE)

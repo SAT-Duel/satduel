@@ -1,7 +1,7 @@
 from django.contrib.auth.models import User
 from api import generation
-from api.models import DUEL_EMOJIS, Question, Profile, Room, TrackedQuestion, FriendRequest, UserStatistics, \
-    Tournament, TournamentParticipation, TournamentQuestion
+from api.models import DUEL_EMOJIS, DirectMessage, Question, Profile, Room, TrackedQuestion, FriendRequest, \
+    UserStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 
 
@@ -157,6 +157,15 @@ class FriendRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = FriendRequest
         fields = ['id', 'from_user', 'to_user', 'timestamp', 'status']
+
+
+class DirectMessageSerializer(serializers.ModelSerializer):
+    sender_id = serializers.IntegerField(source='sender.id', read_only=True)
+    recipient_id = serializers.IntegerField(source='recipient.id', read_only=True)
+
+    class Meta:
+        model = DirectMessage
+        fields = ['id', 'sender_id', 'recipient_id', 'content', 'created_at', 'read_at']
 
 
 class TournamentSerializer(serializers.ModelSerializer):
