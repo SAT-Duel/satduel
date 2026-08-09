@@ -17,7 +17,9 @@ def _assigned_modules():
     assigned = {}
     for test in PracticeTest.objects.all():
         for field in ('english_a', 'english_b', 'english_c', 'math_a', 'math_b', 'math_c'):
-            assigned[getattr(test, f'{field}_id')] = {'id': test.id, 'name': test.name}
+            module_id = getattr(test, f'{field}_id')
+            if module_id:
+                assigned[module_id] = {'id': test.id, 'name': test.name}
     return assigned
 
 
@@ -101,10 +103,15 @@ def _test_summary(test):
     return {
         'id': test.id,
         'name': test.name,
+        'test_type': test.test_type,
+        'question_count': test.delivered_question_count,
+        'duration_minutes': test.duration_minutes,
+        'maximum_score': test.maximum_score,
         'active': test.active,
         'modules': {
             field: {'id': getattr(test, f'{field}_id'), 'name': getattr(test, field).name}
             for field in MODULE_FIELDS
+            if getattr(test, f'{field}_id')
         },
         'completion_count': getattr(test, 'completion_count', 0),
         'calibration_count': getattr(test, 'calibration_count', 0),
@@ -134,11 +141,19 @@ def practice_tests(request):
     if len(name) > 120:
         return Response({'error': 'Practice test names must be 120 characters or fewer'}, status=status.HTTP_400_BAD_REQUEST)
 
+    test_type = request.data.get('test_type', PracticeTest.TYPE_FULL)
+    included_subjects = PracticeTest.TYPE_SUBJECTS.get(test_type)
+    if not included_subjects:
+        return Response({'error': 'Choose a valid practice-test type'}, status=status.HTTP_400_BAD_REQUEST)
+    required_fields = {
+        field: signature for field, signature in MODULE_FIELDS.items()
+        if signature[0] in included_subjects
+    }
     try:
-        module_ids = {field: int(request.data.get(field)) for field in MODULE_FIELDS}
+        module_ids = {field: int(request.data.get(field)) for field in required_fields}
     except (TypeError, ValueError):
-        return Response({'error': 'Select all six modules'}, status=status.HTTP_400_BAD_REQUEST)
-    if len(set(module_ids.values())) != 6:
+        return Response({'error': f'Select all {len(required_fields)} modules'}, status=status.HTTP_400_BAD_REQUEST)
+    if len(set(module_ids.values())) != len(required_fields):
         return Response({'error': 'Each slot must use a different module'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
@@ -147,7 +162,7 @@ def practice_tests(request):
                 module.id: module
                 for module in PracticeTestModule.objects.select_for_update().filter(id__in=module_ids.values())
             }
-            if len(modules) != 6:
+            if len(modules) != len(required_fields):
                 raise ValueError('One or more selected modules no longer exist')
             values = {}
             for field, module_id in module_ids.items():
@@ -156,7 +171,9 @@ def practice_tests(request):
                 if (module.subject, module.route) != (expected_subject, expected_route):
                     raise ValueError(f'{field.replace("_", " ").title()} has the wrong subject or route')
                 values[field] = module
-            test = PracticeTest.objects.create(name=name, created_by=request.user, **values)
+            test = PracticeTest.objects.create(
+                name=name, test_type=test_type, created_by=request.user, **values,
+            )
     except (ValueError, ValidationError) as exc:
         message = exc.messages[0] if isinstance(exc, ValidationError) else str(exc)
         return Response({'error': message}, status=status.HTTP_400_BAD_REQUEST)

@@ -104,8 +104,10 @@ def _test_summary(test):
     return {
         'id': test.id,
         'name': test.name,
-        'question_count': 98,
-        'duration_minutes': 134,
+        'test_type': test.test_type,
+        'question_count': test.delivered_question_count,
+        'duration_minutes': test.duration_minutes,
+        'maximum_score': test.maximum_score,
         'completion_count': test.completion_count,
         'calibration_count': test.calibration_count,
         'status': 'in_progress' if active_attempt else ('completed' if completed else 'not_started'),
@@ -120,11 +122,13 @@ def _history_summary(attempt):
         'id': attempt.id,
         'test_id': attempt.practice_test_id,
         'test_name': attempt.practice_test.name,
+        'test_type': attempt.practice_test.test_type,
+        'maximum_score': attempt.practice_test.maximum_score,
         'score': attempt.total_score,
         'reading_writing_score': attempt.reading_writing_score,
         'math_score': attempt.math_score,
         'correct': details.get('correct', 0),
-        'total': details.get('total', 98),
+        'total': details.get('total') or attempt.practice_test.delivered_question_count,
         'created_at': attempt.completed_at.isoformat() if attempt.completed_at else attempt.updated_at.isoformat(),
     }
 
@@ -144,6 +148,7 @@ def practice_tests(request):
 
     tests = list(
         PracticeTest.objects.filter(active=True)
+        .select_related('english_a', 'english_b', 'english_c', 'math_a', 'math_b', 'math_c')
         .annotate(
             completion_count=Count('attempts__user', filter=Q(attempts__status='completed'), distinct=True),
             calibration_count=Count('attempts', filter=Q(attempts__contributes_to_calibration=True)),
@@ -153,15 +158,11 @@ def practice_tests(request):
         test._user_attempts = by_test.get(test.id, [])
 
     history = [_history_summary(attempt) for attempt in attempts if attempt.status == 'completed']
-    scores = [item['score'] for item in history if item['score'] is not None]
     return Response({
         'tests': [_test_summary(test) for test in tests],
         'history': {
             'results': history,
             'tests_taken': len(history),
-            'best_score': max(scores) if scores else None,
-            'average_score': round(sum(scores) / len(scores)) if scores else None,
-            'latest_score': scores[0] if scores else None,
         },
     })
 
@@ -176,6 +177,7 @@ def start_test(request, test_id):
     with transaction.atomic():
         attempt, _ = PracticeTestAttempt.objects.get_or_create(
             user=request.user, practice_test=test, status='active',
+            defaults={'phase': 'math_a' if test.test_type == PracticeTest.TYPE_MATH else 'english_a'},
         )
     return Response(_attempt_state(attempt), status=status.HTTP_200_OK)
 
@@ -220,41 +222,47 @@ def restart_test(request, attempt_id):
             return Response({'error': 'Completed attempts cannot be deleted'}, status=status.HTTP_409_CONFLICT)
         test = attempt.practice_test
         attempt.delete()
-        fresh = PracticeTestAttempt.objects.create(user=request.user, practice_test=test)
+        fresh = PracticeTestAttempt.objects.create(
+            user=request.user,
+            practice_test=test,
+            phase='math_a' if test.test_type == PracticeTest.TYPE_MATH else 'english_a',
+        )
     return Response(_attempt_state(fresh))
 
 
 def _complete_attempt(attempt):
     test = attempt.practice_test
-    english_route = attempt.selected_routes['english'].lower()
-    math_route = attempt.selected_routes['math'].lower()
-    english_modules = [('english_a', test.english_a), (f'english_{english_route}', getattr(test, f'english_{english_route}'))]
-    math_modules = [('math_a', test.math_a), (f'math_{math_route}', getattr(test, f'math_{math_route}'))]
-
-    def responses(modules):
-        return [
+    section_scores = {}
+    for subject in test.included_subjects:
+        route = attempt.selected_routes[subject].lower()
+        modules = [
+            (f'{subject}_a', getattr(test, f'{subject}_a')),
+            (f'{subject}_{route}', getattr(test, f'{subject}_{route}')),
+        ]
+        responses = [
             pair
             for phase, module in modules
             for pair in _question_responses(module, attempt.answers.get(phase, {}))
         ]
+        section_scores[subject] = score_section(responses)
 
-    reading_writing = score_section(responses(english_modules))
-    math = score_section(responses(math_modules))
+    reading_writing = section_scores.get('english')
+    math = section_scores.get('math')
     first_completion = not PracticeTestAttempt.objects.filter(
         user=attempt.user,
         practice_test=attempt.practice_test,
         contributes_to_calibration=True,
     ).exclude(id=attempt.id).exists()
-    attempt.reading_writing_score = reading_writing['score']
-    attempt.math_score = math['score']
-    attempt.total_score = reading_writing['score'] + math['score']
+    attempt.reading_writing_score = reading_writing['score'] if reading_writing else None
+    attempt.math_score = math['score'] if math else None
+    attempt.total_score = sum(section['score'] for section in section_scores.values())
     attempt.score_details = {
-        'reading_writing': reading_writing,
-        'math': math,
-        'correct': reading_writing['correct'] + math['correct'],
-        'total': reading_writing['total'] + math['total'],
-        'score_low': reading_writing['score_low'] + math['score_low'],
-        'score_high': reading_writing['score_high'] + math['score_high'],
+        'reading_writing': reading_writing or {},
+        'math': math or {},
+        'correct': sum(section['correct'] for section in section_scores.values()),
+        'total': sum(section['total'] for section in section_scores.values()),
+        'score_low': sum(section['score_low'] for section in section_scores.values()),
+        'score_high': sum(section['score_high'] for section in section_scores.values()),
         'scoring_version': SCORING_VERSION,
     }
     attempt.status = 'completed'
@@ -285,7 +293,10 @@ def finish_module(request, attempt_id):
             attempt.selected_routes = {**attempt.selected_routes, 'english': route}
             attempt.phase = f'english_{route.lower()}'
         elif phase.startswith('english_'):
-            attempt.phase = 'math_a'
+            if attempt.practice_test.test_type == PracticeTest.TYPE_FULL:
+                attempt.phase = 'math_a'
+            else:
+                _complete_attempt(attempt)
         elif phase == 'math_a':
             route = select_second_module(_question_responses(module, phase_answers))
             attempt.selected_routes = {**attempt.selected_routes, 'math': route}
@@ -327,12 +338,13 @@ def test_result(request, attempt_id):
         return Response({'error': 'Finish the test before viewing its score'}, status=status.HTTP_409_CONFLICT)
 
     test = attempt.practice_test
-    phases = [
-        ('english_a', test.english_a),
-        (f"english_{attempt.selected_routes['english'].lower()}", getattr(test, f"english_{attempt.selected_routes['english'].lower()}")),
-        ('math_a', test.math_a),
-        (f"math_{attempt.selected_routes['math'].lower()}", getattr(test, f"math_{attempt.selected_routes['math'].lower()}")),
-    ]
+    phases = []
+    for subject in test.included_subjects:
+        route = attempt.selected_routes[subject].lower()
+        phases.extend([
+            (f'{subject}_a', getattr(test, f'{subject}_a')),
+            (f'{subject}_{route}', getattr(test, f'{subject}_{route}')),
+        ])
     questions = [
         _review_question(phase, question, attempt.answers.get(phase, {}))
         for phase, module in phases
@@ -342,6 +354,8 @@ def test_result(request, attempt_id):
     return Response({
         'id': attempt.id,
         'test_name': test.name,
+        'test_type': test.test_type,
+        'maximum_score': test.maximum_score,
         'total_score': attempt.total_score,
         'reading_writing_score': attempt.reading_writing_score,
         'math_score': attempt.math_score,
