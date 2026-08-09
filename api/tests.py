@@ -566,6 +566,19 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Transitions followed by 2-3 Rhetorical', response.data['prompt'])
         self.assertIn('MUST occupy the final positions', response.data['prompt'])
+        self.assertIn(
+            '<source attribution line>\\n\\n<excerpt text>\\n\\n<question sentence>',
+            response.data['prompt'],
+        )
+
+    def test_regular_reading_prompt_enforces_source_spacing(self):
+        prompt = generation.build_prompt('Words in Context', 3, 2)
+
+        self.assertIn(
+            '<source attribution line>\\n\\n<excerpt text>\\n\\n<question sentence>',
+            prompt,
+        )
+        self.assertIn('The blank line between them is required', prompt)
 
     def test_imports_module_without_adding_normal_questions(self):
         normal_count = Question.objects.count()
