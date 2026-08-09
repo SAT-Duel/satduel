@@ -822,6 +822,37 @@ class PracticeTestResult(models.Model):
         return f"{self.user.username} - {self.test_name} - {self.score}"
 
 
+class PracticeTestModule(models.Model):
+    """An isolated, generated SAT module and its private question set."""
+    SUBJECT_CHOICES = [('english', 'Reading and Writing'), ('math', 'Math')]
+    ROUTE_CHOICES = [
+        ('A', 'Module 1 (routing)'),
+        ('B', 'Module 2 (lower difficulty)'),
+        ('C', 'Module 2 (higher difficulty)'),
+    ]
+
+    name = models.CharField(max_length=120, unique=True)
+    subject = models.CharField(max_length=10, choices=SUBJECT_CHOICES)
+    route = models.CharField(max_length=1, choices=ROUTE_CHOICES)
+    questions = models.JSONField(default=list)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_practice_test_modules',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    @property
+    def question_count(self):
+        return len(self.questions)
+
+    def __str__(self):
+        return self.name
+
+
 class SavedQuestion(models.Model):
     """A question the user marked for review from practice.
 
