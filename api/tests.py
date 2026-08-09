@@ -437,6 +437,44 @@ class QuestionMetadataTests(APITestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data['error'], 'Describe the other question source')
 
+    def test_bulk_update_changes_one_shared_field(self):
+        questions = [
+            Question.objects.create(
+                **self.draft('Transitions'), source=Question.SOURCE_SAT_QUESTION_BANK,
+            )
+            for _ in range(2)
+        ]
+
+        response = self.client.post(reverse('bulk_update_questions'), {
+            'question_ids': [question.id for question in questions],
+            'field': 'source',
+            'value': Question.SOURCE_AI_GENERATED,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['updated'], 2)
+        self.assertFalse(Question.objects.filter(id__in=[q.id for q in questions]).exclude(
+            source=Question.SOURCE_AI_GENERATED,
+        ).exists())
+
+    def test_bulk_update_rejects_mixed_current_values(self):
+        sat = Question.objects.create(
+            **self.draft('Transitions'), source=Question.SOURCE_SAT_QUESTION_BANK,
+        )
+        ai = Question.objects.create(
+            **self.draft('Transitions'), source=Question.SOURCE_AI_GENERATED,
+        )
+
+        response = self.client.post(reverse('bulk_update_questions'), {
+            'question_ids': [sat.id, ai.id],
+            'field': 'source',
+            'value': Question.SOURCE_OTHER,
+            'source_other': 'Teacher-authored set',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('same current source', response.data['error'])
+
 
 def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):
     return {
