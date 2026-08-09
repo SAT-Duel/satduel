@@ -76,6 +76,17 @@ def practice_test_modules(request):
     return Response({'module': _summary(module)}, status=status.HTTP_201_CREATED)
 
 
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def practice_test_module_detail(request, module_id):
+    try:
+        module = PracticeTestModule.objects.get(id=module_id)
+    except PracticeTestModule.DoesNotExist:
+        return Response({'error': 'Module not found'}, status=status.HTTP_404_NOT_FOUND)
+    return Response({'module': {**_summary(module, _assigned_modules()), 'questions': module.questions}})
+
+
 MODULE_FIELDS = {
     'english_a': ('english', 'A'),
     'english_b': ('english', 'B'),

@@ -124,7 +124,7 @@ def _history_summary(attempt):
         'reading_writing_score': attempt.reading_writing_score,
         'math_score': attempt.math_score,
         'correct': details.get('correct', 0),
-        'total': details.get('total', 90),
+        'total': details.get('total', 98),
         'created_at': attempt.completed_at.isoformat() if attempt.completed_at else attempt.updated_at.isoformat(),
     }
 
@@ -313,7 +313,6 @@ def _review_question(phase, question, answers):
         'user_answer': response,
         'correct': answer_is_correct(question, response),
         'explanation': question.get('explanation', ''),
-        'is_pretest': question.get('is_pretest', False),
     }
 
 

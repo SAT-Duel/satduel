@@ -140,6 +140,9 @@ urlpatterns = [
          name='practice_test_generation_prompt'),
     path('admin/practice-test-generation/modules/', practice_test_generation_views.practice_test_modules,
          name='practice_test_generation_modules'),
+    path('admin/practice-test-generation/modules/<int:module_id>/',
+         practice_test_generation_views.practice_test_module_detail,
+         name='practice_test_generation_module_detail'),
     path('admin/practice-tests/', practice_test_generation_views.practice_tests,
          name='admin_practice_tests'),
 

@@ -49,14 +49,11 @@ def _probability(theta, question):
 
 def estimate_ability(question_responses):
     """Return a Bayesian EAP theta and central 68% credible interval."""
-    operational = [
-        (question, response) for question, response in question_responses
-        if not question.get('is_pretest', False)
-    ]
+    scored = list(question_responses)
     log_weights = []
     for theta in THETA_GRID:
         log_likelihood = -0.5 * (theta / PRIOR_SD) ** 2
-        for question, response in operational:
+        for question, response in scored:
             probability = min(max(_probability(theta, question), 1e-9), 1 - 1e-9)
             likelihood = probability if answer_is_correct(question, response) else 1.0 - probability
             log_likelihood += math.log(max(likelihood, 1e-12))
@@ -80,8 +77,8 @@ def estimate_ability(question_responses):
         'theta': round(mean, 4),
         'theta_low': round(quantile(0.16), 4),
         'theta_high': round(quantile(0.84), 4),
-        'correct': sum(answer_is_correct(question, response) for question, response in operational),
-        'total': len(operational),
+        'correct': sum(answer_is_correct(question, response) for question, response in scored),
+        'total': len(scored),
     }
 
 

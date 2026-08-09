@@ -63,12 +63,12 @@ class FixedScoringTests(APITestCase):
         self.assertEqual(select_second_module(correct), 'C')
         self.assertEqual(select_second_module(incorrect), 'B')
 
-    def test_pretest_items_do_not_affect_score_or_counts(self):
-        operational = question()
-        pretest = question(pretest=True, order=2)
-        without_pretest = estimate_ability([(operational, 'A')])
-        with_pretest = estimate_ability([(operational, 'A'), (pretest, 'B')])
-        self.assertEqual(with_pretest, without_pretest)
+    def test_every_item_counts_even_with_a_legacy_pretest_flag(self):
+        first = question()
+        legacy_flagged = question(pretest=True, order=2)
+        result = estimate_ability([(first, 'A'), (legacy_flagged, 'B')])
+        self.assertEqual(result['correct'], 1)
+        self.assertEqual(result['total'], 2)
 
 
 class PracticeTestCreatorTests(APITestCase):
