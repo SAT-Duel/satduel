@@ -21,6 +21,20 @@ DOMAIN_RANGES = {
     },
 }
 ENGLISH_DOMAIN_ORDER = list(DOMAIN_RANGES['english'])
+ENGLISH_SKILL_RANK = {
+    'Words in Context': 0,
+    'Text Structure and Purpose': 1,
+    'Cross-Text Connections': 2,
+    'Central Ideas and Details': 3,
+    'Command of Evidence': 4,
+    'Inferences': 5,
+    # College Board groups types within each domain except Standard English
+    # Conventions, so these two skills may be interleaved.
+    'Boundaries': 6,
+    'Form, Structure, and Sense': 6,
+    'Transitions': 7,
+    'Rhetorical Synthesis': 8,
+}
 ROUTE_GUIDANCE = {
     'A': (
         'Module 1 (routing): use a broad, centered mix of easy, medium, and hard '
@@ -81,8 +95,8 @@ def build_module_prompt(subject, route):
     count = QUESTION_COUNTS[subject]
     if subject == 'english':
         composition = """\
-Generate exactly 27 questions, including exactly 2 unscored pretest questions.
-Choose a fresh valid domain count vector; each count includes pretest items:
+Generate exactly 27 scored questions. Every question counts toward the score.
+Choose a fresh valid domain count vector:
 - Craft and Structure: 7-8
 - Information and Ideas: 6-7
 - Standard English Conventions: 6-7
@@ -99,8 +113,10 @@ Skill bounds and realistic order:
    roughly 2-3 of each, adjusted to the chosen domain total.
 3. Standard English Conventions next: use 3-4 Boundaries and 3-4 Form,
    Structure, and Sense questions, adjusted to the chosen domain total.
-4. Expression of Ideas last: use 2-3 Rhetorical Synthesis and 2-3 Transitions
-   questions, adjusted to the chosen domain total.
+4. Expression of Ideas last: use 2-3 Transitions followed by 2-3 Rhetorical
+   Synthesis questions, adjusted to the chosen domain total. Every Rhetorical
+   Synthesis (student-notes) question MUST come after every Transitions question
+   and MUST occupy the final positions in the module.
 
 Every item is four-option multiple choice. Use one passage or passage pair of
 25-150 words per question. Across the module, deliberately mix literature,
@@ -110,8 +126,8 @@ public-domain literature. Similar skills are grouped, and difficulty rises
 within each group, just as on the digital SAT."""
     else:
         composition = """\
-Generate exactly 22 questions, including exactly 2 unscored pretest questions.
-Choose a fresh valid domain count vector; each count includes pretest items:
+Generate exactly 22 scored questions. Every question counts toward the score.
+Choose a fresh valid domain count vector:
 - Algebra: 7-8
 - Advanced Math: 7-8
 - Problem-Solving and Data Analysis: 3-4
@@ -131,13 +147,13 @@ not AMC/AIME material. Never copy or lightly reskin a released item."""
 You are the lead assessment designer for a high-quality original digital SAT
 practice test. Build ONE complete {'Reading and Writing' if subject == 'english' else 'Math'}
 module that can be pasted into SAT Duel. This is a manual workflow: return the
-finished JSON only; do not call APIs, browse, or describe your process.
+finished JSON only; do not call APIs or describe your process. Browse only when
+needed to verify a real source, attribution, quotation, or factual claim.
 
 OFFICIAL STRUCTURE TO MIMIC
 - This module has {count} questions and is timed for {'32' if subject == 'english' else '35'} minutes.
-- The real digital SAT includes two pretest questions per module. Mark exactly
-  two with is_pretest=true, distribute them naturally, and make them
-  indistinguishable in quality and placement from scored questions.
+- Every question in this SAT Duel module is scored. Do not include or label any
+  question as a pretest, experimental, or unscored item.
 - The first module is a broad difficulty mix. The second module is still mixed,
   but has a lower or higher average based on routing performance.
 - All questions must be original, self-contained, unambiguous, solvable, and
@@ -160,11 +176,24 @@ COMPOSITION AND ORDER
 RANDOMIZATION WITHOUT DRIFT
 - Choose counts inside the stated ranges; do not reuse one fixed blueprint for
   every module. Vary neighboring skill counts, subject matter, representations,
-  correct-answer positions, and which two items are pretest.
+  and correct-answer positions.
 - Do not repeat a setup, passage topic, equation template, named researcher, or
   distractor pattern within this module.
 - Balance multiple-choice keys A/B/C/D so the largest and smallest counts differ
   by no more than 2. Never use the same key more than 3 times consecutively.
+
+SOURCE INTEGRITY
+- Any named author, title, publication, researcher, study, institution, date,
+  quotation, or factual source attribution MUST be real, accurate, and
+  independently verifiable. Never invent a source, citation, or quotation.
+- If a passage says it is adapted from a work, use a real public-domain work
+  with accurate attribution and faithful wording. Do not copy released SAT
+  questions or copyrighted modern passages.
+- If browsing or reference tools are available, use them only to verify source
+  facts before drafting. If verification is unavailable, write an original,
+  unattributed passage and remove claims that imply a real source.
+- Rhetorical Synthesis notes that name people, studies, works, institutions, or
+  statistics must likewise use accurate, verifiable facts.
 
 {_renderer_rules(subject)}
 
@@ -180,8 +209,7 @@ Every object must contain:
   "answer": "A" | "B" | "C" | "D" for multiple choice, or one canonical numeric answer for student-produced response,
   "difficulty": 1 | 2 | 3 | 4 | 5,
   "question_type": "one exact skill name from the guide below",
-  "explanation": "worked proof of the answer plus why each distractor fails",
-  "is_pretest": false
+  "explanation": "worked proof of the answer plus why each distractor fails"
 }}
 For student-produced response, set all four choice fields to empty strings and
 put the canonical accepted response in "answer". Reading and Writing may not
@@ -190,8 +218,8 @@ use student-produced response. Order values must be consecutive 1 through
 
 FINAL QUALITY CONTROL BEFORE YOU ANSWER
 1. Solve every question independently; confirm the key is unique and accurate.
-2. Verify exact question count, exactly two pretest flags, domain/skill bounds,
-   route difficulty average, response-format count, and presentation order.
+2. Verify exact question count, domain/skill bounds, route difficulty average,
+   response-format count, and presentation order. Confirm every item is scored.
 3. Verify every question_type exactly matches a skill heading below.
 4. Scan for accidental copied phrasing, repeated templates, ambiguous choices,
    broken markup, fake factual claims, and answer-key imbalance; repair all.
@@ -227,8 +255,8 @@ def validate_module_questions(questions, subject, route):
             raise ValueError(f'Question {index} has an invalid response type')
         if subject == 'english' and response_type != 'multiple_choice':
             raise ValueError('Reading and Writing questions must be multiple choice')
-        if not isinstance(raw.get('is_pretest'), bool):
-            raise ValueError(f'Question {index} must set is_pretest to true or false')
+        if raw.get('is_pretest') is True:
+            raise ValueError('Pretest questions are not supported; every question is scored')
 
         text = str(raw.get('question', '')).strip()
         explanation = str(raw.get('explanation', '')).strip()
@@ -252,14 +280,11 @@ def validate_module_questions(questions, subject, route):
             'difficulty': difficulty,
             'question_type': question_type,
             'explanation': explanation,
-            'is_pretest': raw['is_pretest'],
+            'is_pretest': False,
         })
 
     if len({q['question'] for q in normalized}) != expected:
         raise ValueError('Every question in the module must be unique')
-    if sum(q['is_pretest'] for q in normalized) != 2:
-        raise ValueError('A module must contain exactly two pretest questions')
-
     domain_counts = Counter(generation.SKILL_INDEX[q['question_type']][0]['name'] for q in normalized)
     for domain, (minimum, maximum) in DOMAIN_RANGES[subject].items():
         if not minimum <= domain_counts[domain] <= maximum:
@@ -290,6 +315,12 @@ def validate_module_questions(questions, subject, route):
         vocab_count = sum(q['question_type'] == 'Words in Context' for q in normalized)
         if vocab_count not in (3, 4) or any(q['question_type'] != 'Words in Context' for q in normalized[:vocab_count]):
             raise ValueError('Reading and Writing modules must begin with 3-4 Words in Context questions')
+        skill_order = [ENGLISH_SKILL_RANK[q['question_type']] for q in normalized]
+        if skill_order != sorted(skill_order):
+            raise ValueError(
+                'Reading and Writing skills must follow official grouped order, with '
+                'Transitions before final Rhetorical Synthesis questions'
+            )
 
     key_counts = Counter(q['answer'] for q in normalized if q['response_type'] == 'multiple_choice')
     counts = [key_counts[letter] for letter in 'ABCD']

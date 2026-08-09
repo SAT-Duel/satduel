@@ -510,7 +510,6 @@ class PracticeTestGenerationTests(APITestCase):
                 'difficulty': difficulty,
                 'question_type': question_type,
                 'explanation': 'A complete worked explanation.',
-                'is_pretest': order in {5, 18},
             })
         return questions
 
@@ -525,8 +524,8 @@ class PracticeTestGenerationTests(APITestCase):
             + ['Inferences'] * 3
             + ['Boundaries'] * 4
             + ['Form, Structure, and Sense'] * 3
-            + ['Rhetorical Synthesis'] * 3
             + ['Transitions'] * 3
+            + ['Rhetorical Synthesis'] * 3
         )
         questions = []
         for order, question_type in enumerate(types, start=1):
@@ -542,7 +541,6 @@ class PracticeTestGenerationTests(APITestCase):
                 'difficulty': 1 + ((order - 1) % 5),
                 'question_type': question_type,
                 'explanation': 'A complete text-based explanation.',
-                'is_pretest': order in {6, 20},
             })
         return questions
 
@@ -555,7 +553,19 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertIn('exactly 22', response.data['prompt'])
         self.assertIn('4-6 student-produced', response.data['prompt'])
         self.assertIn('Module 2 (higher-difficulty route)', response.data['prompt'])
+        self.assertIn('Every question counts toward the score', response.data['prompt'])
+        self.assertIn('Never invent a source, citation, or quotation', response.data['prompt'])
+        self.assertNotIn('is_pretest', response.data['prompt'])
         self.assertNotIn('ANTHROPIC_API_KEY', response.data['prompt'])
+
+    def test_reading_prompt_enforces_notes_questions_last(self):
+        response = self.client.post(reverse('practice_test_generation_prompt'), {
+            'subject': 'english', 'route': 'A',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Transitions followed by 2-3 Rhetorical', response.data['prompt'])
+        self.assertIn('MUST occupy the final positions', response.data['prompt'])
 
     def test_imports_module_without_adding_normal_questions(self):
         normal_count = Question.objects.count()
@@ -584,6 +594,34 @@ class PracticeTestGenerationTests(APITestCase):
         module = PracticeTestModule.objects.get()
         self.assertEqual(module.questions[0]['question_type'], 'Words in Context')
         self.assertEqual(module.question_count, 27)
+
+    def test_rejects_reading_module_with_notes_before_transitions(self):
+        questions = self.english_module_questions()
+        questions[-6:-3], questions[-3:] = questions[-3:], questions[-6:-3]
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Reading Route A - Wrong Order',
+            'subject': 'english',
+            'route': 'A',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Transitions before final Rhetorical Synthesis', response.data['error'])
+
+    def test_admin_can_view_saved_module_questions(self):
+        module = PracticeTestModule.objects.create(
+            name='Preview module',
+            subject='math',
+            route='A',
+            questions=self.math_module_questions(),
+            created_by=self.admin,
+        )
+
+        response = self.client.get(reverse('practice_test_generation_module_detail', args=[module.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['module']['name'], 'Preview module')
+        self.assertEqual(len(response.data['module']['questions']), 22)
 
     def test_rejects_incomplete_module(self):
         response = self.client.post(reverse('practice_test_generation_modules'), {

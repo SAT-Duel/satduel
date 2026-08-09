@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.utils import timezone
 import math
@@ -851,6 +852,115 @@ class PracticeTestModule(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class PracticeTest(models.Model):
+    """A published adaptive test assembled from six exclusive modules."""
+
+    name = models.CharField(max_length=120, unique=True)
+    english_a = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_a',
+    )
+    english_b = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_b',
+    )
+    english_c = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_c',
+    )
+    math_a = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_a',
+    )
+    math_b = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_b',
+    )
+    math_c = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_c',
+    )
+    active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_practice_tests',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def clean(self):
+        expected = {
+            'english_a': ('english', 'A'), 'english_b': ('english', 'B'), 'english_c': ('english', 'C'),
+            'math_a': ('math', 'A'), 'math_b': ('math', 'B'), 'math_c': ('math', 'C'),
+        }
+        module_ids = []
+        for field, signature in expected.items():
+            module = getattr(self, field, None)
+            if module is None:
+                continue
+            module_ids.append(module.id)
+            if (module.subject, module.route) != signature:
+                raise ValidationError({field: 'This module has the wrong subject or adaptive route.'})
+        if len(module_ids) != len(set(module_ids)):
+            raise ValidationError('Each practice-test slot must use a different module.')
+
+    def save(self, *args, **kwargs):
+        # Route validation plus the six OneToOne constraints guarantee that a
+        # module can never be reused by another valid test.
+        self.clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
+class PracticeTestAttempt(models.Model):
+    """A resumable adaptive test sitting, including its server-owned score."""
+
+    STATUS_ACTIVE = 'active'
+    STATUS_COMPLETED = 'completed'
+    STATUS_CHOICES = [(STATUS_ACTIVE, 'Active'), (STATUS_COMPLETED, 'Completed')]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='adaptive_test_attempts')
+    practice_test = models.ForeignKey(PracticeTest, on_delete=models.PROTECT, related_name='attempts')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_ACTIVE, db_index=True)
+    phase = models.CharField(max_length=20, default='english_a')
+    selected_routes = models.JSONField(default=dict)
+    answers = models.JSONField(default=dict)
+    review_questions = models.JSONField(default=dict)
+    remaining_seconds = models.JSONField(default=dict)
+    current_question = models.PositiveIntegerField(default=1)
+
+    reading_writing_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    math_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    total_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    score_details = models.JSONField(default=dict)
+    contributes_to_calibration = models.BooleanField(default=False, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'practice_test'],
+                condition=models.Q(status='active'),
+                name='one_active_attempt_per_user_test',
+            ),
+            models.UniqueConstraint(
+                fields=['user', 'practice_test'],
+                condition=models.Q(contributes_to_calibration=True),
+                name='one_calibration_attempt_per_user_test',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['practice_test', 'status']),
+            models.Index(fields=['user', 'status', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.user.username} - {self.practice_test.name} - {self.status}'
 
 
 class SavedQuestion(models.Model):

@@ -8,7 +8,7 @@ from allauth.socialaccount.models import SocialAccount
 from api.account_deletion import delete_user_account
 from api.models import PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTestModule, PracticeTypeStats, \
+    Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTest, PracticeTestAttempt, PracticeTestModule, PracticeTypeStats, \
     PartyRoom, PartyPlayer
 
 
@@ -148,6 +148,26 @@ class PracticeTestModuleAdmin(admin.ModelAdmin):
     list_filter = ['subject', 'route', 'created_at']
     search_fields = ['name', 'created_by__username']
     readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(PracticeTest)
+class PracticeTestAdmin(admin.ModelAdmin):
+    list_display = ['name', 'active', 'created_by', 'created_at']
+    list_filter = ['active', 'created_at']
+    search_fields = ['name', 'created_by__username']
+    readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(PracticeTestAttempt)
+class PracticeTestAttemptAdmin(admin.ModelAdmin):
+    list_display = [
+        'user', 'practice_test', 'status', 'total_score',
+        'contributes_to_calibration', 'created_at', 'completed_at',
+    ]
+    list_filter = ['status', 'contributes_to_calibration', 'practice_test']
+    search_fields = ['user__username', 'practice_test__name']
+    raw_id_fields = ['user', 'practice_test']
+    readonly_fields = ['created_at', 'updated_at', 'completed_at']
 
 
 @admin.register(PracticeStats)
