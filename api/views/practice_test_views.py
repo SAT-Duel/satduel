@@ -183,14 +183,25 @@ def start_test(request, test_id):
     return Response(_attempt_state(attempt), status=status.HTTP_200_OK)
 
 
-def _owned_active_attempt(request, attempt_id, lock=False):
+def _attempt_queryset(user, attempt_id, lock=False):
+    """Load an attempt with its modules, optionally locking the attempt row.
+
+    Single-subject tests leave the other subject's slots empty, so every
+    module foreign key is nullable and select_related() reaches them through
+    LEFT OUTER JOINs. PostgreSQL refuses to apply FOR UPDATE to the nullable
+    side of an outer join, so the lock has to name the attempt row itself.
+    """
     query = PracticeTestAttempt.objects.select_related(
         'practice_test__english_a', 'practice_test__english_b', 'practice_test__english_c',
         'practice_test__math_a', 'practice_test__math_b', 'practice_test__math_c',
-    ).filter(id=attempt_id, user=request.user)
+    ).filter(id=attempt_id, user=user)
     if lock:
-        query = query.select_for_update()
-    return query.first()
+        query = query.select_for_update(of=('self',))
+    return query
+
+
+def _owned_active_attempt(request, attempt_id, lock=False):
+    return _attempt_queryset(request.user, attempt_id, lock=lock).first()
 
 
 @api_view(['GET', 'PATCH'])
