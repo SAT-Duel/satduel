@@ -175,6 +175,33 @@ class PracticeTestAttemptTests(APITestCase):
         self.assertFalse(PracticeTestAttempt.objects.filter(id=attempt_id).exists())
         self.assertEqual(restarted.data['answers'], {})
 
+    def test_blank_modules_submit_and_count_every_question_as_incorrect(self):
+        test = create_subject_test(self.user, 'english', 'blank')
+        start = self.client.post(reverse('adaptive_test_start', args=[test.id]), {}, format='json')
+        first = self.client.post(
+            reverse('adaptive_test_finish_module', args=[start.data['attempt_id']]),
+            {
+                'answers': {'1': None},
+                'remaining_seconds': 100,
+                'current_question': 2,
+            },
+            format='json',
+        )
+
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data['phase'], 'english_b')
+        self.assertEqual(first.data['subject'], 'english')
+        final = self.client.post(
+            reverse('adaptive_test_finish_module', args=[start.data['attempt_id']]),
+            {'answers': {}, 'remaining_seconds': 100, 'current_question': 2},
+            format='json',
+        )
+        self.assertTrue(final.data['completed'])
+        attempt = PracticeTestAttempt.objects.get(id=start.data['attempt_id'])
+        self.assertEqual(attempt.answers['english_a'], {})
+        self.assertEqual(attempt.score_details['correct'], 0)
+        self.assertEqual(attempt.score_details['total'], 2)
+
     def test_only_first_completed_sitting_contributes_to_calibration(self):
         first = self.complete_sitting()
         self.assertTrue(first.contributes_to_calibration)

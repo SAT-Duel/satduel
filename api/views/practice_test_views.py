@@ -88,6 +88,7 @@ def _attempt_state(attempt):
         'phase': attempt.phase,
         'eyebrow': route_label,
         'title': subject_label,
+        'subject': module.subject,
         'status_label': 'Adaptive practice test',
         'questions': [_public_question(question) for question in module.questions],
         'answers': attempt.answers.get(attempt.phase, {}),
