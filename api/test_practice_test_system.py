@@ -1,10 +1,14 @@
+from unittest import mock
+
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.db import connection, transaction
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from api.models import PracticeTest, PracticeTestAttempt, PracticeTestModule
 from api.practice_test_scoring import estimate_ability, select_second_module
+from api.views.practice_test_views import _attempt_queryset
 
 
 def question(answer='A', difficulty=3, pretest=False, order=1):
@@ -201,6 +205,23 @@ class PracticeTestAttemptTests(APITestCase):
         self.assertEqual(attempt.answers['english_a'], {})
         self.assertEqual(attempt.score_details['correct'], 0)
         self.assertEqual(attempt.score_details['total'], 2)
+
+    def test_locking_an_attempt_leaves_the_nullable_module_joins_unlocked(self):
+        """PostgreSQL rejects FOR UPDATE against the nullable side of an outer join.
+
+        Every module slot is nullable, so select_related() reaches the modules
+        through LEFT OUTER JOINs and a bare FOR UPDATE makes finish-module and
+        restart fail in production. SQLite drops the clause entirely, so this
+        has to inspect the SQL a locking backend would receive.
+        """
+        query = _attempt_queryset(self.user, 1, lock=True)
+        with mock.patch.object(connection.features, 'has_select_for_update', True), \
+                mock.patch.object(connection.features, 'has_select_for_update_of', True), \
+                transaction.atomic():
+            sql, _ = query.query.get_compiler(using='default').as_sql()
+
+        self.assertIn('LEFT OUTER JOIN', sql)
+        self.assertEqual(sql[sql.index('FOR UPDATE'):], 'FOR UPDATE OF "api_practicetestattempt"')
 
     def test_only_first_completed_sitting_contributes_to_calibration(self):
         first = self.complete_sitting()
