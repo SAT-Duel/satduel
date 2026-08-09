@@ -855,26 +855,47 @@ class PracticeTestModule(models.Model):
 
 
 class PracticeTest(models.Model):
-    """A published adaptive test assembled from six exclusive modules."""
+    """A published adaptive test assembled from exclusive A/B/C modules."""
+
+    TYPE_FULL = 'full'
+    TYPE_ENGLISH = 'english'
+    TYPE_MATH = 'math'
+    TYPE_CHOICES = [
+        (TYPE_FULL, 'Full SAT'),
+        (TYPE_ENGLISH, 'Reading and Writing only'),
+        (TYPE_MATH, 'Math only'),
+    ]
+    TYPE_SUBJECTS = {
+        TYPE_FULL: ('english', 'math'),
+        TYPE_ENGLISH: ('english',),
+        TYPE_MATH: ('math',),
+    }
 
     name = models.CharField(max_length=120, unique=True)
+    test_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_FULL, db_index=True)
     english_a = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_a',
+        null=True, blank=True,
     )
     english_b = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_b',
+        null=True, blank=True,
     )
     english_c = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_c',
+        null=True, blank=True,
     )
     math_a = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_a',
+        null=True, blank=True,
     )
     math_b = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_b',
+        null=True, blank=True,
     )
     math_c = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_c',
+        null=True, blank=True,
     )
     active = models.BooleanField(default=True, db_index=True)
     created_by = models.ForeignKey(
@@ -892,9 +913,17 @@ class PracticeTest(models.Model):
             'english_a': ('english', 'A'), 'english_b': ('english', 'B'), 'english_c': ('english', 'C'),
             'math_a': ('math', 'A'), 'math_b': ('math', 'B'), 'math_c': ('math', 'C'),
         }
+        included_subjects = self.TYPE_SUBJECTS.get(self.test_type)
+        if not included_subjects:
+            raise ValidationError({'test_type': 'Choose a valid practice-test type.'})
         module_ids = []
         for field, signature in expected.items():
             module = getattr(self, field, None)
+            required = signature[0] in included_subjects
+            if required and module is None:
+                raise ValidationError({field: 'This module is required for the selected test type.'})
+            if not required and module is not None:
+                raise ValidationError({field: 'This module must be empty for the selected test type.'})
             if module is None:
                 continue
             module_ids.append(module.id)
@@ -904,10 +933,30 @@ class PracticeTest(models.Model):
             raise ValidationError('Each practice-test slot must use a different module.')
 
     def save(self, *args, **kwargs):
-        # Route validation plus the six OneToOne constraints guarantee that a
+        # Route validation plus the OneToOne constraints guarantee that a
         # module can never be reused by another valid test.
         self.clean()
         return super().save(*args, **kwargs)
+
+    @property
+    def included_subjects(self):
+        return self.TYPE_SUBJECTS[self.test_type]
+
+    @property
+    def delivered_question_count(self):
+        return sum(
+            getattr(self, f'{subject}_a').question_count
+            + max(getattr(self, f'{subject}_b').question_count, getattr(self, f'{subject}_c').question_count)
+            for subject in self.included_subjects
+        )
+
+    @property
+    def duration_minutes(self):
+        return sum({'english': 64, 'math': 70}[subject] for subject in self.included_subjects)
+
+    @property
+    def maximum_score(self):
+        return 1600 if self.test_type == self.TYPE_FULL else 800
 
     def __str__(self):
         return self.name

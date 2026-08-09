@@ -46,6 +46,16 @@ def create_test(user, suffix='1'):
     )
 
 
+def create_subject_test(user, subject, suffix):
+    modules = create_modules(user, suffix)
+    return PracticeTest.objects.create(
+        name=f'{subject.title()} Practice Test {suffix}',
+        test_type=subject,
+        created_by=user,
+        **{field: module for field, module in modules.items() if field.startswith(subject)},
+    )
+
+
 class FixedScoringTests(APITestCase):
     def test_difficulty_changes_evidence_in_the_expected_direction(self):
         easy = question(difficulty=1)
@@ -95,6 +105,21 @@ class PracticeTestCreatorTests(APITestCase):
         modules['math_a'] = modules['english_a']
         with self.assertRaises(ValidationError):
             PracticeTest.objects.create(name='Invalid form', created_by=self.admin, **modules)
+
+    def test_admin_can_create_an_english_only_test(self):
+        modules = create_modules(self.admin, suffix='english-only')
+        response = self.client.post(reverse('admin_practice_tests'), {
+            'name': 'English Form',
+            'test_type': 'english',
+            **{field: module.id for field, module in modules.items() if field.startswith('english')},
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        test = PracticeTest.objects.get(name='English Form')
+        self.assertEqual(test.test_type, PracticeTest.TYPE_ENGLISH)
+        self.assertIsNone(test.math_a)
+        self.assertEqual(response.data['test']['maximum_score'], 800)
+        self.assertEqual(response.data['test']['question_count'], 2)
 
 
 class PracticeTestAttemptTests(APITestCase):
@@ -174,3 +199,41 @@ class PracticeTestAttemptTests(APITestCase):
         result = self.client.get(reverse('adaptive_test_result', args=[attempt.id]))
         self.assertEqual(result.status_code, 200)
         self.assertIn('answer', result.data['questions'][0])
+
+    def test_math_only_test_starts_with_math_and_scores_out_of_800(self):
+        test = create_subject_test(self.user, 'math', 'math-only')
+        start = self.client.post(reverse('adaptive_test_start', args=[test.id]), {}, format='json')
+        self.assertEqual(start.data['phase'], 'math_a')
+
+        second = self.finish(start.data['attempt_id'], 'A')
+        self.assertEqual(second.data['phase'], 'math_c')
+        final = self.finish(start.data['attempt_id'], 'A')
+        self.assertTrue(final.data['completed'])
+
+        attempt = PracticeTestAttempt.objects.get(id=start.data['attempt_id'])
+        self.assertIsNone(attempt.reading_writing_score)
+        self.assertEqual(attempt.total_score, attempt.math_score)
+        self.assertEqual(attempt.score_details['total'], 2)
+        result = self.client.get(reverse('adaptive_test_result', args=[attempt.id]))
+        self.assertEqual(result.data['test_type'], 'math')
+        self.assertEqual(result.data['maximum_score'], 800)
+        self.assertEqual(len(result.data['questions']), 2)
+        self.assertEqual(result.data['selected_routes'], {'math': 'C'})
+        listing = self.client.get(reverse('adaptive_practice_tests'))
+        test_summary = next(item for item in listing.data['tests'] if item['id'] == test.id)
+        self.assertEqual(test_summary['question_count'], 2)
+        self.assertEqual(test_summary['maximum_score'], 800)
+        self.assertEqual(listing.data['history']['results'][0]['test_type'], 'math')
+        self.assertNotIn('average_score', listing.data['history'])
+
+    def test_english_only_test_completes_after_its_second_module(self):
+        test = create_subject_test(self.user, 'english', 'english-only')
+        start = self.client.post(reverse('adaptive_test_start', args=[test.id]), {}, format='json')
+        second = self.finish(start.data['attempt_id'], 'A')
+        self.assertEqual(second.data['phase'], 'english_c')
+        final = self.finish(start.data['attempt_id'], 'A')
+        self.assertTrue(final.data['completed'])
+
+        attempt = PracticeTestAttempt.objects.get(id=start.data['attempt_id'])
+        self.assertIsNone(attempt.math_score)
+        self.assertEqual(attempt.total_score, attempt.reading_writing_score)
