@@ -987,8 +987,10 @@ class PracticeTestAttempt(models.Model):
     selected_routes = models.JSONField(default=dict)
     answers = models.JSONField(default=dict)
     review_questions = models.JSONField(default=dict)
+    annotations = models.JSONField(default=dict)
     remaining_seconds = models.JSONField(default=dict)
     current_question = models.PositiveIntegerField(default=1)
+    break_started_at = models.DateTimeField(null=True, blank=True)
 
     reading_writing_score = models.PositiveSmallIntegerField(null=True, blank=True)
     math_score = models.PositiveSmallIntegerField(null=True, blank=True)
