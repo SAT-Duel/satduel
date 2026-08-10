@@ -7,7 +7,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from api.models import PracticeTest, PracticeTestAttempt, PracticeTestModule
-from api.practice_test_scoring import estimate_ability, select_second_module
+from api.practice_test_scoring import answer_is_correct, estimate_ability, select_second_module
 from api.views.practice_test_views import _attempt_queryset
 
 
@@ -61,6 +61,31 @@ def create_subject_test(user, subject, suffix):
 
 
 class FixedScoringTests(APITestCase):
+    def test_student_responses_follow_bluebook_entry_rules(self):
+        produced = {**question(), 'response_type': 'student_produced', 'answer': '2/3'}
+        for accepted in ('2/3', '4/6', '.6666', '.6667', '0.666', '0.667'):
+            self.assertTrue(answer_is_correct(produced, accepted), accepted)
+        for rejected in ('.66', '.67', '0.66', '0.67', '66%', '0,667'):
+            self.assertFalse(answer_is_correct(produced, rejected), rejected)
+
+        produced['answer'] = '-1/3'
+        for accepted in ('-1/3', '-.3333', '-0.333'):
+            self.assertTrue(answer_is_correct(produced, accepted), accepted)
+        for rejected in ('-.33', '-0.33'):
+            self.assertFalse(answer_is_correct(produced, rejected), rejected)
+
+        produced['answer'] = '3.5'
+        for accepted in ('3.5', '3.50', '7/2'):
+            self.assertTrue(answer_is_correct(produced, accepted), accepted)
+        for rejected in ('31/2', '3 1/2'):
+            self.assertFalse(answer_is_correct(produced, rejected), rejected)
+
+    def test_student_response_can_have_multiple_distinct_answers(self):
+        produced = {**question(), 'response_type': 'student_produced', 'answer': '2;3'}
+        self.assertTrue(answer_is_correct(produced, '2'))
+        self.assertTrue(answer_is_correct(produced, '3.0'))
+        self.assertFalse(answer_is_correct(produced, '4'))
+
     def test_difficulty_changes_evidence_in_the_expected_direction(self):
         easy = question(difficulty=1)
         hard = question(difficulty=5)

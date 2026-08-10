@@ -610,6 +610,9 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('exactly 22', response.data['prompt'])
         self.assertIn('4-6 student-produced', response.data['prompt'])
+        self.assertIn('5 characters for a positive answer', response.data['prompt'])
+        self.assertIn('separated by semicolons', response.data['prompt'])
+        self.assertIn('accepts .6666, .6667, 0.666, or 0.667', response.data['prompt'])
         self.assertIn('Module 2 (higher-difficulty route)', response.data['prompt'])
         self.assertIn('Every question counts toward the score', response.data['prompt'])
         self.assertIn('Never invent a source, citation, or quotation', response.data['prompt'])
@@ -652,6 +655,20 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertEqual(module.question_count, 22)
         self.assertEqual(module.questions[0]['order'], 1)
         self.assertEqual(Question.objects.count(), normal_count)
+
+    def test_rejects_invalid_student_response_answer_format(self):
+        questions = self.math_module_questions()
+        questions[3]['answer'] = '3 1/2'
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Math Route A - Invalid response',
+            'subject': 'math',
+            'route': 'A',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('valid Bluebook numeric entry formats', response.data['error'])
 
     def test_imports_reading_module_in_official_domain_order(self):
         response = self.client.post(reverse('practice_test_generation_modules'), {
