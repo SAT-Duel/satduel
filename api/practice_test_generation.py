@@ -3,6 +3,7 @@
 from collections import Counter
 
 from api import generation
+from api.practice_test_scoring import student_response_is_valid
 
 
 QUESTION_COUNTS = {'english': 27, 'math': 22}
@@ -141,7 +142,22 @@ using accessible science, social-science, or real-world settings that require
 no outside knowledge. Arrange the ENTIRE module from easiest to hardest,
 regardless of domain or response format. Calculator use is allowed throughout.
 Stay strictly within SAT scope: difficulty 5 is the hardest authentic SAT item,
-not AMC/AIME material. Never copy or lightly reskin a released item."""
+not AMC/AIME material. Never copy or lightly reskin a released item.
+
+Student-produced response answer rules:
+- The response must be numeric and must fit the Bluebook entry space: at most
+  5 characters for a positive answer or 6 including a negative sign.
+- Use an integer, terminating decimal, or improper fraction as the exact answer.
+  Never use a mixed number, percent sign, comma, currency symbol, or plus sign.
+- If more than one mathematically distinct value is correct, put every credited
+  exact value in "answer", separated by semicolons (example: "2;3"). The
+  student may enter any one of them.
+- Do not enumerate equivalent spellings such as "3.5;3.50;7/2". SAT Duel grades
+  equivalent fractions and decimals automatically. It also accepts a repeating
+  decimal truncated or rounded using every available entry character (for
+  example, 2/3 accepts .6666, .6667, 0.666, or 0.667).
+- Design the problem so at least one exact fraction/decimal or permitted rounded
+  decimal fits the entry space."""
 
     return f"""\
 You are the lead assessment designer for a high-quality original digital SAT
@@ -157,7 +173,7 @@ OFFICIAL STRUCTURE TO MIMIC
 - The first module is a broad difficulty mix. The second module is still mixed,
   but has a lower or higher average based on routing performance.
 - All questions must be original, self-contained, unambiguous, solvable, and
-  have exactly one credited response.
+  have one unambiguous credited answer set.
 
 SELECTED ADAPTIVE ROUTE
 {ROUTE_GUIDANCE[route]}
@@ -206,13 +222,13 @@ Every object must contain:
   "response_type": "multiple_choice" or "student_produced",
   "question": "complete rendered stem",
   "choice_a": "...", "choice_b": "...", "choice_c": "...", "choice_d": "...",
-  "answer": "A" | "B" | "C" | "D" for multiple choice, or one canonical numeric answer for student-produced response,
+  "answer": "A" | "B" | "C" | "D" for multiple choice, or exact numeric answer value(s) separated by semicolons for student-produced response,
   "difficulty": 1 | 2 | 3 | 4 | 5,
   "question_type": "one exact skill name from the guide below",
   "explanation": "worked proof of the answer plus why each distractor fails"
 }}
 For student-produced response, set all four choice fields to empty strings and
-put the canonical accepted response in "answer". Reading and Writing may not
+follow every student-response answer rule above. Reading and Writing may not
 use student-produced response. Order values must be consecutive 1 through
 {count}. JSON strings must escape backslashes and may not contain raw newlines.
 
@@ -270,6 +286,13 @@ def validate_module_questions(questions, subject, route):
                 raise ValueError(f'Question {index} needs four choices and an A-D answer')
         elif any(choices):
             raise ValueError(f'Question {index} student-produced response choices must be blank')
+        else:
+            accepted = [item.strip() for item in answer.split(';') if item.strip()]
+            if not accepted or len(accepted) > 10 or any(not student_response_is_valid(item) for item in accepted):
+                raise ValueError(
+                    f'Question {index} student-produced answers must use valid Bluebook numeric entry formats'
+                )
+            answer = ';'.join(accepted)
 
         normalized.append({
             'order': index,
