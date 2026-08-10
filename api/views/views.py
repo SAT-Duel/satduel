@@ -6,8 +6,10 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from api import generation
 from api.views.serializers import QuestionSerializer, QuestionAdminSerializer
 from django.db import models
+from django.db import transaction
 from ..models import Announcement, Question, QuestionReport
 from rest_framework import status
 
@@ -85,6 +87,16 @@ def manage_announcement(request):
     return Response(_announcement_payload(announcement))
 
 
+def question_source_values(data, default):
+    source = data.get('source', default)
+    source_other = str(data.get('source_other', '')).strip()
+    if source not in dict(Question.SOURCE_CHOICES):
+        raise ValueError('Invalid question source')
+    if source == Question.SOURCE_OTHER and not source_other:
+        raise ValueError('Describe the other question source')
+    return source, source_other
+
+
 @api_view(['GET'])
 def get_random_questions(request):
     try:
@@ -140,6 +152,10 @@ def list_questions(request):
 def edit_question(request, question_id):
     question = get_object_or_404(Question, id=question_id)
     data = request.data
+    try:
+        source, source_other = question_source_values(data, question.source)
+    except ValueError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     question.question = data['question']
     question.choice_a = data['choice_a']
     question.choice_b = data['choice_b']
@@ -148,6 +164,8 @@ def edit_question(request, question_id):
     question.answer = data['answer']
     question.difficulty = data['difficulty']
     question.question_type = data['question_type']
+    question.source = source
+    question.source_other = source_other
     question.explanation = data['explanation']
     question.save()
     return JsonResponse({'status': 'success'})
@@ -173,6 +191,10 @@ def delete_question(request, question_id):
 @permission_classes([IsAdminUser])
 def create_question(request):
     data = request.data
+    try:
+        source, source_other = question_source_values(data, Question.SOURCE_SAT_QUESTION_BANK)
+    except ValueError as exc:
+        return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
     question = Question.objects.create(
         question=data['question'],
         choice_a=data['choice_a'],
@@ -182,10 +204,68 @@ def create_question(request):
         answer=data['answer'],
         difficulty=data['difficulty'],
         question_type=data['question_type'],
+        source=source,
+        source_other=source_other,
         explanation=data['explanation']
     )
     question.save()
     return JsonResponse({'status': 'success'})
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def bulk_update_questions(request):
+    """Change one shared field across a staff-selected question set."""
+    question_ids = request.data.get('question_ids')
+    field = request.data.get('field')
+    if not isinstance(question_ids, list) or not question_ids or len(question_ids) > 500:
+        return Response({'error': 'Select between 1 and 500 questions.'}, status=status.HTTP_400_BAD_REQUEST)
+    if any(not isinstance(question_id, int) for question_id in question_ids):
+        return Response({'error': 'Question IDs must be integers.'}, status=status.HTTP_400_BAD_REQUEST)
+    if field not in {'question_type', 'source', 'difficulty'}:
+        return Response({'error': 'Choose one editable field.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    ids = set(question_ids)
+    questions = Question.objects.filter(id__in=ids)
+    if questions.count() != len(ids):
+        return Response({'error': 'One or more selected questions no longer exist.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    current_values = questions.values_list(
+        *(['source', 'source_other'] if field == 'source' else [field])
+    ).distinct()
+    if current_values.count() != 1:
+        return Response(
+            {'error': f'Selected questions must share the same current {field.replace("_", " ")}.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    updates = {}
+    if field == 'question_type':
+        value = generation.normalize_question_type(request.data.get('value'))
+        if value not in generation.SKILL_INDEX:
+            return Response({'error': 'Choose a valid question type.'}, status=status.HTTP_400_BAD_REQUEST)
+        updates['question_type'] = value
+    elif field == 'difficulty':
+        try:
+            value = int(request.data.get('value'))
+        except (TypeError, ValueError):
+            value = 0
+        if value not in range(1, 6):
+            return Response({'error': 'Difficulty must be between 1 and 5.'}, status=status.HTTP_400_BAD_REQUEST)
+        updates['difficulty'] = value
+    else:
+        source = request.data.get('value')
+        source_other = str(request.data.get('source_other', '')).strip()
+        if source not in dict(Question.SOURCE_CHOICES):
+            return Response({'error': 'Choose a valid question source.'}, status=status.HTTP_400_BAD_REQUEST)
+        if source == Question.SOURCE_OTHER and not source_other:
+            return Response({'error': 'Describe the other question source.'}, status=status.HTTP_400_BAD_REQUEST)
+        updates.update(source=source, source_other=source_other if source == Question.SOURCE_OTHER else '')
+
+    with transaction.atomic():
+        updated = questions.update(**updates)
+    return Response({'status': 'success', 'updated': updated})
 
 
 @api_view(['POST'])

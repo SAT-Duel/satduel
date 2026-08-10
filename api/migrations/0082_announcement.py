@@ -3,7 +3,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ('api', '0077_directmessage'),
+        ('api', '0081_practicetest_test_type_and_optional_subjects'),
     ]
 
     operations = [

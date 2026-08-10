@@ -1,4 +1,5 @@
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.utils import timezone
 import math
@@ -24,6 +25,15 @@ def default_duel_emotes():
 
 class Question(models.Model):
     """Model representing a learning question with multiple choice answers."""
+    SOURCE_SAT_QUESTION_BANK = 'sat_question_bank'
+    SOURCE_AI_GENERATED = 'ai_generated'
+    SOURCE_OTHER = 'other'
+    SOURCE_CHOICES = [
+        (SOURCE_SAT_QUESTION_BANK, 'SAT Question Bank'),
+        (SOURCE_AI_GENERATED, 'AI Generated'),
+        (SOURCE_OTHER, 'Other'),
+    ]
+
     question = models.TextField(null=False, blank=False)
     choice_a = models.CharField(max_length=1000)
     choice_b = models.CharField(max_length=1000)
@@ -32,6 +42,8 @@ class Question(models.Model):
     answer = models.CharField(max_length=1, choices=[('A', 'A'), ('B', 'B'), ('C', 'C'), ('D', 'D')])
     difficulty = models.IntegerField(choices=[(i, str(i)) for i in range(1, 6)], db_index=True)
     question_type = models.CharField(max_length=1000, null=True, blank=True, db_index=True)
+    source = models.CharField(max_length=32, choices=SOURCE_CHOICES, default=SOURCE_OTHER, db_index=True)
+    source_other = models.CharField(max_length=255, blank=True)
     explanation = models.TextField(null=True, blank=True)
     sp_elo_rating = models.IntegerField(default=0)
 
@@ -45,6 +57,11 @@ class Question(models.Model):
         return self.question
 
     def save(self, *args, **kwargs):
+        from api.generation import normalize_question_type
+        self.question_type = normalize_question_type(self.question_type)
+        if self.source != self.SOURCE_OTHER:
+            self.source_other = ''
+
         # If this is a newly created object with no Elo yet, initialize based on difficulty
         if self.pk is None and self.sp_elo_rating == 0:
             if self.difficulty == 1:
@@ -815,6 +832,195 @@ class PracticeTestResult(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.test_name} - {self.score}"
+
+
+class PracticeTestModule(models.Model):
+    """An isolated, generated SAT module and its private question set."""
+    SUBJECT_CHOICES = [('english', 'Reading and Writing'), ('math', 'Math')]
+    ROUTE_CHOICES = [
+        ('A', 'Module 1 (routing)'),
+        ('B', 'Module 2 (lower difficulty)'),
+        ('C', 'Module 2 (higher difficulty)'),
+    ]
+
+    name = models.CharField(max_length=120, unique=True)
+    subject = models.CharField(max_length=10, choices=SUBJECT_CHOICES)
+    route = models.CharField(max_length=1, choices=ROUTE_CHOICES)
+    questions = models.JSONField(default=list)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_practice_test_modules',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    @property
+    def question_count(self):
+        return len(self.questions)
+
+    def __str__(self):
+        return self.name
+
+
+class PracticeTest(models.Model):
+    """A published adaptive test assembled from exclusive A/B/C modules."""
+
+    TYPE_FULL = 'full'
+    TYPE_ENGLISH = 'english'
+    TYPE_MATH = 'math'
+    TYPE_CHOICES = [
+        (TYPE_FULL, 'Full SAT'),
+        (TYPE_ENGLISH, 'Reading and Writing only'),
+        (TYPE_MATH, 'Math only'),
+    ]
+    TYPE_SUBJECTS = {
+        TYPE_FULL: ('english', 'math'),
+        TYPE_ENGLISH: ('english',),
+        TYPE_MATH: ('math',),
+    }
+
+    name = models.CharField(max_length=120, unique=True)
+    test_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_FULL, db_index=True)
+    english_a = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_a',
+        null=True, blank=True,
+    )
+    english_b = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_b',
+        null=True, blank=True,
+    )
+    english_c = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_c',
+        null=True, blank=True,
+    )
+    math_a = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_a',
+        null=True, blank=True,
+    )
+    math_b = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_b',
+        null=True, blank=True,
+    )
+    math_c = models.OneToOneField(
+        PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_math_c',
+        null=True, blank=True,
+    )
+    active = models.BooleanField(default=True, db_index=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_practice_tests',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+    def clean(self):
+        expected = {
+            'english_a': ('english', 'A'), 'english_b': ('english', 'B'), 'english_c': ('english', 'C'),
+            'math_a': ('math', 'A'), 'math_b': ('math', 'B'), 'math_c': ('math', 'C'),
+        }
+        included_subjects = self.TYPE_SUBJECTS.get(self.test_type)
+        if not included_subjects:
+            raise ValidationError({'test_type': 'Choose a valid practice-test type.'})
+        module_ids = []
+        for field, signature in expected.items():
+            module = getattr(self, field, None)
+            required = signature[0] in included_subjects
+            if required and module is None:
+                raise ValidationError({field: 'This module is required for the selected test type.'})
+            if not required and module is not None:
+                raise ValidationError({field: 'This module must be empty for the selected test type.'})
+            if module is None:
+                continue
+            module_ids.append(module.id)
+            if (module.subject, module.route) != signature:
+                raise ValidationError({field: 'This module has the wrong subject or adaptive route.'})
+        if len(module_ids) != len(set(module_ids)):
+            raise ValidationError('Each practice-test slot must use a different module.')
+
+    def save(self, *args, **kwargs):
+        # Route validation plus the OneToOne constraints guarantee that a
+        # module can never be reused by another valid test.
+        self.clean()
+        return super().save(*args, **kwargs)
+
+    @property
+    def included_subjects(self):
+        return self.TYPE_SUBJECTS[self.test_type]
+
+    @property
+    def delivered_question_count(self):
+        return sum(
+            getattr(self, f'{subject}_a').question_count
+            + max(getattr(self, f'{subject}_b').question_count, getattr(self, f'{subject}_c').question_count)
+            for subject in self.included_subjects
+        )
+
+    @property
+    def duration_minutes(self):
+        return sum({'english': 64, 'math': 70}[subject] for subject in self.included_subjects)
+
+    @property
+    def maximum_score(self):
+        return 1600 if self.test_type == self.TYPE_FULL else 800
+
+    def __str__(self):
+        return self.name
+
+
+class PracticeTestAttempt(models.Model):
+    """A resumable adaptive test sitting, including its server-owned score."""
+
+    STATUS_ACTIVE = 'active'
+    STATUS_COMPLETED = 'completed'
+    STATUS_CHOICES = [(STATUS_ACTIVE, 'Active'), (STATUS_COMPLETED, 'Completed')]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='adaptive_test_attempts')
+    practice_test = models.ForeignKey(PracticeTest, on_delete=models.PROTECT, related_name='attempts')
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default=STATUS_ACTIVE, db_index=True)
+    phase = models.CharField(max_length=20, default='english_a')
+    selected_routes = models.JSONField(default=dict)
+    answers = models.JSONField(default=dict)
+    review_questions = models.JSONField(default=dict)
+    remaining_seconds = models.JSONField(default=dict)
+    current_question = models.PositiveIntegerField(default=1)
+
+    reading_writing_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    math_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    total_score = models.PositiveSmallIntegerField(null=True, blank=True)
+    score_details = models.JSONField(default=dict)
+    contributes_to_calibration = models.BooleanField(default=False, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'practice_test'],
+                condition=models.Q(status='active'),
+                name='one_active_attempt_per_user_test',
+            ),
+            models.UniqueConstraint(
+                fields=['user', 'practice_test'],
+                condition=models.Q(contributes_to_calibration=True),
+                name='one_calibration_attempt_per_user_test',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['practice_test', 'status']),
+            models.Index(fields=['user', 'status', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f'{self.user.username} - {self.practice_test.name} - {self.status}'
 
 
 class SavedQuestion(models.Model):

@@ -1,7 +1,7 @@
 from django.urls import path
 from api.views import views, user_views, tournaments_views, shop_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
-from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views
+from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views, practice_test_generation_views, practice_test_views
 from api.views import marketing_views
 from api.views import messaging_views
 from api.views import party_views
@@ -20,6 +20,7 @@ urlpatterns = [
     path('admin/question_reports/<int:report_id>/', views.delete_question_report, name='delete_question_report'),
     path('announcement/', views.active_announcement, name='active_announcement'),
     path('admin/announcement/', views.manage_announcement, name='manage_announcement'),
+    path('admin/questions/bulk_update/', views.bulk_update_questions, name='bulk_update_questions'),
 
     path('profile/', profile_views.profile_view, name='profile'),
     path('account/delete/', auth_views.delete_account, name='account_delete'),
@@ -115,6 +116,16 @@ urlpatterns = [
     # Full-length practice tests
     path('practice_test/save/', practice_views.save_test_result, name='save_test_result'),
     path('practice_test/history/', practice_views.test_history, name='practice_test_history'),
+    path('practice-tests/', practice_test_views.practice_tests, name='adaptive_practice_tests'),
+    path('practice-tests/<int:test_id>/start/', practice_test_views.start_test, name='adaptive_test_start'),
+    path('practice-tests/attempts/<int:attempt_id>/', practice_test_views.attempt_progress,
+         name='adaptive_test_progress'),
+    path('practice-tests/attempts/<int:attempt_id>/restart/', practice_test_views.restart_test,
+         name='adaptive_test_restart'),
+    path('practice-tests/attempts/<int:attempt_id>/finish-module/', practice_test_views.finish_module,
+         name='adaptive_test_finish_module'),
+    path('practice-tests/attempts/<int:attempt_id>/result/', practice_test_views.test_result,
+         name='adaptive_test_result'),
 
     # Billing
     path('billing/create_checkout_session/', billing_views.create_checkout_session, name='billing_create_checkout_session'),
@@ -127,6 +138,15 @@ urlpatterns = [
     path('admin/generation/taxonomy/', generation_views.generation_taxonomy, name='generation_taxonomy'),
     path('admin/generation/generate/', generation_views.generation_generate, name='generation_generate'),
     path('admin/generation/import/', generation_views.generation_import, name='generation_import'),
+    path('admin/practice-test-generation/prompt/', practice_test_generation_views.practice_test_prompt,
+         name='practice_test_generation_prompt'),
+    path('admin/practice-test-generation/modules/', practice_test_generation_views.practice_test_modules,
+         name='practice_test_generation_modules'),
+    path('admin/practice-test-generation/modules/<int:module_id>/',
+         practice_test_generation_views.practice_test_module_detail,
+         name='practice_test_generation_module_detail'),
+    path('admin/practice-tests/', practice_test_generation_views.practice_tests,
+         name='admin_practice_tests'),
 
     # Party Mode (Kahoot-style live rooms)
     path('party/create/', party_views.create_party, name='party_create'),

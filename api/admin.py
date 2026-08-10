@@ -8,7 +8,7 @@ from allauth.socialaccount.models import SocialAccount
 from api.account_deletion import delete_user_account
 from api.models import Announcement, PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTypeStats, \
+    Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTest, PracticeTestAttempt, PracticeTestModule, PracticeTypeStats, \
     PartyRoom, PartyPlayer
 
 
@@ -88,8 +88,8 @@ admin.site.register(User, UserAdmin)
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
-    list_display = ['id', 'question_type', 'difficulty', 'answer', 'sp_elo_rating']
-    list_filter = ['question_type', 'difficulty']
+    list_display = ['id', 'question_type', 'source', 'source_other', 'difficulty', 'answer', 'sp_elo_rating']
+    list_filter = ['question_type', 'source', 'difficulty']
     search_fields = ['question']
 
 
@@ -146,6 +146,34 @@ class PracticeAttemptAdmin(admin.ModelAdmin):
     list_filter = ['subject', 'correct', 'created_at']
     search_fields = ['user__username']
     raw_id_fields = ['user', 'question']
+
+
+@admin.register(PracticeTestModule)
+class PracticeTestModuleAdmin(admin.ModelAdmin):
+    list_display = ['name', 'subject', 'route', 'question_count', 'created_by', 'created_at']
+    list_filter = ['subject', 'route', 'created_at']
+    search_fields = ['name', 'created_by__username']
+    readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(PracticeTest)
+class PracticeTestAdmin(admin.ModelAdmin):
+    list_display = ['name', 'active', 'created_by', 'created_at']
+    list_filter = ['active', 'created_at']
+    search_fields = ['name', 'created_by__username']
+    readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(PracticeTestAttempt)
+class PracticeTestAttemptAdmin(admin.ModelAdmin):
+    list_display = [
+        'user', 'practice_test', 'status', 'total_score',
+        'contributes_to_calibration', 'created_at', 'completed_at',
+    ]
+    list_filter = ['status', 'contributes_to_calibration', 'practice_test']
+    search_fields = ['user__username', 'practice_test__name']
+    raw_id_fields = ['user', 'practice_test']
+    readonly_fields = ['created_at', 'updated_at', 'completed_at']
 
 
 @admin.register(PracticeStats)

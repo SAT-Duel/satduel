@@ -14,8 +14,8 @@ from rest_framework.test import APITestCase
 from allauth.account.models import EmailAddress
 from api import generation
 from api.models import (
-    Announcement, DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, Profile, Question,
-    QuestionReport, Ranking, Room, SATExamDate, SavedQuestion, TrackedQuestion,
+    Announcement, DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, PracticeTestModule,
+    Profile, Question, QuestionReport, Ranking, Room, SATExamDate, SavedQuestion, TrackedQuestion,
 )
 from api.views.auth_views import PendingRegistrationSerializer
 from api.views.serializers import QuestionSerializer
@@ -443,6 +443,267 @@ class QuestionSubjectFieldTests(APITestCase):
 
     def test_math_and_english_taxonomies_do_not_overlap(self):
         self.assertEqual(generation.MATH_SKILL_NAMES & generation.ENGLISH_SKILL_NAMES, set())
+
+
+class QuestionMetadataTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(username='question-admin', is_staff=True)
+        self.client.force_authenticate(user=self.admin)
+
+    @staticmethod
+    def draft(question_type='One-Variable Data: Distributions and Measures of Center and Spread'):
+        return {
+            'question': 'What is the answer?',
+            'choice_a': '1',
+            'choice_b': '2',
+            'choice_c': '3',
+            'choice_d': '4',
+            'answer': 'B',
+            'difficulty': 2,
+            'question_type': question_type,
+            'explanation': 'The answer is 2.',
+        }
+
+    def test_question_type_case_is_normalized_on_save(self):
+        question = Question.objects.create(**self.draft())
+
+        self.assertEqual(
+            question.question_type,
+            'One-variable data: distributions and measures of center and spread',
+        )
+        self.assertEqual(generation.subject_of_type(question.question_type), 'math')
+
+    def test_generator_import_applies_one_source_to_the_batch(self):
+        response = self.client.post(reverse('generation_import'), {
+            'questions': [self.draft(), self.draft('Two-Variable Data: Models and Scatterplots')],
+            'source': Question.SOURCE_OTHER,
+            'source_other': 'Teacher-authored set',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        questions = Question.objects.filter(id__in=response.data['created_ids'])
+        self.assertEqual(questions.count(), 2)
+        self.assertTrue(all(q.source == Question.SOURCE_OTHER for q in questions))
+        self.assertTrue(all(q.source_other == 'Teacher-authored set' for q in questions))
+
+    def test_other_source_requires_description(self):
+        response = self.client.post(reverse('generation_import'), {
+            'questions': [self.draft()],
+            'source': Question.SOURCE_OTHER,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['error'], 'Describe the other question source')
+
+    def test_bulk_update_changes_one_shared_field(self):
+        questions = [
+            Question.objects.create(
+                **self.draft('Transitions'), source=Question.SOURCE_SAT_QUESTION_BANK,
+            )
+            for _ in range(2)
+        ]
+
+        response = self.client.post(reverse('bulk_update_questions'), {
+            'question_ids': [question.id for question in questions],
+            'field': 'source',
+            'value': Question.SOURCE_AI_GENERATED,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['updated'], 2)
+        self.assertFalse(Question.objects.filter(id__in=[q.id for q in questions]).exclude(
+            source=Question.SOURCE_AI_GENERATED,
+        ).exists())
+
+    def test_bulk_update_rejects_mixed_current_values(self):
+        sat = Question.objects.create(
+            **self.draft('Transitions'), source=Question.SOURCE_SAT_QUESTION_BANK,
+        )
+        ai = Question.objects.create(
+            **self.draft('Transitions'), source=Question.SOURCE_AI_GENERATED,
+        )
+
+        response = self.client.post(reverse('bulk_update_questions'), {
+            'question_ids': [sat.id, ai.id],
+            'field': 'source',
+            'value': Question.SOURCE_OTHER,
+            'source_other': 'Teacher-authored set',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('same current source', response.data['error'])
+
+
+class PracticeTestGenerationTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(username='test-module-admin', is_staff=True)
+        self.client.force_authenticate(user=self.admin)
+
+    @staticmethod
+    def math_module_questions():
+        types = (
+            ['Linear functions'] * 7
+            + ['Nonlinear functions'] * 8
+            + ['Percentages'] * 4
+            + ['Circles'] * 3
+        )
+        difficulties = [1] * 3 + [2] * 4 + [3] * 7 + [4] * 6 + [5] * 2
+        spr_positions = {4, 8, 12, 16}
+        mc_index = 0
+        questions = []
+        for order, (question_type, difficulty) in enumerate(zip(types, difficulties), start=1):
+            student_produced = order in spr_positions
+            answer = '2' if student_produced else 'ABCD'[mc_index % 4]
+            if not student_produced:
+                mc_index += 1
+            questions.append({
+                'order': order,
+                'response_type': 'student_produced' if student_produced else 'multiple_choice',
+                'question': f'Original question {order}?',
+                'choice_a': '' if student_produced else '1',
+                'choice_b': '' if student_produced else '2',
+                'choice_c': '' if student_produced else '3',
+                'choice_d': '' if student_produced else '4',
+                'answer': answer,
+                'difficulty': difficulty,
+                'question_type': question_type,
+                'explanation': 'A complete worked explanation.',
+            })
+        return questions
+
+    @staticmethod
+    def english_module_questions():
+        types = (
+            ['Words in Context'] * 3
+            + ['Text Structure and Purpose'] * 2
+            + ['Cross-Text Connections'] * 2
+            + ['Central Ideas and Details'] * 2
+            + ['Command of Evidence'] * 2
+            + ['Inferences'] * 3
+            + ['Boundaries'] * 4
+            + ['Form, Structure, and Sense'] * 3
+            + ['Transitions'] * 3
+            + ['Rhetorical Synthesis'] * 3
+        )
+        questions = []
+        for order, question_type in enumerate(types, start=1):
+            questions.append({
+                'order': order,
+                'response_type': 'multiple_choice',
+                'question': f'Original English question {order}?',
+                'choice_a': 'First choice',
+                'choice_b': 'Second choice',
+                'choice_c': 'Third choice',
+                'choice_d': 'Fourth choice',
+                'answer': 'ABCD'[(order - 1) % 4],
+                'difficulty': 1 + ((order - 1) % 5),
+                'question_type': question_type,
+                'explanation': 'A complete text-based explanation.',
+            })
+        return questions
+
+    def test_builds_manual_full_module_prompt(self):
+        response = self.client.post(reverse('practice_test_generation_prompt'), {
+            'subject': 'math', 'route': 'C',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('exactly 22', response.data['prompt'])
+        self.assertIn('4-6 student-produced', response.data['prompt'])
+        self.assertIn('Module 2 (higher-difficulty route)', response.data['prompt'])
+        self.assertIn('Every question counts toward the score', response.data['prompt'])
+        self.assertIn('Never invent a source, citation, or quotation', response.data['prompt'])
+        self.assertNotIn('is_pretest', response.data['prompt'])
+        self.assertNotIn('ANTHROPIC_API_KEY', response.data['prompt'])
+
+    def test_reading_prompt_enforces_notes_questions_last(self):
+        response = self.client.post(reverse('practice_test_generation_prompt'), {
+            'subject': 'english', 'route': 'A',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('Transitions followed by 2-3 Rhetorical', response.data['prompt'])
+        self.assertIn('MUST occupy the final positions', response.data['prompt'])
+        self.assertIn(
+            '<source attribution line>\\n\\n<excerpt text>\\n\\n<question sentence>',
+            response.data['prompt'],
+        )
+
+    def test_regular_reading_prompt_enforces_source_spacing(self):
+        prompt = generation.build_prompt('Words in Context', 3, 2)
+
+        self.assertIn(
+            '<source attribution line>\\n\\n<excerpt text>\\n\\n<question sentence>',
+            prompt,
+        )
+        self.assertIn('The blank line between them is required', prompt)
+
+    def test_imports_module_without_adding_normal_questions(self):
+        normal_count = Question.objects.count()
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Math Route A - Form 1',
+            'subject': 'math',
+            'route': 'A',
+            'questions': self.math_module_questions(),
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        module = PracticeTestModule.objects.get()
+        self.assertEqual(module.question_count, 22)
+        self.assertEqual(module.questions[0]['order'], 1)
+        self.assertEqual(Question.objects.count(), normal_count)
+
+    def test_imports_reading_module_in_official_domain_order(self):
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Reading Route A - Form 1',
+            'subject': 'english',
+            'route': 'A',
+            'questions': self.english_module_questions(),
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        module = PracticeTestModule.objects.get()
+        self.assertEqual(module.questions[0]['question_type'], 'Words in Context')
+        self.assertEqual(module.question_count, 27)
+
+    def test_rejects_reading_module_with_notes_before_transitions(self):
+        questions = self.english_module_questions()
+        questions[-6:-3], questions[-3:] = questions[-3:], questions[-6:-3]
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Reading Route A - Wrong Order',
+            'subject': 'english',
+            'route': 'A',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Transitions before final Rhetorical Synthesis', response.data['error'])
+
+    def test_admin_can_view_saved_module_questions(self):
+        module = PracticeTestModule.objects.create(
+            name='Preview module',
+            subject='math',
+            route='A',
+            questions=self.math_module_questions(),
+            created_by=self.admin,
+        )
+
+        response = self.client.get(reverse('practice_test_generation_module_detail', args=[module.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['module']['name'], 'Preview module')
+        self.assertEqual(len(response.data['module']['questions']), 22)
+
+    def test_rejects_incomplete_module(self):
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Incomplete module',
+            'subject': 'math',
+            'route': 'A',
+            'questions': self.math_module_questions()[:-1],
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('exactly 22', response.data['error'])
 
 
 def _fake_idinfo(email='bob@example.com', verified=True, sub='google-uid-123'):

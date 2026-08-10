@@ -271,6 +271,22 @@ MARKUP the renderer understands (and NOTHING else — no Markdown):
 - A literal dollar sign starts math mode and corrupts the text: write money
   as words ("48 dollars") or as $\\$48$, never a bare $48.
 
+QUESTION BODY LAYOUT (MANDATORY — use these exact newline patterns):
+- Ordinary passage: <passage text>\\n\\n<question sentence>
+- Sourced excerpt: <source attribution line>\\n\\n<excerpt text>\\n\\n<question sentence>
+- Never place a source attribution and its excerpt on the same line or separate
+  them with only one \\n. The blank line between them is required.
+- Poetry with a source: <source attribution line>\\n\\n<verse line 1>\\n<verse
+  line 2>\\n\\n<question sentence>. Preserve verse line breaks, but still use a
+  full blank line after the attribution and before the question.
+- Cross-Text: Text 1\\n<passage 1>\\n\\nText 2\\n<passage 2>\\n\\n<question
+  sentence>. If either text has its own attribution, put that attribution
+  directly after its Text label, followed by \\n\\n before the excerpt.
+- Rhetorical Synthesis: <intro sentence>\\n***<note 1>\\n***<note 2>\\n\\n<question
+  sentence>. Keep one note per line and a blank line before the question.
+- The question sentence is always the final line. Do not add leading or trailing
+  blank lines, and do not put choices or explanations inside the question body.
+
 DATA TABLES (Command of Evidence, quantitative variants) — a KaTeX array in
 display math on its own line (never a Markdown table), words wrapped in
 \\text{...}:
@@ -293,10 +309,11 @@ bar or line chart as inline SVG wrapped in [svg]...[/svg], on its own line:
 SAT READING & WRITING HOUSE STYLE:
 - ONE self-contained passage of 25-150 words per question, then the question
   as its own final line. No shared passages across questions.
-- Literary excerpts open with an attribution line woven into the passage
-  field, e.g. "The following text is from Edith Wharton's 1905 novel
-  \\textit{The House of Mirth}." Research passages instead weave the actors
-  into the prose ("marine biologist Ana Osei and her colleagues...").
+- Literary excerpts open with a separate attribution line, followed by a blank
+  line before the excerpt, e.g. "The following text is from Edith Wharton's
+  1905 novel \\textit{The House of Mirth}."\\n\\n<excerpt text>. Research
+  passages instead weave the actors into the prose ("marine biologist Ana Osei
+  and her colleagues...").
 - Poetry keeps its line breaks (\\n at each verse line).
 - Cross-Text items format as: Text 1\\n<passage>\\n\\nText 2\\n<passage>.
 - Exactly 4 answer choices, exactly one correct, all four parallel in form,
@@ -1330,11 +1347,23 @@ SKILL_INDEX = {
     for skill in domain["skills"]
 }
 
+QUESTION_TYPE_BY_CASEFOLD = {
+    name.casefold(): name for name in SKILL_INDEX
+}
+
+
+def normalize_question_type(question_type):
+    """Return the official taxonomy spelling for case-only variants."""
+    if not isinstance(question_type, str):
+        return question_type
+    stripped = question_type.strip()
+    return QUESTION_TYPE_BY_CASEFOLD.get(stripped.casefold(), stripped)
+
 
 def subject_of_type(question_type):
     """Which subject a question_type belongs to. Unknown types read as english,
     matching the practice lanes' default."""
-    return 'math' if question_type in MATH_SKILL_NAMES else 'english'
+    return 'math' if normalize_question_type(question_type) in MATH_SKILL_NAMES else 'english'
 
 
 def build_prompt(skill_name, difficulty, count):
