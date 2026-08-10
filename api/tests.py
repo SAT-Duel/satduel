@@ -3657,3 +3657,145 @@ class MarketingSyncTests(TransactionTestCase):
             HTTP_SVIX_SIGNATURE='v1,deadbeef',
         )
         self.assertEqual(resp.status_code, 400)
+
+
+class ImportDuplicateTests(APITestCase):
+    """The import page's duplicate check: a re-parse of an item already in the
+    bank must be caught through cosmetic differences, while two questions from
+    the same template with different numbers must not be."""
+
+    QUESTION = "The graph of $f$ is shown. [svg]<svg viewBox='0 0 10 10'><path d='M0 0'/></svg>[/svg]\nWhat is $f(3)$?"
+
+    def setUp(self):
+        self.admin = User.objects.create_user(username='dupe-admin', is_staff=True)
+        self.client.force_authenticate(user=self.admin)
+        self.existing = Question.objects.create(
+            question=self.QUESTION, choice_a='1', choice_b='2', choice_c='3', choice_d='4',
+            answer='B', difficulty=3, question_type='Command of Evidence',
+        )
+
+    def draft(self, **overrides):
+        draft = {
+            'question': self.QUESTION, 'choice_a': '1', 'choice_b': '2', 'choice_c': '3', 'choice_d': '4',
+            'answer': 'B', 'difficulty': 3, 'question_type': 'Command of Evidence', 'explanation': '',
+        }
+        draft.update(overrides)
+        return draft
+
+    def post(self, drafts):
+        resp = self.client.post(reverse('generation_duplicates'), {'questions': drafts}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        return resp.data['duplicates']
+
+    def test_reparsed_question_matches_through_cosmetic_differences(self):
+        reparsed = self.draft(question=(
+            "The graph of \\(f\\) is shown.  [svg]<svg viewBox='0 0 20 20'><circle cx='2'/></svg>[/svg] "
+            "What is \\(f(3)\\)?"
+        ))
+        duplicates = self.post([reparsed])
+        self.assertEqual(duplicates[0]['question_id'], self.existing.id)
+        self.assertEqual(duplicates[0]['comparison']['choice_b'], '2')
+
+    def test_table_representation_is_ignored(self):
+        stored = Question.objects.create(
+            question=(
+                'Results\n$$\\begin{array}{|c|c|} \\hline \\text{Year} & \\text{Value} '
+                '\\\\ \\hline 2024 & 17 \\\\ \\hline \\end{array}$$\nWhich choice is supported?'
+            ),
+            choice_a='First', choice_b='Second', choice_c='Third', choice_d='Fourth',
+            answer='A', difficulty=2, question_type='Command of Evidence',
+        )
+        reparsed = self.draft(
+            question='Results\n<table><tr><td>Different markup</td></tr></table>\nWhich choice is supported?',
+            choice_a='First', choice_b='Second', choice_c='Third', choice_d='Fourth',
+        )
+        self.assertEqual(self.post([reparsed])[0]['question_id'], stored.id)
+
+    def test_same_template_with_different_numbers_is_not_a_duplicate(self):
+        self.assertEqual(self.post([self.draft(question=self.QUESTION.replace('f(3)', 'f(5)'))]), {})
+        self.assertEqual(self.post([self.draft(choice_d='5')]), {})
+
+    def test_repeat_inside_the_batch_is_flagged_once(self):
+        new = self.draft(question='A brand new question?')
+        duplicates = self.post([new, new])
+        self.assertNotIn(0, duplicates)
+        self.assertEqual(duplicates[1]['where'], 'batch')
+        self.assertEqual(duplicates[1]['draft_index'], 0)
+
+    def test_exact_match_stays_inside_one_question_type(self):
+        self.assertEqual(self.post([self.draft(question_type='Central Ideas and Details')]), {})
+
+    PASSAGE = (
+        'The following text is adapted from a 1915 essay. Weavers in the region had for generations '
+        'treated the loom as a communal instrument, one whose output belonged less to any single '
+        'household than to the village that maintained it. When the first mechanized frames arrived, '
+        'observers assumed the older arrangement would collapse within a season, and yet the ledgers '
+        'kept by the guild suggest something stranger: the communal claim survived, quietly rewritten '
+        'around the new machines rather than abandoned in the face of them, so that ownership and use '
+        'drifted apart for the better part of two decades before either was settled.\n\n'
+        'Which choice best states the main idea of the text?'
+    )
+
+    def test_english_passage_is_caught_when_a_reparse_rewords_it(self):
+        stored = Question.objects.create(
+            question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            answer='A', difficulty=3, question_type='Central Ideas and Details',
+        )
+        reworded = self.draft(
+            question=self.PASSAGE.replace('best states', 'best describes').replace('1915 essay', '1915 essay.'),
+            choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            question_type='Central Ideas and Details',
+        )
+        duplicate = self.post([reworded])[0]
+        self.assertEqual(duplicate['question_id'], stored.id)
+        self.assertEqual(duplicate['match'], 'near')
+
+    def test_near_stem_with_a_materially_different_choice_is_not_flagged(self):
+        Question.objects.create(
+            question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            answer='A', difficulty=3, question_type='Central Ideas and Details',
+        )
+        variant = self.draft(
+            question=self.PASSAGE.replace('best states', 'best describes'),
+            choice_a='w', choice_b='x', choice_c='y', choice_d='an entirely different final choice',
+            question_type='Central Ideas and Details',
+        )
+        self.assertEqual(self.post([variant]), {})
+
+        all_new_choices = self.draft(
+            question=self.PASSAGE.replace('best states', 'best describes'),
+            choice_a='first new choice', choice_b='second new choice',
+            choice_c='third new choice', choice_d='fourth new choice',
+            question_type='Central Ideas and Details',
+        )
+        self.assertEqual(self.post([all_new_choices]), {})
+
+    def test_english_near_match_stays_inside_one_skill(self):
+        Question.objects.create(
+            question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            answer='A', difficulty=3, question_type='Central Ideas and Details',
+        )
+        other_skill = self.draft(question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y',
+                                 choice_d='a different choice', question_type='Text Structure and Purpose')
+        self.assertEqual(self.post([other_skill]), {})
+
+    def test_math_is_not_checked(self):
+        stem = ('A scientist models the population of a colony over time. The model assumes the colony '
+                'grows by a fixed percentage each year and that no individuals leave the colony. '
+                'The population was %s in the first year of the study and the annual growth rate is %s. '
+                'Which equation gives the population $p$ after $t$ years?')
+        Question.objects.create(
+            question=stem % ('$15{,}000$', '$3\\%$'), choice_a='1', choice_b='2', choice_c='3', choice_d='4',
+            answer='A', difficulty=3, question_type='Nonlinear functions',
+        )
+        twin = self.draft(question=stem % ('$18{,}000$', '$4\\%$'), question_type='Nonlinear functions')
+        self.assertEqual(self.post([twin]), {})
+        exact = self.draft(question=stem % ('$15{,}000$', '$3\\%$'), question_type='Nonlinear functions')
+        self.assertEqual(self.post([exact]), {})
+        legacy_math = Question.objects.create(
+            question='Legacy math item', choice_a='1', choice_b='2', choice_c='3', choice_d='4',
+            answer='A', difficulty=2, question_type='Math',
+        )
+        self.assertEqual(self.post([self.draft(
+            question=legacy_math.question, question_type='Math',
+        )]), {})

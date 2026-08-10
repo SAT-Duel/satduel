@@ -139,6 +139,7 @@ urlpatterns = [
     # Admin: AI question generation
     path('admin/generation/taxonomy/', generation_views.generation_taxonomy, name='generation_taxonomy'),
     path('admin/generation/generate/', generation_views.generation_generate, name='generation_generate'),
+    path('admin/generation/duplicates/', generation_views.generation_duplicates, name='generation_duplicates'),
     path('admin/generation/import/', generation_views.generation_import, name='generation_import'),
     path('admin/practice-test-generation/prompt/', practice_test_generation_views.practice_test_prompt,
          name='practice_test_generation_prompt'),
