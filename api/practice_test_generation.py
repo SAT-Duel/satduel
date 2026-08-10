@@ -52,8 +52,40 @@ ROUTE_GUIDANCE = {
     'C': (
         'Module 2 (higher-difficulty route): keep a genuine mix, but shift the '
         'average higher. Target an average from 3.2 through 4.4; most items should '
-        'be difficulty 3-5, while retaining a few accessible items at difficulty '
-        '1-2. Hard means subtle SAT reasoning, never tedious or out of scope.'
+        'be difficulty 3-5. Follow the subject-specific calibration below for '
+        'the exact distribution. Hard means subtle SAT reasoning, never tedious '
+        'or out of scope.'
+    ),
+}
+SUBJECT_ROUTE_CALIBRATION = {
+    ('english', 'A'): (
+        'Reading and Writing calibration: keep the average at or below 3.0. '
+        'This routing module should feel centered rather than punishing: use '
+        'mostly difficulty 2-3 items, a smaller number of difficulty 1 items, '
+        'and only a few carefully chosen difficulty 4-5 items.'
+    ),
+    ('english', 'B'): (
+        'Reading and Writing quantitative-evidence calibration: every Command '
+        'of Evidence item that uses a graph must be difficulty 3, 4, or 5. Do '
+        'not make it a one-step lookup; require the student to connect an exact '
+        'visual trend or comparison to the passage claim while keeping the '
+        'lower-route module average in range.'
+    ),
+    ('english', 'C'): (
+        'Reading and Writing quantitative-evidence calibration: every Command '
+        'of Evidence item that uses a graph must be difficulty 3, 4, or 5. Do '
+        'not make it a one-step lookup; require the student to connect an exact '
+        'visual trend or comparison to the passage claim. Across multiple graph '
+        'items, vary levels 3-5 rather than assigning them all one level. Retain '
+        'a few accessible difficulty 1-2 items elsewhere in the module.'
+    ),
+    ('math', 'C'): (
+        'Math calibration: questions 1-15 must each be difficulty 3 or 4, '
+        'providing a sustained authentic medium-hard baseline. Continue rising '
+        'after question 15 and reserve difficulty 5 for the final four '
+        'positions (19-22), with at least two difficulty-5 questions there. '
+        'The hardest items should require a hidden modeling or algebraic insight, '
+        'not long computation or out-of-scope content.'
     ),
 }
 
@@ -114,6 +146,11 @@ Skill bounds and realistic order:
    roughly 2-3 of each, adjusted to the chosen domain total.
 3. Standard English Conventions next: use 3-4 Boundaries and 3-4 Form,
    Structure, and Sense questions, adjusted to the chosen domain total.
+   Treat the precise convention being tested as the unit of variety: no single
+   grammar point may appear more than twice in the module. For example, do not
+   test the same comma boundary, colon/semicolon distinction, agreement rule,
+   modifier placement, possessive form, or verb-form distinction more than
+   twice, even if the surrounding passages differ.
 4. Expression of Ideas last: use 2-3 Transitions followed by 2-3 Rhetorical
    Synthesis questions, adjusted to the chosen domain total. Every Rhetorical
    Synthesis (student-notes) question MUST come after every Transitions question
@@ -177,6 +214,7 @@ OFFICIAL STRUCTURE TO MIMIC
 
 SELECTED ADAPTIVE ROUTE
 {ROUTE_GUIDANCE[route]}
+{SUBJECT_ROUTE_CALIBRATION.get((subject, route), '')}
 
 DIFFICULTY SCALE FOR THIS PRACTICE TEST
 1 = easy authentic SAT; direct but not trivial.
@@ -195,6 +233,10 @@ RANDOMIZATION WITHOUT DRIFT
   and correct-answer positions.
 - Do not repeat a setup, passage topic, equation template, named researcher, or
   distractor pattern within this module.
+- Design this as one half of a full test whose other module may cover the same
+  broad skills. Use a wide range of precise test points and representations,
+  and avoid stock stem, passage, grammar, equation, and distractor structures
+  that would make two independently generated modules feel repetitive.
 - Balance multiple-choice keys A/B/C/D so the largest and smallest counts differ
   by no more than 2. Never use the same key more than 3 times consecutively.
 
@@ -315,19 +357,29 @@ def validate_module_questions(questions, subject, route):
 
     difficulties = [q['difficulty'] for q in normalized]
     average = sum(difficulties) / expected
-    lower, upper = {'A': (2.5, 3.5), 'B': (1.8, 2.8), 'C': (3.2, 4.4)}[route]
+    if subject == 'english' and route == 'A':
+        lower, upper = (2.5, 3.0)
+    else:
+        lower, upper = {'A': (2.5, 3.5), 'B': (1.8, 2.8), 'C': (3.2, 4.4)}[route]
     if not lower <= average <= upper:
         raise ValueError(f'Module {route} average difficulty must be {lower}-{upper}')
     if route == 'A' and (min(difficulties) > 2 or max(difficulties) < 4):
         raise ValueError('Module A must include both accessible and hard questions')
     if route == 'B' and (min(difficulties) > 2 or max(difficulties) < 3):
         raise ValueError('Module B must remain a mix of lower and medium difficulty questions')
-    if route == 'C' and (min(difficulties) > 2 or max(difficulties) < 4):
+    if route == 'C' and subject == 'english' and (min(difficulties) > 2 or max(difficulties) < 4):
         raise ValueError('Module C must retain accessible questions alongside hard questions')
 
     if subject == 'math':
         if difficulties != sorted(difficulties):
             raise ValueError('Math questions must be ordered from easiest to hardest')
+        if route == 'C':
+            if any(difficulty not in (3, 4) for difficulty in difficulties[:15]):
+                raise ValueError('Math Module C questions 1-15 must be difficulty 3-4')
+            if any(difficulty == 5 for difficulty in difficulties[:18]):
+                raise ValueError('Math Module C must reserve difficulty 5 for questions 19-22')
+            if sum(difficulty == 5 for difficulty in difficulties[18:]) < 2:
+                raise ValueError('Math Module C requires at least two difficulty-5 questions in positions 19-22')
         spr_count = sum(q['response_type'] == 'student_produced' for q in normalized)
         if not 4 <= spr_count <= 6:
             raise ValueError('Math modules require 4-6 student-produced response questions')

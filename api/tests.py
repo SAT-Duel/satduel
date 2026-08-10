@@ -614,6 +614,8 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertIn('separated by semicolons', response.data['prompt'])
         self.assertIn('accepts .6666, .6667, 0.666, or 0.667', response.data['prompt'])
         self.assertIn('Module 2 (higher-difficulty route)', response.data['prompt'])
+        self.assertIn('questions 1-15 must each be difficulty 3 or 4', response.data['prompt'])
+        self.assertIn('reserve difficulty 5 for the final four', response.data['prompt'])
         self.assertIn('Every question counts toward the score', response.data['prompt'])
         self.assertIn('Never invent a source, citation, or quotation', response.data['prompt'])
         self.assertNotIn('is_pretest', response.data['prompt'])
@@ -627,10 +629,52 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Transitions followed by 2-3 Rhetorical', response.data['prompt'])
         self.assertIn('MUST occupy the final positions', response.data['prompt'])
+        self.assertIn('keep the average at or below 3.0', response.data['prompt'])
+        self.assertIn('grammar point may appear more than twice', response.data['prompt'])
         self.assertIn(
             '<source attribution line>\\n\\n<excerpt text>\\n\\n<question sentence>',
             response.data['prompt'],
         )
+
+    def test_reading_module_two_prompt_hardens_graph_evidence(self):
+        response = self.client.post(reverse('practice_test_generation_prompt'), {
+            'subject': 'english', 'route': 'C',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('uses a graph must be difficulty 3, 4, or 5', response.data['prompt'])
+        self.assertIn('connect an exact visual trend or comparison', response.data['prompt'])
+
+    def test_imports_hard_math_module_with_final_difficulty_spike(self):
+        questions = self.math_module_questions()
+        difficulties = [3] * 7 + [4] * 11 + [5] * 4
+        for question, difficulty in zip(questions, difficulties):
+            question['difficulty'] = difficulty
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Math Route C - Calibrated',
+            'subject': 'math',
+            'route': 'C',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_rejects_hard_math_module_with_easy_first_fifteen(self):
+        questions = self.math_module_questions()
+        difficulties = [2] + [3] * 6 + [4] * 11 + [5] * 4
+        for question, difficulty in zip(questions, difficulties):
+            question['difficulty'] = difficulty
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Math Route C - Too easy early',
+            'subject': 'math',
+            'route': 'C',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('questions 1-15 must be difficulty 3-4', response.data['error'])
 
     def test_regular_reading_prompt_enforces_source_spacing(self):
         prompt = generation.build_prompt('Words in Context', 3, 2)
@@ -682,6 +726,24 @@ class PracticeTestGenerationTests(APITestCase):
         module = PracticeTestModule.objects.get()
         self.assertEqual(module.questions[0]['question_type'], 'Words in Context')
         self.assertEqual(module.question_count, 27)
+
+    def test_rejects_reading_module_one_above_average_three(self):
+        questions = self.english_module_questions()
+        raised = 0
+        for question in questions:
+            if question['difficulty'] == 1 and raised < 2:
+                question['difficulty'] = 3
+                raised += 1
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Reading Route A - Too hard',
+            'subject': 'english',
+            'route': 'A',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('average difficulty must be 2.5-3.0', response.data['error'])
 
     def test_rejects_reading_module_with_notes_before_transitions(self):
         questions = self.english_module_questions()
