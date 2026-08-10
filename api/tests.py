@@ -14,7 +14,7 @@ from rest_framework.test import APITestCase
 from allauth.account.models import EmailAddress
 from api import generation
 from api.models import (
-    DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, Profile, Question,
+    Announcement, DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, Profile, Question,
     QuestionReport, Ranking, Room, SATExamDate, SavedQuestion, TrackedQuestion,
 )
 from api.views.auth_views import PendingRegistrationSerializer
@@ -304,6 +304,64 @@ class QuestionReportTests(APITestCase):
         self.assertEqual(listed.data[0]['question']['explanation'], self.question.explanation)
         self.assertEqual(deleted.status_code, 204)
         self.assertFalse(QuestionReport.objects.exists())
+
+
+class AnnouncementTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='student', password='Secret123')
+        self.admin = User.objects.create_user(username='staff', password='Secret123', is_staff=True)
+
+    def test_active_announcement_is_visible_to_signed_in_users(self):
+        Announcement.objects.create(message='New practice test 🎉', is_active=True)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse('active_announcement'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['message'], 'New practice test 🎉')
+        self.assertTrue(response.data['version'])
+
+    def test_inactive_announcement_is_hidden(self):
+        Announcement.objects.create(message='Not yet', is_active=False)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse('active_announcement'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data)
+
+    def test_only_staff_can_update_announcement(self):
+        self.client.force_authenticate(user=self.user)
+        denied = self.client.put(reverse('manage_announcement'), {
+            'message': 'Nope', 'is_active': True,
+        }, format='json')
+
+        self.client.force_authenticate(user=self.admin)
+        allowed = self.client.put(reverse('manage_announcement'), {
+            'message': 'Try the new test 🚀', 'is_active': True,
+        }, format='json')
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(Announcement.objects.get(pk=1).message, 'Try the new test 🚀')
+
+    def test_active_announcement_requires_a_message(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.put(reverse('manage_announcement'), {
+            'message': '   ', 'is_active': True,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_saving_without_changes_keeps_the_same_version(self):
+        self.client.force_authenticate(user=self.admin)
+        payload = {'message': 'Practice Test 2 is live', 'is_active': True}
+
+        first = self.client.put(reverse('manage_announcement'), payload, format='json')
+        second = self.client.put(reverse('manage_announcement'), payload, format='json')
+
+        self.assertEqual(first.data['version'], second.data['version'])
 
 
 class AdminQuestionDeleteTests(APITestCase):
