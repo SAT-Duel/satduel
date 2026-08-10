@@ -1360,6 +1360,52 @@ def normalize_question_type(question_type):
     return QUESTION_TYPE_BY_CASEFOLD.get(stripped.casefold(), stripped)
 
 
+_SVG_RE = re.compile(r'\[svg\].*?\[/svg\]', re.IGNORECASE | re.DOTALL)
+_TABLE_RE = re.compile(
+    r'<table\b.*?</table>|\$\$\s*\\begin\{array\}.*?\\end\{array\}\s*\$\$',
+    re.IGNORECASE | re.DOTALL,
+)
+_MARKUP_RE = re.compile(r'<[^>]+>')
+_LATEX_CMD_RE = re.compile(r'\\[a-zA-Z]+')
+_NOISE_RE = re.compile(r'[^a-z0-9]+')
+
+
+def _strip_visuals_and_markup(text):
+    """Remove graph/table representations that vary between PDF parses."""
+    stripped = _SVG_RE.sub(' ', str(text or ''))
+    stripped = _TABLE_RE.sub(' ', stripped)
+    return _LATEX_CMD_RE.sub(' ', _MARKUP_RE.sub(' ', stripped))
+
+
+def flatten_text(text):
+    """Letters and digits only, after removing visual markup and formatting."""
+    stripped = _strip_visuals_and_markup(text)
+    return _NOISE_RE.sub('', stripped.lower())
+
+
+def tokenize_text(text):
+    """flatten_text as words, for conservative near-match comparisons."""
+    stripped = _strip_visuals_and_markup(text)
+    return _NOISE_RE.sub(' ', stripped.lower()).split()
+
+
+def fingerprint(question, choices):
+    """Identity key for a question: its flattened prose plus its set of
+    choices. Two independent PDF parses of the same official item land on the
+    same key even when the SVG figure, LaTeX markup or quote characters
+    differ; two items off the same template with different numbers do not."""
+    return (flatten_text(question) + '|'
+            + '|'.join(sorted(flatten_text(c) for c in choices)))
+
+
+def draft_fingerprint(draft):
+    """fingerprint() for a draft dict off the import page."""
+    return fingerprint(
+        draft.get('question'),
+        [draft.get('choice_a'), draft.get('choice_b'), draft.get('choice_c'), draft.get('choice_d')],
+    )
+
+
 def subject_of_type(question_type):
     """Which subject a question_type belongs to. Unknown types read as english,
     matching the practice lanes' default."""
