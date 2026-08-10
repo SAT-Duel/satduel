@@ -10,7 +10,7 @@ from api import generation
 from api.views.serializers import QuestionSerializer, QuestionAdminSerializer
 from django.db import models
 from django.db import transaction
-from ..models import Question, QuestionReport
+from ..models import Announcement, Question, QuestionReport
 from rest_framework import status
 
 ENGLISH_QUESTION_TYPES = [
@@ -40,6 +40,51 @@ MATH_QUESTION_TYPES = [
     'Right triangles and trigonometry',
     'Circles',
 ]
+
+
+def _announcement_payload(announcement):
+    return {
+        'message': announcement.message,
+        'is_active': announcement.is_active,
+        'version': announcement.updated_at.isoformat(),
+    }
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def active_announcement(request):
+    announcement = Announcement.objects.filter(pk=1, is_active=True).exclude(message='').first()
+    return Response(_announcement_payload(announcement) if announcement else None)
+
+
+@api_view(['GET', 'PUT'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def manage_announcement(request):
+    announcement, _ = Announcement.objects.get_or_create(pk=1)
+    if request.method == 'GET':
+        return Response(_announcement_payload(announcement))
+
+    message = request.data.get('message')
+    is_active = request.data.get('is_active')
+    if not isinstance(message, str):
+        return Response({'error': 'Message must be text.'}, status=status.HTTP_400_BAD_REQUEST)
+    message = message.strip()
+    if len(message) > 500:
+        return Response({'error': 'Message cannot exceed 500 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(is_active, bool):
+        return Response({'error': 'Active must be true or false.'}, status=status.HTTP_400_BAD_REQUEST)
+    if is_active and not message:
+        return Response({'error': 'Enter a message before activating the banner.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if announcement.message == message and announcement.is_active == is_active:
+        return Response(_announcement_payload(announcement))
+
+    announcement.message = message
+    announcement.is_active = is_active
+    announcement.save()
+    return Response(_announcement_payload(announcement))
 
 
 def question_source_values(data, default):

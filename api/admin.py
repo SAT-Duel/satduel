@@ -6,7 +6,7 @@ from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 
 from api.account_deletion import delete_user_account
-from api.models import PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
+from api.models import Announcement, PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
     Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTest, PracticeTestAttempt, PracticeTestModule, PracticeTypeStats, \
     PartyRoom, PartyPlayer
@@ -99,6 +99,12 @@ class QuestionReportAdmin(admin.ModelAdmin):
     list_filter = ['reason', 'created_at']
     search_fields = ['question__question', 'reporter__username', 'details']
     raw_id_fields = ['question', 'reporter']
+
+
+@admin.register(Announcement)
+class AnnouncementAdmin(admin.ModelAdmin):
+    list_display = ['message', 'is_active', 'updated_at']
+    readonly_fields = ['updated_at']
 
 
 @admin.register(Profile)

@@ -123,6 +123,17 @@ class QuestionReport(models.Model):
         return f"Q{self.question_id}: {self.get_reason_display()}"
 
 
+class Announcement(models.Model):
+    """The single site-wide announcement shown in the signed-in app."""
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    message = models.TextField(max_length=500, blank=True)
+    is_active = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.message[:80] or 'Site announcement'
+
+
 # =========================================================
 # Customization and Virtual Space Models
 # =========================================================

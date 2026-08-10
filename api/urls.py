@@ -18,6 +18,8 @@ urlpatterns = [
     path('question_reports/', views.create_question_report, name='create_question_report'),
     path('admin/question_reports/', views.list_question_reports, name='list_question_reports'),
     path('admin/question_reports/<int:report_id>/', views.delete_question_report, name='delete_question_report'),
+    path('announcement/', views.active_announcement, name='active_announcement'),
+    path('admin/announcement/', views.manage_announcement, name='manage_announcement'),
     path('admin/questions/bulk_update/', views.bulk_update_questions, name='bulk_update_questions'),
 
     path('profile/', profile_views.profile_view, name='profile'),
