@@ -124,6 +124,8 @@ urlpatterns = [
          name='adaptive_test_restart'),
     path('practice-tests/attempts/<int:attempt_id>/finish-module/', practice_test_views.finish_module,
          name='adaptive_test_finish_module'),
+    path('practice-tests/attempts/<int:attempt_id>/resume-after-break/', practice_test_views.resume_after_break,
+         name='adaptive_test_resume_after_break'),
     path('practice-tests/attempts/<int:attempt_id>/result/', practice_test_views.test_result,
          name='adaptive_test_result'),
 

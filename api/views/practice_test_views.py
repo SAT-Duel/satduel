@@ -14,6 +14,10 @@ from api.practice_test_scoring import SCORING_VERSION, answer_is_correct, score_
 
 
 MODULE_SECONDS = {'english': 32 * 60, 'math': 35 * 60}
+BREAK_SECONDS = 10 * 60
+ANNOTATION_COLORS = {'yellow', 'blue', 'pink'}
+UNDERLINE_STYLES = {'none', 'solid', 'dashed', 'dotted'}
+ANNOTATION_FIELDS = {'passage', 'prompt', 'choice:A', 'choice:B', 'choice:C', 'choice:D'}
 
 
 def _module_for_phase(test, phase):
@@ -38,6 +42,49 @@ def _valid_answers(module, raw):
         for key, value in raw.items()
         if str(key) in valid_keys and value is not None
     }
+
+
+def _valid_annotations(module, raw):
+    raw = raw if isinstance(raw, dict) else {}
+    valid_questions = {str(question['order']) for question in module.questions}
+    cleaned = {}
+    for question_key, tools in raw.items():
+        question_key = str(question_key)
+        if question_key not in valid_questions or not isinstance(tools, dict):
+            continue
+
+        marks = []
+        for mark in tools.get('marks', [])[:100]:
+            if not isinstance(mark, dict):
+                continue
+            try:
+                start, end = int(mark.get('start')), int(mark.get('end'))
+            except (TypeError, ValueError):
+                continue
+            field = mark.get('field')
+            color = mark.get('color')
+            underline = mark.get('underline', 'none')
+            if field not in ANNOTATION_FIELDS or color not in ANNOTATION_COLORS:
+                continue
+            if underline not in UNDERLINE_STYLES or start < 0 or end <= start or end > 20000:
+                continue
+            marks.append({
+                'id': str(mark.get('id', ''))[:64],
+                'field': field,
+                'start': start,
+                'end': end,
+                'color': color,
+                'underline': underline,
+            })
+
+        crossed_out = tools.get('crossed_out', [])
+        if not isinstance(crossed_out, list):
+            crossed_out = []
+        cleaned[question_key] = {
+            'marks': marks,
+            'crossed_out': sorted({str(letter) for letter in crossed_out if str(letter) in 'ABCD'}),
+        }
+    return cleaned
 
 
 def _save_progress(attempt, data):
@@ -69,6 +116,13 @@ def _save_progress(attempt, data):
     all_review[attempt.phase] = sorted({int(item) for item in review if str(item).isdigit() and int(item) in allowed})
     attempt.review_questions = all_review
 
+    annotations = dict(attempt.annotations)
+    annotations[attempt.phase] = _valid_annotations(
+        module,
+        data.get('annotations', annotations.get(attempt.phase, {})),
+    )
+    attempt.annotations = annotations
+
 
 def _question_responses(module, answers):
     return [(question, answers.get(str(question['order']))) for question in module.questions]
@@ -77,6 +131,16 @@ def _question_responses(module, answers):
 def _attempt_state(attempt):
     if attempt.status == PracticeTestAttempt.STATUS_COMPLETED:
         return {'attempt_id': attempt.id, 'completed': True}
+    if attempt.phase == 'break':
+        elapsed = (timezone.now() - attempt.break_started_at).total_seconds() if attempt.break_started_at else 0
+        return {
+            'attempt_id': attempt.id,
+            'test_id': attempt.practice_test_id,
+            'test_name': attempt.practice_test.name,
+            'completed': False,
+            'break': True,
+            'break_remaining_seconds': max(0, BREAK_SECONDS - int(elapsed)),
+        }
     module = _module_for_phase(attempt.practice_test, attempt.phase)
     subject_label = 'Reading and Writing' if module.subject == 'english' else 'Math'
     route_label = 'Module 1' if module.route == 'A' else 'Module 2'
@@ -93,9 +157,12 @@ def _attempt_state(attempt):
         'questions': [_public_question(question) for question in module.questions],
         'answers': attempt.answers.get(attempt.phase, {}),
         'review_questions': attempt.review_questions.get(attempt.phase, []),
+        'annotations': attempt.annotations.get(attempt.phase, {}),
         'current_question': attempt.current_question,
         'remaining_seconds': attempt.remaining_seconds.get(attempt.phase, MODULE_SECONDS[module.subject]),
         'time_limit_seconds': MODULE_SECONDS[module.subject],
+        'section_number': 2 if module.subject == 'math' and attempt.practice_test.test_type == PracticeTest.TYPE_FULL else 1,
+        'module_number': 1 if module.route == 'A' else 2,
     }
 
 
@@ -215,9 +282,11 @@ def attempt_progress(request, attempt_id):
         return Response(_attempt_state(attempt))
     if attempt.status != 'active':
         return Response({'error': 'This attempt is already complete'}, status=status.HTTP_409_CONFLICT)
+    if attempt.phase == 'break' or request.data.get('phase') not in (None, attempt.phase):
+        return Response({'error': 'The test has moved to another section'}, status=status.HTTP_409_CONFLICT)
     _save_progress(attempt, request.data)
     attempt.save(update_fields=[
-        'answers', 'review_questions', 'remaining_seconds', 'current_question', 'updated_at',
+        'answers', 'review_questions', 'annotations', 'remaining_seconds', 'current_question', 'updated_at',
     ])
     return Response(_attempt_state(attempt))
 
@@ -294,6 +363,8 @@ def finish_module(request, attempt_id):
             return Response({'error': 'Attempt not found'}, status=status.HTTP_404_NOT_FOUND)
         if attempt.status != 'active':
             return Response(_attempt_state(attempt))
+        if attempt.phase == 'break' or request.data.get('phase') not in (None, attempt.phase):
+            return Response({'error': 'The test has moved to another section'}, status=status.HTTP_409_CONFLICT)
 
         phase = attempt.phase
         module = _module_for_phase(attempt.practice_test, phase)
@@ -306,7 +377,8 @@ def finish_module(request, attempt_id):
             attempt.phase = f'english_{route.lower()}'
         elif phase.startswith('english_'):
             if attempt.practice_test.test_type == PracticeTest.TYPE_FULL:
-                attempt.phase = 'math_a'
+                attempt.phase = 'break'
+                attempt.break_started_at = timezone.now()
             else:
                 _complete_attempt(attempt)
         elif phase == 'math_a':
@@ -320,6 +392,23 @@ def finish_module(request, attempt_id):
 
         attempt.current_question = 1
         attempt.save()
+    return Response(_attempt_state(attempt))
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def resume_after_break(request, attempt_id):
+    with transaction.atomic():
+        attempt = _owned_active_attempt(request, attempt_id, lock=True)
+        if not attempt:
+            return Response({'error': 'Attempt not found'}, status=status.HTTP_404_NOT_FOUND)
+        if attempt.status != 'active' or attempt.phase != 'break':
+            return Response({'error': 'This attempt is not on a break'}, status=status.HTTP_409_CONFLICT)
+        attempt.phase = 'math_a'
+        attempt.break_started_at = None
+        attempt.current_question = 1
+        attempt.save(update_fields=['phase', 'break_started_at', 'current_question', 'updated_at'])
     return Response(_attempt_state(attempt))
 
 
