@@ -15,7 +15,7 @@ from allauth.account.models import EmailAddress
 from api import generation
 from api.models import (
     Announcement, DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, PracticeTestModule,
-    Profile, Question, QuestionReport, Ranking, Room, SATExamDate, SavedQuestion, TrackedQuestion,
+    Profile, Question, QuestionReport, Room, SATExamDate, SavedQuestion, TrackedQuestion,
 )
 from api.views.auth_views import PendingRegistrationSerializer
 from api.views.serializers import QuestionSerializer
@@ -1299,29 +1299,6 @@ class RegistrationOnboardingTests(APITestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertFalse(User.objects.filter(username='new_student').exists())
-
-
-class RankingUpdateTests(APITestCase):
-    def test_rankings_ordered_by_elo(self):
-        users = []
-        for i, elo in enumerate([1200, 1800, 1500]):
-            u = User.objects.create_user(username=f'u{i}', email=f'u{i}@e.com')
-            Profile.objects.create(user=u, elo_rating=elo)
-            users.append(u)
-        Ranking.update_rankings()
-        ranks = {r.user.username: r.rank for r in Ranking.objects.all()}
-        self.assertEqual(ranks['u1'], 1)
-        self.assertLess(ranks['u2'], ranks['u0'])
-        self.assertTrue(User.objects.filter(profile__is_bot=True, ranking__isnull=False).exists())
-        self.assertEqual(sorted(ranks.values()), list(range(1, len(ranks) + 1)))
-
-    def test_rankings_idempotent(self):
-        u = User.objects.create_user(username='solo', email='s@e.com')
-        Profile.objects.create(user=u, elo_rating=1500)
-        Ranking.update_rankings()
-        Ranking.update_rankings()  # second run must not blow up on unique constraint
-        self.assertIsNotNone(Ranking.objects.get(user=u).rank)
-        self.assertEqual(Ranking.objects.count(), Profile.objects.count())
 
 
 class LeaderboardViewTests(APITestCase):

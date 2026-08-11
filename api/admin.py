@@ -7,7 +7,7 @@ from allauth.socialaccount.models import SocialAccount
 
 from api.account_deletion import delete_user_account
 from api.models import Announcement, PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
-    PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
+    SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, \
     PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTest, PracticeTestAttempt, PracticeTestModule, PracticeTypeStats, \
     TestPrep, TestPrepUserStats, TestSection, \
     PartyRoom, PartyPlayer
@@ -205,12 +205,10 @@ admin.site.register(TrackedQuestion)
 admin.site.register(DuelEmote)
 admin.site.register(FriendRequest)
 admin.site.register(UserStatistics)
-admin.site.register(PowerSprintStatistics)
 admin.site.register(SurvivalStatistics)
 admin.site.register(Tournament)
 admin.site.register(TournamentParticipation)
 admin.site.register(TournamentQuestion)
-admin.site.register(Ranking)
 
 
 @admin.register(TestPrep)
