@@ -1708,6 +1708,35 @@ class PracticeTierTests(APITestCase):
         self.assertEqual(inferences.data['question']['id'], inferences_again.data['question']['id'])
         self.assertEqual(PracticeActiveQuestion.objects.filter(user=self.user).count(), 2)
 
+    def test_multiple_topics_use_the_first_topic_active_question(self):
+        from api.models import PracticeActiveQuestion
+
+        self.profile.is_premium = True
+        self.profile.save()
+        Question.objects.create(
+            question='Inference?', choice_a='a', choice_b='b', choice_c='c', choice_d='d',
+            answer='B', difficulty=3, question_type='Inferences',
+        )
+
+        transitions = self.client.get('/api/practice/next/', {
+            'types': 'Transitions,Inferences',
+        })
+        expanded = self.client.get('/api/practice/next/', {
+            'types': 'Transitions,Inferences,Words in Context', 'levels': '5',
+        })
+        inferences = self.client.get('/api/practice/next/', {
+            'types': 'Inferences,Transitions',
+        })
+        inferences_alone = self.client.get('/api/practice/next/', {
+            'types': 'Inferences',
+        })
+
+        self.assertEqual(transitions.data['question']['question_type'], 'Transitions')
+        self.assertEqual(transitions.data['question']['id'], expanded.data['question']['id'])
+        self.assertEqual(inferences.data['question']['question_type'], 'Inferences')
+        self.assertEqual(inferences.data['question']['id'], inferences_alone.data['question']['id'])
+        self.assertEqual(PracticeActiveQuestion.objects.filter(user=self.user).count(), 2)
+
     def test_expired_premium_is_free_tier(self):
         from django.utils import timezone
         from datetime import timedelta

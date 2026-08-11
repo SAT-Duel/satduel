@@ -285,7 +285,7 @@ def parse_practice_filters(request, subject):
         legacy = request.GET.get('type')
         types_param = legacy if legacy and legacy != 'any' else ''
     valid_types = set(SUBJECT_TYPES[subject])
-    types = [t for t in types_param.split(',') if t in valid_types]
+    types = list(dict.fromkeys(t for t in types_param.split(',') if t in valid_types))
 
     levels = []
     for chunk in (request.GET.get('levels') or '').split(','):
@@ -322,20 +322,11 @@ def filters_want_review(filters):
     return filters['result'] != 'all' or filters['attempted'] == 'only'
 
 
-def filters_lane_signature(filters):
-    """Short stable id for a filter combination, used as the active-question
-    lane key so switching filters serves a fresh match instead of resuming the
-    previous lane's question. Kept well under the lane field's 128 chars."""
-    if filters_are_default(filters):
+def topic_lane_signature(question_type):
+    """Stable active-question lane for one topic (or the unfiltered pool)."""
+    if not question_type:
         return 'any'
-    raw = '|'.join((
-        ','.join(filters['types']),
-        ','.join(str(level) for level in filters['levels']),
-        filters['saved'],
-        filters['attempted'],
-        filters['result'],
-    ))
-    return 'f:' + hashlib.sha1(raw.encode()).hexdigest()[:16]
+    return 't:' + hashlib.sha1(question_type.encode()).hexdigest()[:16]
 
 
 def latest_attempt_correct_ids(user, correct):
@@ -485,39 +476,47 @@ def next_question(request):
             status=status.HTTP_429_TOO_MANY_REQUESTS,
         )
 
-    lane = f'{subject}:{filters_lane_signature(filters)}'
-    active = PracticeActiveQuestion.objects.filter(user=request.user, lane=lane).first()
-    if active:
+    empty_states = []
+    for question_type in filters['types'] or [None]:
+        lane = f'{subject}:{topic_lane_signature(question_type)}'
+        active = PracticeActiveQuestion.objects.filter(user=request.user, lane=lane).first()
+        if active:
+            return Response({
+                'question': QuestionSerializer(active.question).data,
+                'quota': quota, 'subject': subject,
+            })
+
+        lane_filters = {**filters, 'types': [question_type] if question_type else []}
+        question, empty_state = pick_filtered_question(request.user, subject, lane_filters)
+        if question is None:
+            empty_states.append(empty_state)
+            continue
+
+        active, _ = PracticeActiveQuestion.objects.get_or_create(
+            user=request.user,
+            lane=lane,
+            defaults={'question': question},
+        )
         return Response({
             'question': QuestionSerializer(active.question).data,
             'quota': quota, 'subject': subject,
         })
 
-    question, empty_state = pick_filtered_question(request.user, subject, filters)
-    if question is None:
-        if empty_state == 'completed_topic':
-            detail = f'You answered every matching {subject} practice question.'
-        elif empty_state == 'no_matches':
-            detail = 'No practice questions match these filters yet. Try widening them.'
-        else:
-            detail = f'No {subject} practice questions are available yet.'
-        return Response({
-            'error': empty_state,
-            'detail': detail,
-            'subject': subject,
-            'quota': quota,
-        }, status=status.HTTP_404_NOT_FOUND)
-
-    active, _ = PracticeActiveQuestion.objects.get_or_create(
-        user=request.user,
-        lane=lane,
-        defaults={'question': question},
+    empty_state = 'no_matches' if 'no_matches' in empty_states else (
+        'completed_topic' if 'completed_topic' in empty_states else 'no_questions'
     )
-
+    if empty_state == 'completed_topic':
+        detail = f'You answered every matching {subject} practice question.'
+    elif empty_state == 'no_matches':
+        detail = 'No practice questions match these filters yet. Try widening them.'
+    else:
+        detail = f'No {subject} practice questions are available yet.'
     return Response({
-        'question': QuestionSerializer(active.question).data,
-        'quota': quota, 'subject': subject,
-    })
+        'error': empty_state,
+        'detail': detail,
+        'subject': subject,
+        'quota': quota,
+    }, status=status.HTTP_404_NOT_FOUND)
 
 
 @api_view(['GET'])
