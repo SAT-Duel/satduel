@@ -153,6 +153,8 @@ urlpatterns = [
     # Party Mode (Kahoot-style live rooms)
     path('party/create/', party_views.create_party, name='party_create'),
     path('party/join/', party_views.join_party, name='party_join'),
+    path('party/history/', party_views.party_history, name='party_history'),
+    path('party/history/<int:room_id>/', party_views.party_history_detail, name='party_history_detail'),
     path('party/<int:room_id>/state/', party_views.party_state, name='party_state'),
     path('party/<int:room_id>/start/', party_views.start_party, name='party_start'),
     path('party/<int:room_id>/answer/', party_views.answer_party_question, name='party_answer'),

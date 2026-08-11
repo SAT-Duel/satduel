@@ -1138,6 +1138,11 @@ class PartyRoom(models.Model):
     MODES = ('classic', 'teams', 'survival', 'jeopardy', 'goldrush')
 
     host = models.ForeignKey(User, related_name='hosted_parties', on_delete=models.CASCADE)
+    # `host` can move when the creator leaves; history still needs to remember
+    # who originally made the room.
+    original_host = models.ForeignKey(
+        User, related_name='created_parties', null=True, blank=True, on_delete=models.SET_NULL,
+    )
     test_prep = models.ForeignKey(
         TestPrep, on_delete=models.PROTECT, related_name='party_rooms', default=DEFAULT_TEST_PREP,
     )
