@@ -150,6 +150,7 @@ def _user_payload(user, is_first_login):
         'last_name': user.last_name,
         'grade': profile.grade if profile else None,
         'grade_selected': bool(profile and profile.grade_selected),
+        'username_finalized': bool(profile and profile.username_finalized),
         'is_admin': user.is_staff,
         'is_first_login': is_first_login,
         'role': profile.role if profile else 'STUDENT',
@@ -157,6 +158,9 @@ def _user_payload(user, is_first_login):
         'avatar': profile.avatar if profile else 'violet',
         'avatar_icon': profile.avatar_icon if profile else 'initial',
         'onboarding_required': bool(profile and profile.onboarding_required),
+        'sat_exam_date': profile.sat_exam_date.isoformat() if profile and profile.sat_exam_date else None,
+        'sat_exam_date_selected': bool(profile and profile.sat_exam_date_selected),
+        'marketing_opt_in': profile.marketing_opt_in if profile else None,
         'terms_accepted': bool(profile and profile.terms_accepted_at),
     }
 
