@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.db import models, transaction
+from django.db import models
 from django.utils import timezone
 import math
 import random
@@ -545,21 +545,6 @@ class TestPrepUserStats(models.Model):
 
 
 
-class PowerSprintStatistics(models.Model):
-    """Tracks user's performance in different game modes."""
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    test_prep = models.ForeignKey(
-        TestPrep, on_delete=models.CASCADE, related_name='power_sprint_stats', default=DEFAULT_TEST_PREP,
-    )
-    bullet_record = models.IntegerField(default=0)
-    blitz_record = models.IntegerField(default=0)
-    rapid_record = models.IntegerField(default=0)
-    marathon_record = models.IntegerField(default=0)
-
-    def __str__(self):
-        return f"{self.user.username} - {self.bullet_record}/{self.blitz_record}/{self.rapid_record}/{self.marathon_record}"
-
-
 class SurvivalStatistics(models.Model):
     """Tracks user's survival mode performance."""
     user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -806,66 +791,6 @@ class DirectMessage(models.Model):
 
     def __str__(self):
         return f"{self.sender} → {self.recipient} at {self.created_at:%Y-%m-%d %H:%M}"
-
-
-class Ranking(models.Model):
-    """Materialized duel ranking within one test-prep product."""
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    test_prep = models.ForeignKey(
-        TestPrep, on_delete=models.CASCADE, related_name='rankings', default=DEFAULT_TEST_PREP,
-    )
-    rank = models.PositiveIntegerField()
-    last_updated = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        ordering = ['rank']
-        constraints = [
-            models.UniqueConstraint(fields=['user', 'test_prep'], name='unique_ranking_per_test_prep'),
-            models.UniqueConstraint(fields=['test_prep', 'rank'], name='unique_rank_within_test_prep'),
-        ]
-
-    def __str__(self):
-        return f"{self.user.username} - Rank {self.rank}"
-
-    @classmethod
-    def update_rankings(cls, test_prep=DEFAULT_TEST_PREP):
-        """Recompute one test prep's rankings in bulk."""
-        scoped = dict(TestPrepUserStats.objects.filter(
-            test_prep_id=test_prep,
-        ).values_list('user_id', 'duel_elo'))
-        if test_prep == DEFAULT_TEST_PREP:
-            candidates = list(Profile.objects.values_list('user_id', 'elo_rating'))
-        else:
-            candidates = list(scoped.items())
-        ratings = [user_id for user_id, _ in sorted(candidates, key=lambda row: (-row[1], row[0]))]
-        existing = {r.user_id: r for r in cls.objects.filter(test_prep_id=test_prep)}
-        stale_user_ids = set(existing) - set(ratings)
-        if stale_user_ids:
-            cls.objects.filter(test_prep_id=test_prep, user_id__in=stale_user_ids).delete()
-            for user_id in stale_user_ids:
-                existing.pop(user_id)
-
-        # Assign to a temporary offset first so the unique `rank` constraint
-        # doesn't collide while rows are being renumbered.
-        offset = len(ratings) + 1
-        to_update = []
-        to_create = []
-        for index, user_id in enumerate(ratings, start=1):
-            ranking = existing.get(user_id)
-            if ranking is None:
-                to_create.append(cls(user_id=user_id, test_prep_id=test_prep, rank=index + offset))
-            else:
-                ranking.rank = index + offset
-                to_update.append(ranking)
-
-        with transaction.atomic():
-            cls.objects.bulk_update(to_update, ['rank'])
-            cls.objects.bulk_create(to_create)
-            # Second pass: shift everyone down to their real rank.
-            all_rankings = list(cls.objects.filter(test_prep_id=test_prep).order_by('rank'))
-            for real_rank, ranking in enumerate(all_rankings, start=1):
-                ranking.rank = real_rank
-            cls.objects.bulk_update(all_rankings, ['rank'])
 
 
 # =========================================================
