@@ -2761,6 +2761,70 @@ class PartyModeTests(APITestCase):
         resp = self.client.post(reverse('party_join'), {'code': first['code']}, format='json')
         self.assertEqual(resp.status_code, 404)
 
+    def test_creating_a_room_does_not_delete_old_party_history(self):
+        from api.models import PartyRoom
+        first = self._create()
+        PartyRoom.objects.filter(id=first['id']).update(
+            status='finished', created_at=timezone.now() - timedelta(days=3),
+        )
+        self._create()
+        self.assertTrue(PartyRoom.objects.filter(id=first['id']).exists())
+
+    def test_history_lists_hosted_and_participated_rooms_with_review(self):
+        from api.models import PartyPlayer, PartyRoom
+        question = Question.objects.first()
+        room = PartyRoom.objects.create(
+            host=self.host,
+            original_host=self.host,
+            code='123456',
+            status='finished',
+            question_ids=[question.id],
+            num_questions=1,
+        )
+        PartyPlayer.objects.create(
+            room=room,
+            user=self.host,
+            score=900,
+            answers={'0': {'choice': 'A', 'correct': True, 'points': 900}},
+        )
+        PartyPlayer.objects.create(
+            room=room,
+            user=self.guest,
+            score=0,
+            answers={'0': {'choice': 'B', 'correct': False, 'points': 0}},
+        )
+
+        self.client.force_authenticate(user=self.host)
+        hosted = self.client.get(reverse('party_history')).data
+        self.assertEqual(hosted[0]['role'], 'hosted')
+        self.assertEqual(hosted[0]['winners'], ['host'])
+
+        self.client.force_authenticate(user=self.guest)
+        participated = self.client.get(reverse('party_history')).data
+        self.assertEqual(participated[0]['role'], 'participated')
+        detail = self.client.get(reverse('party_history_detail', args=[room.id])).data
+        self.assertEqual(detail['your_score'], 0)
+        self.assertEqual(detail['questions'][0]['your_choice'], 'B')
+        self.assertFalse(detail['questions'][0]['correct'])
+        self.assertEqual(detail['questions'][0]['correct_choice'], 'A')
+
+    def test_party_history_is_private_to_players(self):
+        from api.models import PartyPlayer, PartyRoom
+        question = Question.objects.first()
+        room = PartyRoom.objects.create(
+            host=self.host,
+            original_host=self.host,
+            code='654321',
+            status='finished',
+            question_ids=[question.id],
+        )
+        PartyPlayer.objects.create(room=room, user=self.host)
+        outsider = User.objects.create_user(username='outsider', password='x')
+        Profile.objects.create(user=outsider)
+        self.client.force_authenticate(user=outsider)
+        response = self.client.get(reverse('party_history_detail', args=[room.id]))
+        self.assertEqual(response.status_code, 403)
+
     def test_host_leaving_hands_off_or_closes_room(self):
         from api.models import PartyRoom
         data = self._create()
@@ -2778,6 +2842,15 @@ class PartyModeTests(APITestCase):
         self.client.force_authenticate(user=self.guest)
         self.client.post(reverse('party_leave', args=[data['id']]))
         self.assertEqual(PartyRoom.objects.get(id=data['id']).status, 'finished')
+
+    def test_leaving_a_started_room_keeps_the_player_for_history(self):
+        from api.models import PartyRoom
+        data = self._create()
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        PartyRoom.objects.filter(id=data['id']).update(status='question', question_ids=[Question.objects.first().id])
+        self.client.post(reverse('party_leave', args=[data['id']]))
+        self.assertTrue(PartyRoom.objects.get(id=data['id']).players.filter(user=self.guest).exists())
 
     def test_stale_host_is_replaced_on_poll(self):
         from api.models import PartyPlayer, PartyRoom
@@ -3431,6 +3504,9 @@ class PartyGoldRushModeTests(APITestCase):
         resp = self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'B'}, format='json')
         self.assertFalse(resp.data['correct'])
         self.assertEqual(resp.data['correct_choice'], 'A')
+        attempt = self.PartyRoom.objects.get(id=room_id).players.get(user=self.host).answers['g0']
+        self.assertFalse(attempt['correct'])
+        self.assertIn('question_id', attempt)
 
         state = self.client.get(reverse('party_state', args=[room_id])).data
         self.assertEqual(state['gold']['phase'], 'wrong')
