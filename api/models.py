@@ -23,13 +23,50 @@ def default_duel_emotes():
 # Core Learning Models
 # =========================================================
 
+DEFAULT_TEST_PREP = 'sat'
+
+
+class TestPrep(models.Model):
+    """A test-prep product whose question bank and rankings are isolated."""
+    code = models.SlugField(max_length=32, primary_key=True)
+    name = models.CharField(max_length=80, unique=True)
+    active = models.BooleanField(default=False, db_index=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['display_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class TestSection(models.Model):
+    """A configurable section/subject within a test (for example ACT Science)."""
+    test_prep = models.ForeignKey(TestPrep, on_delete=models.CASCADE, related_name='sections')
+    code = models.SlugField(max_length=32)
+    name = models.CharField(max_length=80)
+    active = models.BooleanField(default=True, db_index=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['test_prep__display_order', 'display_order', 'name']
+        constraints = [
+            models.UniqueConstraint(fields=['test_prep', 'code'], name='unique_section_per_test_prep'),
+        ]
+
+    def __str__(self):
+        return f'{self.test_prep.name} — {self.name}'
+
+
 class Question(models.Model):
     """Model representing a learning question with multiple choice answers."""
     SOURCE_SAT_QUESTION_BANK = 'sat_question_bank'
+    SOURCE_OFFICIAL_QUESTION_BANK = 'official_question_bank'
     SOURCE_AI_GENERATED = 'ai_generated'
     SOURCE_OTHER = 'other'
     SOURCE_CHOICES = [
         (SOURCE_SAT_QUESTION_BANK, 'SAT Question Bank'),
+        (SOURCE_OFFICIAL_QUESTION_BANK, 'Official Question Bank'),
         (SOURCE_AI_GENERATED, 'AI Generated'),
         (SOURCE_OTHER, 'Other'),
     ]
@@ -46,11 +83,14 @@ class Question(models.Model):
     source_other = models.CharField(max_length=255, blank=True)
     explanation = models.TextField(null=True, blank=True)
     sp_elo_rating = models.IntegerField(default=0)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='questions', default=DEFAULT_TEST_PREP,
+    )
+    subject = models.CharField(max_length=32, default='english', db_index=True)
 
     class Meta:
         indexes = [
-            # list_questions filters on type and difficulty together
-            models.Index(fields=['question_type', 'difficulty']),
+            models.Index(fields=['test_prep', 'subject', 'question_type', 'difficulty']),
         ]
 
     def __str__(self):
@@ -59,6 +99,11 @@ class Question(models.Model):
     def save(self, *args, **kwargs):
         from api.generation import normalize_question_type
         self.question_type = normalize_question_type(self.question_type)
+        # Legacy SAT callers only supplied question_type. Keep those imports
+        # working while new banks set test_prep + subject explicitly.
+        if self.test_prep_id == DEFAULT_TEST_PREP:
+            from api.generation import subject_of_type
+            self.subject = subject_of_type(self.question_type)
         if self.source != self.SOURCE_OTHER:
             self.source_other = ''
 
@@ -89,13 +134,16 @@ class Question(models.Model):
         return choices.get(self.answer, "Unknown choice")
 
     @classmethod
-    def get_random_questions(self, num_questions):
+    def get_random_questions(self, num_questions, test_prep=DEFAULT_TEST_PREP):
         default_question_types = [
             'Cross-Text Connections', 'Text Structure and Purpose', 'Words in Context',
             'Rhetorical Synthesis', 'Transitions', 'Central Ideas and Details',
             'Command of Evidence', 'Inferences', 'Boundaries', 'Form, Structure, and Sense'
         ]
-        questions = list(self.objects.filter(question_type__in=default_question_types))
+        questions = self.objects.filter(test_prep_id=test_prep)
+        if test_prep == DEFAULT_TEST_PREP:
+            questions = questions.filter(question_type__in=default_question_types)
+        questions = list(questions)
         if num_questions > len(questions):
             num_questions = len(questions)
         return random.sample(questions, num_questions)
@@ -132,21 +180,6 @@ class Announcement(models.Model):
 
     def __str__(self):
         return self.message[:80] or 'Site announcement'
-
-
-# =========================================================
-# Customization and Virtual Space Models
-# =========================================================
-
-class Pet(models.Model):
-    """Represents collectible pets with benefits."""
-    name = models.CharField(max_length=255)
-    price = models.IntegerField()
-    animation_data = models.JSONField()
-    coin_multipliers = models.JSONField(default=dict)
-
-    def __str__(self):
-        return self.name
 
 
 # =========================================================
@@ -240,7 +273,9 @@ class Profile(models.Model):
     is_bot = models.BooleanField(default=False, db_index=True)
     duel_emotes = models.JSONField(default=default_duel_emotes)
     max_streak = models.IntegerField(default=0)
-    pets = models.ManyToManyField('api.Pet', related_name='owners', blank=True)
+    active_test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='active_profiles', default=DEFAULT_TEST_PREP,
+    )
     goal = models.CharField(max_length=255,
                             choices=[('beginner', 'Beginner Path'), ('intermediate', 'Steady Learner'),
                                      ('advanced', 'Advanced Track'), ('expert', 'Expert Challenge')],
@@ -371,22 +406,25 @@ class Profile(models.Model):
 
 
 class PracticeStats(models.Model):
-    """Per-user, per-subject practice state: rating and lifetime counters.
-    One row per (user, subject), so adding a new subject is a data change,
+    """Per-user, per-test, per-subject practice state and lifetime counters.
+    One row per (user, test prep, subject), so adding a new subject is a data change,
     not a schema change. Accuracy is derived (correct / answered), never
     stored, so it can't drift. In-progress questions live in
     PracticeActiveQuestion (one per lane, not per subject)."""
-    SUBJECT_CHOICES = [('english', 'English'), ('math', 'Math')]
-
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_stats')
-    subject = models.CharField(max_length=10, choices=SUBJECT_CHOICES)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='practice_stats', default=DEFAULT_TEST_PREP,
+    )
+    subject = models.CharField(max_length=32)
     elo = models.IntegerField(default=1200)
     answered = models.IntegerField(default=0)
     correct = models.IntegerField(default=0)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['user', 'subject'], name='unique_practice_stats_per_subject'),
+            models.UniqueConstraint(
+                fields=['user', 'test_prep', 'subject'], name='unique_practice_stats_per_test_subject',
+            ),
         ]
 
     @property
@@ -398,20 +436,27 @@ class PracticeStats(models.Model):
 
 
 class PracticeTypeStats(models.Model):
-    """Per-user, per-question-type progress through the question bank.
+    """Per-user, per-test, per-question-type progress through the question bank.
     `solved` counts DISTINCT questions attempted (practice never re-serves an
     attempted question, so attempted == progress toward finishing the type);
     `correct` counts how many of those were answered right. Derived from
     PracticeAttempt: the backfill migration rebuilds both from the attempt
     log, so pre-log legacy activity intentionally starts at zero here."""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_type_stats')
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='practice_type_stats', default=DEFAULT_TEST_PREP,
+    )
+    subject = models.CharField(max_length=32, default='english')
     question_type = models.CharField(max_length=1000)
     solved = models.IntegerField(default=0)
     correct = models.IntegerField(default=0)
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['user', 'question_type'], name='unique_practice_type_stats'),
+            models.UniqueConstraint(
+                fields=['user', 'test_prep', 'subject', 'question_type'],
+                name='unique_practice_type_stats_per_test',
+            ),
         ]
 
     def __str__(self):
@@ -425,12 +470,17 @@ class PracticeActiveQuestion(models.Model):
     same question instead of letting it be skipped. Rows are deleted when the
     question is answered, so the table only holds open questions."""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_active_questions')
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='active_questions', default=DEFAULT_TEST_PREP,
+    )
     lane = models.CharField(max_length=128)
     question = models.ForeignKey('api.Question', on_delete=models.CASCADE, related_name='+')
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=['user', 'lane'], name='unique_active_question_per_lane'),
+            models.UniqueConstraint(
+                fields=['user', 'test_prep', 'lane'], name='unique_active_question_per_test_lane',
+            ),
         ]
 
     def __str__(self):
@@ -438,7 +488,7 @@ class PracticeActiveQuestion(models.Model):
 
 
 class UserStatistics(models.Model):
-    """Shop economy state: coins and pet multipliers.
+    """Account-wide shop economy state.
 
     Practice counters used to live here too; they moved to PracticeStats
     (per-subject), and duplicate rows were merged when this became OneToOne.
@@ -446,36 +496,61 @@ class UserStatistics(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='infinitequestionstatistics')
     coins = models.IntegerField(default=0)
     normal_multiplier = models.FloatField(default=1.00)
-    user_pet_levels = models.JSONField(default=dict)
 
     def __str__(self):
         return f"{self.user.username} - {self.coins} coins"
 
-    def total_multiplier(self):  # normal multiplier + pet multipliers
-        total_multiplier = self.normal_multiplier
-        for pet_id, level in self.user_pet_levels.items():
-            try:
-                pet = Pet.objects.get(id=pet_id)
-                # Get coin multipliers for the pet
-                multipliers = pet.coin_multipliers
+    def total_multiplier(self):
+        return round(self.normal_multiplier, 2)
 
-                # If the current level does not exist, default to the highest level
-                if str(level) in multipliers:
-                    total_multiplier *= multipliers[str(level)]
-                else:
-                    # Default to the highest level multiplier available
-                    highest_level = max(map(int, multipliers.keys()))  # Convert keys to integers to find the max level
-                    total_multiplier *= multipliers[str(highest_level)]
-            except Pet.DoesNotExist:
-                continue  # If the pet doesn't exist, skip it
 
-        return round(total_multiplier, 2)  # Return the total multiplier rounded to 2 decimal places
+class TestPrepUserStats(models.Model):
+    """Per-user totals that must never leak between test-prep products."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='test_prep_stats')
+    test_prep = models.ForeignKey(TestPrep, on_delete=models.CASCADE, related_name='user_stats')
+    duel_elo = models.IntegerField(default=1500)
+    max_streak = models.IntegerField(default=0)
+    practice_streak = models.IntegerField(default=0)
+    longest_practice_streak = models.IntegerField(default=0)
+    last_practice_completed = models.DateField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'test_prep'], name='unique_user_stats_per_test_prep'),
+        ]
+        indexes = [models.Index(fields=['test_prep', '-duel_elo'])]
+
+    def __str__(self):
+        return f'{self.user.username} — {self.test_prep_id}: {self.duel_elo}'
+
+    @classmethod
+    def for_user(cls, user, test_prep=DEFAULT_TEST_PREP):
+        default_elo = user.profile.elo_rating if test_prep == DEFAULT_TEST_PREP else 1500
+        stats, _ = cls.objects.get_or_create(
+            user=user, test_prep_id=test_prep,
+            defaults={'duel_elo': default_elo, 'max_streak': user.profile.max_streak},
+        )
+        if test_prep == DEFAULT_TEST_PREP and stats.duel_elo != user.profile.elo_rating:
+            stats.duel_elo = user.profile.elo_rating
+            stats.save(update_fields=['duel_elo'])
+        return stats
+
+    def update_elo(self, opponent_elo, result):
+        new_elo, _ = self.user.profile.f(result, self.duel_elo, opponent_elo, kappa=1, k=16)
+        self.duel_elo = int(new_elo)
+        self.save(update_fields=['duel_elo'])
+        # Old clients still read Profile.elo_rating for SAT.
+        if self.test_prep_id == DEFAULT_TEST_PREP:
+            Profile.objects.filter(user_id=self.user_id).update(elo_rating=self.duel_elo)
 
 
 
 class PowerSprintStatistics(models.Model):
     """Tracks user's performance in different game modes."""
     user = models.ForeignKey(User, on_delete=models.CASCADE)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='power_sprint_stats', default=DEFAULT_TEST_PREP,
+    )
     bullet_record = models.IntegerField(default=0)
     blitz_record = models.IntegerField(default=0)
     rapid_record = models.IntegerField(default=0)
@@ -488,6 +563,9 @@ class PowerSprintStatistics(models.Model):
 class SurvivalStatistics(models.Model):
     """Tracks user's survival mode performance."""
     user = models.ForeignKey(User, on_delete=models.CASCADE)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='survival_stats', default=DEFAULT_TEST_PREP,
+    )
     record = models.IntegerField(default=0)
 
     def __str__(self):
@@ -506,6 +584,9 @@ class Tournament(models.Model):
     end_time = models.DateTimeField(null=True)
     duration = models.DurationField(default=timezone.timedelta(minutes=30))
     questions = models.ManyToManyField(Question)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='tournaments', default=DEFAULT_TEST_PREP,
+    )
     private = models.BooleanField(default=False)
     join_code = models.CharField(max_length=10, blank=True, null=True)
 
@@ -552,6 +633,9 @@ class TournamentQuestion(models.Model):
 class Room(models.Model):
     """Represents a battle room between two users."""
     user1 = models.ForeignKey(User, related_name='room_user1', on_delete=models.CASCADE)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='duel_rooms', default=DEFAULT_TEST_PREP,
+    )
     user2 = models.ForeignKey(User, related_name='room_user2', on_delete=models.CASCADE, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     questions = models.ManyToManyField(Question, blank=True)
@@ -594,21 +678,26 @@ class Room(models.Model):
 
         user1_profile = self.user1.profile
         user2_profile = self.user2.profile
-        user1_start = user1_profile.elo_rating
-        user2_start = user2_profile.elo_rating
+        user1_stats = TestPrepUserStats.for_user(self.user1, self.test_prep_id)
+        user2_stats = TestPrepUserStats.for_user(self.user2, self.test_prep_id)
+        user1_start = user1_stats.duel_elo
+        user2_start = user2_stats.duel_elo
         self.user1_elo_before = user1_start
         self.user2_elo_before = user2_start
         self.status = 'Ended'
         self.save()
 
-        user1_profile.update_elo(user2_start, result_user1)
-        user2_profile.update_elo(user1_start, result_user2)
-        for profile in (user1_profile, user2_profile):
-            if profile.is_bot and profile.elo_rating > 1799:
-                profile.elo_rating = 1799
-                profile.save(update_fields=['elo_rating'])
-        self.user1_elo_after = user1_profile.elo_rating
-        self.user2_elo_after = user2_profile.elo_rating
+        user1_stats.update_elo(user2_start, result_user1)
+        user2_stats.update_elo(user1_start, result_user2)
+        for profile, stats in ((user1_profile, user1_stats), (user2_profile, user2_stats)):
+            if profile.is_bot and stats.duel_elo > 1799:
+                stats.duel_elo = 1799
+                stats.save(update_fields=['duel_elo'])
+                if self.test_prep_id == DEFAULT_TEST_PREP:
+                    profile.elo_rating = 1799
+                    profile.save(update_fields=['elo_rating'])
+        self.user1_elo_after = user1_stats.duel_elo
+        self.user2_elo_after = user2_stats.duel_elo
         Room.objects.filter(pk=self.pk).update(
             user1_elo_after=self.user1_elo_after,
             user2_elo_after=self.user2_elo_after,
@@ -623,7 +712,7 @@ class Room(models.Model):
         if self.status == 'Ended' and previous_status != 'Ended':
             self.end_battle()
         if not self.questions.exists() and self.user1 and self.user2:
-            self.questions.set(Question.get_random_questions(10))
+            self.questions.set(Question.get_random_questions(10, self.test_prep_id))
             for question in self.questions.all():
                 TrackedQuestion.objects.create(
                     user=self.user1,
@@ -720,35 +809,51 @@ class DirectMessage(models.Model):
 
 
 class Ranking(models.Model):
-    """Global user rankings based on performance."""
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
-    rank = models.PositiveIntegerField(unique=True)
+    """Materialized duel ranking within one test-prep product."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='rankings', default=DEFAULT_TEST_PREP,
+    )
+    rank = models.PositiveIntegerField()
     last_updated = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['rank']
+        constraints = [
+            models.UniqueConstraint(fields=['user', 'test_prep'], name='unique_ranking_per_test_prep'),
+            models.UniqueConstraint(fields=['test_prep', 'rank'], name='unique_rank_within_test_prep'),
+        ]
 
     def __str__(self):
         return f"{self.user.username} - Rank {self.rank}"
 
     @classmethod
-    def update_rankings(cls):
-        """Recompute every user's rank in bulk (was 2 queries per user)."""
-        profiles = list(
-            Profile.objects.order_by('-elo_rating', 'user_id')
-            .values_list('user_id', flat=True)
-        )
-        existing = {r.user_id: r for r in cls.objects.all()}
+    def update_rankings(cls, test_prep=DEFAULT_TEST_PREP):
+        """Recompute one test prep's rankings in bulk."""
+        scoped = dict(TestPrepUserStats.objects.filter(
+            test_prep_id=test_prep,
+        ).values_list('user_id', 'duel_elo'))
+        if test_prep == DEFAULT_TEST_PREP:
+            candidates = list(Profile.objects.values_list('user_id', 'elo_rating'))
+        else:
+            candidates = list(scoped.items())
+        ratings = [user_id for user_id, _ in sorted(candidates, key=lambda row: (-row[1], row[0]))]
+        existing = {r.user_id: r for r in cls.objects.filter(test_prep_id=test_prep)}
+        stale_user_ids = set(existing) - set(ratings)
+        if stale_user_ids:
+            cls.objects.filter(test_prep_id=test_prep, user_id__in=stale_user_ids).delete()
+            for user_id in stale_user_ids:
+                existing.pop(user_id)
 
         # Assign to a temporary offset first so the unique `rank` constraint
         # doesn't collide while rows are being renumbered.
-        offset = len(profiles) + 1
+        offset = len(ratings) + 1
         to_update = []
         to_create = []
-        for index, user_id in enumerate(profiles, start=1):
+        for index, user_id in enumerate(ratings, start=1):
             ranking = existing.get(user_id)
             if ranking is None:
-                to_create.append(cls(user_id=user_id, rank=index + offset))
+                to_create.append(cls(user_id=user_id, test_prep_id=test_prep, rank=index + offset))
             else:
                 ranking.rank = index + offset
                 to_update.append(ranking)
@@ -757,7 +862,7 @@ class Ranking(models.Model):
             cls.objects.bulk_update(to_update, ['rank'])
             cls.objects.bulk_create(to_create)
             # Second pass: shift everyone down to their real rank.
-            all_rankings = list(cls.objects.order_by('rank'))
+            all_rankings = list(cls.objects.filter(test_prep_id=test_prep).order_by('rank'))
             for real_rank, ranking in enumerate(all_rankings, start=1):
                 ranking.rank = real_rank
             cls.objects.bulk_update(all_rankings, ['rank'])
@@ -783,10 +888,12 @@ class PracticeAttempt(models.Model):
     attempt at a question moves Elo".
     """
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_attempts')
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='practice_attempts', default=DEFAULT_TEST_PREP,
+    )
     question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='practice_attempts')
     subject = models.CharField(
-        max_length=10,
-        choices=[('english', 'English'), ('math', 'Math')],
+        max_length=32,
         default='english',
         db_index=True,
     )
@@ -800,7 +907,7 @@ class PracticeAttempt(models.Model):
         indexes = [
             models.Index(fields=['user', 'created_at']),   # daily quota lookups
             models.Index(fields=['user', 'question']),      # first-attempt checks
-            models.Index(fields=['user', 'subject']),       # profile + leaderboard splits
+            models.Index(fields=['user', 'test_prep', 'subject']),
         ]
 
     def __str__(self):
@@ -814,6 +921,9 @@ class PracticeTestResult(models.Model):
     be reopened later; question text is re-fetched by id on review.
     """
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='practice_test_results')
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='legacy_test_results', default=DEFAULT_TEST_PREP,
+    )
     test_id = models.IntegerField(default=1)
     test_name = models.CharField(max_length=100, default='SAT Diagnostic Test')
     score = models.IntegerField()
@@ -844,6 +954,9 @@ class PracticeTestModule(models.Model):
     ]
 
     name = models.CharField(max_length=120, unique=True)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='adaptive_modules', default=DEFAULT_TEST_PREP,
+    )
     subject = models.CharField(max_length=10, choices=SUBJECT_CHOICES)
     route = models.CharField(max_length=1, choices=ROUTE_CHOICES)
     questions = models.JSONField(default=list)
@@ -883,6 +996,9 @@ class PracticeTest(models.Model):
     }
 
     name = models.CharField(max_length=120, unique=True)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='adaptive_tests', default=DEFAULT_TEST_PREP,
+    )
     test_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_FULL, db_index=True)
     english_a = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_a',
@@ -938,6 +1054,8 @@ class PracticeTest(models.Model):
             if module is None:
                 continue
             module_ids.append(module.id)
+            if module.test_prep_id != self.test_prep_id:
+                raise ValidationError({field: 'This module belongs to a different test prep.'})
             if (module.subject, module.route) != signature:
                 raise ValidationError({field: 'This module has the wrong subject or adaptive route.'})
         if len(module_ids) != len(set(module_ids)):
@@ -1033,10 +1151,12 @@ class SavedQuestion(models.Model):
     re-deriving the taxonomy on every read.
     """
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='saved_questions')
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.CASCADE, related_name='saved_questions', default=DEFAULT_TEST_PREP,
+    )
     question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='saved_by')
     subject = models.CharField(
-        max_length=10,
-        choices=[('english', 'English'), ('math', 'Math')],
+        max_length=32,
         default='english',
         db_index=True,
     )
@@ -1093,6 +1213,9 @@ class PartyRoom(models.Model):
     MODES = ('classic', 'teams', 'survival', 'jeopardy', 'goldrush')
 
     host = models.ForeignKey(User, related_name='hosted_parties', on_delete=models.CASCADE)
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='party_rooms', default=DEFAULT_TEST_PREP,
+    )
     code = models.CharField(max_length=6, db_index=True)
     status = models.CharField(max_length=12, default='lobby',
                               choices=[(s, s) for s in STATUSES])
@@ -1112,8 +1235,7 @@ class PartyRoom(models.Model):
     # Gold Rush only: total game length in seconds. Each player answers a
     # self-paced stream of questions until this runs out.
     time_limit = models.IntegerField(default=600)
-    subject = models.CharField(max_length=8, default='mixed',
-                               choices=[(s, s) for s in ('math', 'english', 'mixed')])
+    subject = models.CharField(max_length=32, default='mixed')
     difficulty = models.CharField(max_length=6, default='medium',
                                   choices=[(d, d) for d in ('easy', 'medium', 'hard')])
     question_ids = models.JSONField(default=list)  # ordered; index = question number - 1

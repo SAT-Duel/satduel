@@ -8,7 +8,8 @@ from allauth.socialaccount.models import SocialAccount
 from api.account_deletion import delete_user_account
 from api.models import Announcement, PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     PowerSprintStatistics, SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, Ranking, \
-    Pet, PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTest, PracticeTestAttempt, PracticeTestModule, PracticeTypeStats, \
+    PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTest, PracticeTestAttempt, PracticeTestModule, PracticeTypeStats, \
+    TestPrep, TestPrepUserStats, TestSection, \
     PartyRoom, PartyPlayer
 
 
@@ -20,7 +21,7 @@ class ProfileInline(admin.StackedInline):
     model = Profile
     can_delete = False
     fields = [
-        'role', 'grade', 'grade_last_promoted_year', 'country', 'elo_rating', 'is_bot',
+        'role', 'grade', 'grade_last_promoted_year', 'country', 'active_test_prep', 'elo_rating', 'is_bot',
         'avatar', 'avatar_icon', 'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
         'username_finalized', 'grade_selected',
         'sat_exam_date', 'sat_exam_date_selected', 'marketing_opt_in', 'terms_accepted_at',
@@ -88,8 +89,8 @@ admin.site.register(User, UserAdmin)
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
-    list_display = ['id', 'question_type', 'source', 'source_other', 'difficulty', 'answer', 'sp_elo_rating']
-    list_filter = ['question_type', 'source', 'difficulty']
+    list_display = ['id', 'test_prep', 'subject', 'question_type', 'source', 'difficulty', 'answer', 'sp_elo_rating']
+    list_filter = ['test_prep', 'subject', 'question_type', 'source', 'difficulty']
     search_fields = ['question']
 
 
@@ -110,12 +111,12 @@ class AnnouncementAdmin(admin.ModelAdmin):
 @admin.register(Profile)
 class ProfileAdmin(admin.ModelAdmin):
     list_display = [
-        'user', 'role', 'grade', 'grade_last_promoted_year', 'grade_selected', 'username_finalized', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
+        'user', 'role', 'grade', 'grade_last_promoted_year', 'grade_selected', 'username_finalized', 'active_test_prep', 'avatar', 'avatar_icon', 'elo_rating', 'is_bot',
         'is_premium', 'premium_until', 'stripe_customer_id', 'stripe_subscription_id',
         'marketing_opt_in',
     ]
     list_filter = [
-        'role', 'grade', 'grade_selected', 'username_finalized',
+        'role', 'grade', 'grade_selected', 'username_finalized', 'active_test_prep',
         'is_premium', 'is_bot', 'marketing_opt_in',
     ]
     search_fields = ['user__username', 'user__email', 'stripe_customer_id', 'stripe_subscription_id']
@@ -142,24 +143,24 @@ class SATExamDateAdmin(admin.ModelAdmin):
 
 @admin.register(PracticeAttempt)
 class PracticeAttemptAdmin(admin.ModelAdmin):
-    list_display = ['user', 'question', 'subject', 'correct', 'created_at']
-    list_filter = ['subject', 'correct', 'created_at']
+    list_display = ['user', 'test_prep', 'question', 'subject', 'correct', 'created_at']
+    list_filter = ['test_prep', 'subject', 'correct', 'created_at']
     search_fields = ['user__username']
     raw_id_fields = ['user', 'question']
 
 
 @admin.register(PracticeTestModule)
 class PracticeTestModuleAdmin(admin.ModelAdmin):
-    list_display = ['name', 'subject', 'route', 'question_count', 'created_by', 'created_at']
-    list_filter = ['subject', 'route', 'created_at']
+    list_display = ['name', 'test_prep', 'subject', 'route', 'question_count', 'created_by', 'created_at']
+    list_filter = ['test_prep', 'subject', 'route', 'created_at']
     search_fields = ['name', 'created_by__username']
     readonly_fields = ['created_at', 'updated_at']
 
 
 @admin.register(PracticeTest)
 class PracticeTestAdmin(admin.ModelAdmin):
-    list_display = ['name', 'active', 'created_by', 'created_at']
-    list_filter = ['active', 'created_at']
+    list_display = ['name', 'test_prep', 'active', 'created_by', 'created_at']
+    list_filter = ['test_prep', 'active', 'created_at']
     search_fields = ['name', 'created_by__username']
     readonly_fields = ['created_at', 'updated_at']
 
@@ -178,23 +179,23 @@ class PracticeTestAttemptAdmin(admin.ModelAdmin):
 
 @admin.register(PracticeStats)
 class PracticeStatsAdmin(admin.ModelAdmin):
-    list_display = ['user', 'subject', 'elo', 'answered', 'correct']
-    list_filter = ['subject']
+    list_display = ['user', 'test_prep', 'subject', 'elo', 'answered', 'correct']
+    list_filter = ['test_prep', 'subject']
     search_fields = ['user__username']
     raw_id_fields = ['user']
 
 
 @admin.register(PracticeTypeStats)
 class PracticeTypeStatsAdmin(admin.ModelAdmin):
-    list_display = ['user', 'question_type', 'solved', 'correct']
-    list_filter = ['question_type']
+    list_display = ['user', 'test_prep', 'subject', 'question_type', 'solved', 'correct']
+    list_filter = ['test_prep', 'subject', 'question_type']
     search_fields = ['user__username', 'question_type']
     raw_id_fields = ['user']
 
 
 @admin.register(PracticeActiveQuestion)
 class PracticeActiveQuestionAdmin(admin.ModelAdmin):
-    list_display = ['user', 'lane', 'question']
+    list_display = ['user', 'test_prep', 'lane', 'question']
     search_fields = ['user__username', 'lane']
     raw_id_fields = ['user', 'question']
 
@@ -210,7 +211,27 @@ admin.site.register(Tournament)
 admin.site.register(TournamentParticipation)
 admin.site.register(TournamentQuestion)
 admin.site.register(Ranking)
-admin.site.register(Pet)
+
+
+@admin.register(TestPrep)
+class TestPrepAdmin(admin.ModelAdmin):
+    list_display = ['code', 'name', 'active', 'display_order']
+    list_editable = ['active', 'display_order']
+
+
+@admin.register(TestSection)
+class TestSectionAdmin(admin.ModelAdmin):
+    list_display = ['test_prep', 'code', 'name', 'active', 'display_order']
+    list_filter = ['test_prep', 'active']
+    list_editable = ['active', 'display_order']
+
+
+@admin.register(TestPrepUserStats)
+class TestPrepUserStatsAdmin(admin.ModelAdmin):
+    list_display = ['user', 'test_prep', 'duel_elo', 'max_streak']
+    list_filter = ['test_prep']
+    search_fields = ['user__username']
+    raw_id_fields = ['user']
 
 
 class PartyPlayerInline(admin.TabularInline):

@@ -5,17 +5,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.bot_duels import rotating_bot_users
-from ..models import OnlineUser
+from ..models import OnlineUser, TestPrepUserStats
 
 
-def _player_payload(user, is_current_user=False):
+def _player_payload(user, elo_rating, is_current_user=False):
     profile = user.profile
     return {
         'id': user.id,
         'username': user.username,
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
-        'elo_rating': profile.elo_rating,
+        'elo_rating': elo_rating,
         'is_current_user': is_current_user,
     }
 
@@ -50,6 +50,7 @@ def remove_online_user(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def get_online_users(request):
+    test_prep = request.user.profile.active_test_prep_id
     threshold = timezone.now() - timezone.timedelta(seconds=15)
     real_users = [
         online.user for online in
@@ -58,8 +59,15 @@ def get_online_users(request):
         .select_related('user__profile')
     ]
     bot_users = rotating_bot_users()
+    users = [request.user, *real_users, *bot_users]
+    if test_prep == 'sat':
+        ratings = {user.id: user.profile.elo_rating for user in users}
+    else:
+        ratings = dict(TestPrepUserStats.objects.filter(
+            user__in=users, test_prep_id=test_prep,
+        ).values_list('user_id', 'duel_elo'))
     users_list = (
-        [_player_payload(request.user, is_current_user=True)]
-        + [_player_payload(user) for user in real_users + bot_users]
+        [_player_payload(request.user, ratings.get(request.user.id, 1500), is_current_user=True)]
+        + [_player_payload(user, ratings.get(user.id, 1500)) for user in real_users + bot_users]
     )
     return JsonResponse({'users': users_list})

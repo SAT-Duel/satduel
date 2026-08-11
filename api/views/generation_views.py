@@ -11,7 +11,7 @@ from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api import generation
-from api.models import Question
+from api.models import DEFAULT_TEST_PREP, Question
 
 
 @api_view(['GET'])
@@ -169,7 +169,10 @@ def generation_duplicates(request):
 
     # ponytail: full-table scan, no stored fingerprint column. ~1s at 10k
     # questions; add a fingerprint field + unique index if the bank outgrows it.
-    rows = list(Question.objects.filter(question_type__in=english_types).values(*QUESTION_FIELDS))
+    rows = list(Question.objects.filter(
+        test_prep_id=DEFAULT_TEST_PREP,
+        question_type__in=english_types,
+    ).values(*QUESTION_FIELDS))
     exact, candidates = {}, {question_type: [] for question_type in english_types}
     for row in rows:
         key = (row['question_type'], generation.fingerprint(

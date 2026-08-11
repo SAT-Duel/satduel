@@ -20,9 +20,9 @@ from api.models import (
     PartyPlayer,
     PartyRoom,
     Question,
+    TestSection,
     party_lives_cap,
 )
-from api.views.views import ENGLISH_QUESTION_TYPES, MATH_QUESTION_TYPES
 
 # Free-tier vs premium ceilings for room settings.
 CAPS = {
@@ -52,11 +52,6 @@ def _roll_reward():
         return {'kind': 'swap'}            # swap totals with a chosen player
     return {'kind': 'lose', 'pct': 30}     # a dud chest
 DIFFICULTY_RANGES = {'easy': (1, 3), 'medium': (2, 4), 'hard': (3, 5)}
-SUBJECT_TYPES = {
-    'math': MATH_QUESTION_TYPES,
-    'english': ENGLISH_QUESTION_TYPES,
-    'mixed': MATH_QUESTION_TYPES + ENGLISH_QUESTION_TYPES,
-}
 JOINABLE = ('lobby', 'countdown', 'question', 'leaderboard')
 
 
@@ -168,7 +163,11 @@ def _team_standings(room, entries):
 def create_party(request):
     caps = _caps_for(request.user)
     data = request.data
-    subject = data.get('subject') if data.get('subject') in SUBJECT_TYPES else 'mixed'
+    test_prep = request.user.profile.active_test_prep
+    valid_subjects = set(TestSection.objects.filter(
+        test_prep=test_prep, active=True,
+    ).values_list('code', flat=True))
+    subject = data.get('subject') if data.get('subject') in valid_subjects | {'mixed'} else 'mixed'
     difficulty = data.get('difficulty') if data.get('difficulty') in DIFFICULTY_RANGES else 'medium'
     mode = data.get('mode') if data.get('mode') in PartyRoom.MODES else 'classic'
 
@@ -183,6 +182,7 @@ def create_party(request):
 
     room = PartyRoom.objects.create(
         host=request.user,
+        test_prep=test_prep,
         code=_new_code(),
         mode=mode,
         num_teams=_clamp(data.get('num_teams'), 2, PARTY_MAX_TEAMS, 2),
@@ -238,13 +238,14 @@ def start_party(request, room_id):
         )
 
     lo, hi = DIFFICULTY_RANGES[room.difficulty]
-    ids = list(
-        Question.objects.filter(
-            question_type__in=SUBJECT_TYPES[room.subject],
-            difficulty__gte=lo,
-            difficulty__lte=hi,
-        ).values_list('id', flat=True)
+    questions = Question.objects.filter(
+        test_prep=room.test_prep,
+        difficulty__gte=lo,
+        difficulty__lte=hi,
     )
+    if room.subject != 'mixed':
+        questions = questions.filter(subject=room.subject)
+    ids = list(questions.values_list('id', flat=True))
     if not ids:
         return Response({'error': 'No questions available for these settings.'}, status=400)
 
@@ -553,6 +554,7 @@ def party_state(request, room_id):
         'you': request.user.id,
         'is_host': room.host_id == request.user.id,
         'host_username': room.host.username,
+        'test_prep': room.test_prep_id,
         'mode': room.mode,
         'settings': {
             'max_players': room.max_players,
