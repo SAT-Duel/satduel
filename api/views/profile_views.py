@@ -108,6 +108,8 @@ def _current_profile_payload(profile):
     }
     data['onboarding'] = {
         'required': profile.onboarding_required,
+        'grade_selected': profile.grade_selected,
+        'username_finalized': profile.username_finalized,
         'sat_exam_date': profile.sat_exam_date.isoformat() if profile.sat_exam_date else None,
         'sat_exam_date_selected': profile.sat_exam_date_selected,
         'marketing_opt_in': profile.marketing_opt_in,

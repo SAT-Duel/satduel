@@ -964,6 +964,16 @@ class CompleteProfileTests(APITestCase):
         self.assertIsNone(self.user.profile.sat_exam_date)
         self.assertTrue(self.user.profile.sat_exam_date_selected)
 
+    def test_profile_payload_reports_whether_grade_was_selected(self):
+        self.user.profile.grade_selected = False
+        self.user.profile.save(update_fields=['grade_selected'])
+
+        resp = self.client.get(reverse('profile'))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.data['onboarding']['grade_selected'])
+        self.assertTrue(resp.data['onboarding']['username_finalized'])
+
     def test_requires_auth(self):
         self.client.force_authenticate(user=None)
         resp = self.client.post(reverse('auth_complete_profile'), self.payload(), format='json')
