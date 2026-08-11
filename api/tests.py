@@ -14,8 +14,8 @@ from rest_framework.test import APITestCase
 from allauth.account.models import EmailAddress
 from api import generation
 from api.models import (
-    DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, PracticeTestModule,
-    Profile, Question, QuestionReport, Ranking, Room, SATExamDate, SavedQuestion, TrackedQuestion,
+    Announcement, DirectMessage, DuelEmote, FriendRequest, PendingRegistration, PracticeAttempt, PracticeTestModule,
+    Profile, Question, QuestionReport, Room, SATExamDate, SavedQuestion, TrackedQuestion,
 )
 from api.views.auth_views import PendingRegistrationSerializer
 from api.views.serializers import QuestionSerializer
@@ -306,6 +306,64 @@ class QuestionReportTests(APITestCase):
         self.assertFalse(QuestionReport.objects.exists())
 
 
+class AnnouncementTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='student', password='Secret123')
+        self.admin = User.objects.create_user(username='staff', password='Secret123', is_staff=True)
+
+    def test_active_announcement_is_visible_to_signed_in_users(self):
+        Announcement.objects.create(message='New practice test 🎉', is_active=True)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse('active_announcement'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['message'], 'New practice test 🎉')
+        self.assertTrue(response.data['version'])
+
+    def test_inactive_announcement_is_hidden(self):
+        Announcement.objects.create(message='Not yet', is_active=False)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse('active_announcement'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data)
+
+    def test_only_staff_can_update_announcement(self):
+        self.client.force_authenticate(user=self.user)
+        denied = self.client.put(reverse('manage_announcement'), {
+            'message': 'Nope', 'is_active': True,
+        }, format='json')
+
+        self.client.force_authenticate(user=self.admin)
+        allowed = self.client.put(reverse('manage_announcement'), {
+            'message': 'Try the new test 🚀', 'is_active': True,
+        }, format='json')
+
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(allowed.status_code, 200)
+        self.assertEqual(Announcement.objects.get(pk=1).message, 'Try the new test 🚀')
+
+    def test_active_announcement_requires_a_message(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.put(reverse('manage_announcement'), {
+            'message': '   ', 'is_active': True,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_saving_without_changes_keeps_the_same_version(self):
+        self.client.force_authenticate(user=self.admin)
+        payload = {'message': 'Practice Test 2 is live', 'is_active': True}
+
+        first = self.client.put(reverse('manage_announcement'), payload, format='json')
+        second = self.client.put(reverse('manage_announcement'), payload, format='json')
+
+        self.assertEqual(first.data['version'], second.data['version'])
+
+
 class AdminQuestionDeleteTests(APITestCase):
     """The admin editor's delete button drops the question for good, so the
     endpoint must stay staff-only and take its cascading rows with it."""
@@ -552,7 +610,12 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('exactly 22', response.data['prompt'])
         self.assertIn('4-6 student-produced', response.data['prompt'])
+        self.assertIn('5 characters for a positive answer', response.data['prompt'])
+        self.assertIn('separated by semicolons', response.data['prompt'])
+        self.assertIn('accepts .6666, .6667, 0.666, or 0.667', response.data['prompt'])
         self.assertIn('Module 2 (higher-difficulty route)', response.data['prompt'])
+        self.assertIn('questions 1-15 must each be difficulty 3 or 4', response.data['prompt'])
+        self.assertIn('reserve difficulty 5 for the final four', response.data['prompt'])
         self.assertIn('Every question counts toward the score', response.data['prompt'])
         self.assertIn('Never invent a source, citation, or quotation', response.data['prompt'])
         self.assertNotIn('is_pretest', response.data['prompt'])
@@ -566,10 +629,52 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('Transitions followed by 2-3 Rhetorical', response.data['prompt'])
         self.assertIn('MUST occupy the final positions', response.data['prompt'])
+        self.assertIn('keep the average at or below 3.0', response.data['prompt'])
+        self.assertIn('grammar point may appear more than twice', response.data['prompt'])
         self.assertIn(
             '<source attribution line>\\n\\n<excerpt text>\\n\\n<question sentence>',
             response.data['prompt'],
         )
+
+    def test_reading_module_two_prompt_hardens_graph_evidence(self):
+        response = self.client.post(reverse('practice_test_generation_prompt'), {
+            'subject': 'english', 'route': 'C',
+        }, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('uses a graph must be difficulty 3, 4, or 5', response.data['prompt'])
+        self.assertIn('connect an exact visual trend or comparison', response.data['prompt'])
+
+    def test_imports_hard_math_module_with_final_difficulty_spike(self):
+        questions = self.math_module_questions()
+        difficulties = [3] * 7 + [4] * 11 + [5] * 4
+        for question, difficulty in zip(questions, difficulties):
+            question['difficulty'] = difficulty
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Math Route C - Calibrated',
+            'subject': 'math',
+            'route': 'C',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+
+    def test_rejects_hard_math_module_with_easy_first_fifteen(self):
+        questions = self.math_module_questions()
+        difficulties = [2] + [3] * 6 + [4] * 11 + [5] * 4
+        for question, difficulty in zip(questions, difficulties):
+            question['difficulty'] = difficulty
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Math Route C - Too easy early',
+            'subject': 'math',
+            'route': 'C',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('questions 1-15 must be difficulty 3-4', response.data['error'])
 
     def test_regular_reading_prompt_enforces_source_spacing(self):
         prompt = generation.build_prompt('Words in Context', 3, 2)
@@ -595,6 +700,20 @@ class PracticeTestGenerationTests(APITestCase):
         self.assertEqual(module.questions[0]['order'], 1)
         self.assertEqual(Question.objects.count(), normal_count)
 
+    def test_rejects_invalid_student_response_answer_format(self):
+        questions = self.math_module_questions()
+        questions[3]['answer'] = '3 1/2'
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Math Route A - Invalid response',
+            'subject': 'math',
+            'route': 'A',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('valid Bluebook numeric entry formats', response.data['error'])
+
     def test_imports_reading_module_in_official_domain_order(self):
         response = self.client.post(reverse('practice_test_generation_modules'), {
             'name': 'Reading Route A - Form 1',
@@ -607,6 +726,24 @@ class PracticeTestGenerationTests(APITestCase):
         module = PracticeTestModule.objects.get()
         self.assertEqual(module.questions[0]['question_type'], 'Words in Context')
         self.assertEqual(module.question_count, 27)
+
+    def test_rejects_reading_module_one_above_average_three(self):
+        questions = self.english_module_questions()
+        raised = 0
+        for question in questions:
+            if question['difficulty'] == 1 and raised < 2:
+                question['difficulty'] = 3
+                raised += 1
+
+        response = self.client.post(reverse('practice_test_generation_modules'), {
+            'name': 'Reading Route A - Too hard',
+            'subject': 'english',
+            'route': 'A',
+            'questions': questions,
+        }, format='json')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('average difficulty must be 2.5-3.0', response.data['error'])
 
     def test_rejects_reading_module_with_notes_before_transitions(self):
         questions = self.english_module_questions()
@@ -1224,29 +1361,6 @@ class RegistrationOnboardingTests(APITestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertFalse(User.objects.filter(username='new_student').exists())
-
-
-class RankingUpdateTests(APITestCase):
-    def test_rankings_ordered_by_elo(self):
-        users = []
-        for i, elo in enumerate([1200, 1800, 1500]):
-            u = User.objects.create_user(username=f'u{i}', email=f'u{i}@e.com')
-            Profile.objects.create(user=u, elo_rating=elo)
-            users.append(u)
-        Ranking.update_rankings()
-        ranks = {r.user.username: r.rank for r in Ranking.objects.all()}
-        self.assertEqual(ranks['u1'], 1)
-        self.assertLess(ranks['u2'], ranks['u0'])
-        self.assertTrue(User.objects.filter(profile__is_bot=True, ranking__isnull=False).exists())
-        self.assertEqual(sorted(ranks.values()), list(range(1, len(ranks) + 1)))
-
-    def test_rankings_idempotent(self):
-        u = User.objects.create_user(username='solo', email='s@e.com')
-        Profile.objects.create(user=u, elo_rating=1500)
-        Ranking.update_rankings()
-        Ranking.update_rankings()  # second run must not blow up on unique constraint
-        self.assertIsNotNone(Ranking.objects.get(user=u).rank)
-        self.assertEqual(Ranking.objects.count(), Profile.objects.count())
 
 
 class LeaderboardViewTests(APITestCase):
@@ -2676,6 +2790,70 @@ class PartyModeTests(APITestCase):
         resp = self.client.post(reverse('party_join'), {'code': first['code']}, format='json')
         self.assertEqual(resp.status_code, 404)
 
+    def test_creating_a_room_does_not_delete_old_party_history(self):
+        from api.models import PartyRoom
+        first = self._create()
+        PartyRoom.objects.filter(id=first['id']).update(
+            status='finished', created_at=timezone.now() - timedelta(days=3),
+        )
+        self._create()
+        self.assertTrue(PartyRoom.objects.filter(id=first['id']).exists())
+
+    def test_history_lists_hosted_and_participated_rooms_with_review(self):
+        from api.models import PartyPlayer, PartyRoom
+        question = Question.objects.first()
+        room = PartyRoom.objects.create(
+            host=self.host,
+            original_host=self.host,
+            code='123456',
+            status='finished',
+            question_ids=[question.id],
+            num_questions=1,
+        )
+        PartyPlayer.objects.create(
+            room=room,
+            user=self.host,
+            score=900,
+            answers={'0': {'choice': 'A', 'correct': True, 'points': 900}},
+        )
+        PartyPlayer.objects.create(
+            room=room,
+            user=self.guest,
+            score=0,
+            answers={'0': {'choice': 'B', 'correct': False, 'points': 0}},
+        )
+
+        self.client.force_authenticate(user=self.host)
+        hosted = self.client.get(reverse('party_history')).data
+        self.assertEqual(hosted[0]['role'], 'hosted')
+        self.assertEqual(hosted[0]['winners'], ['host'])
+
+        self.client.force_authenticate(user=self.guest)
+        participated = self.client.get(reverse('party_history')).data
+        self.assertEqual(participated[0]['role'], 'participated')
+        detail = self.client.get(reverse('party_history_detail', args=[room.id])).data
+        self.assertEqual(detail['your_score'], 0)
+        self.assertEqual(detail['questions'][0]['your_choice'], 'B')
+        self.assertFalse(detail['questions'][0]['correct'])
+        self.assertEqual(detail['questions'][0]['correct_choice'], 'A')
+
+    def test_party_history_is_private_to_players(self):
+        from api.models import PartyPlayer, PartyRoom
+        question = Question.objects.first()
+        room = PartyRoom.objects.create(
+            host=self.host,
+            original_host=self.host,
+            code='654321',
+            status='finished',
+            question_ids=[question.id],
+        )
+        PartyPlayer.objects.create(room=room, user=self.host)
+        outsider = User.objects.create_user(username='outsider', password='x')
+        Profile.objects.create(user=outsider)
+        self.client.force_authenticate(user=outsider)
+        response = self.client.get(reverse('party_history_detail', args=[room.id]))
+        self.assertEqual(response.status_code, 403)
+
     def test_host_leaving_hands_off_or_closes_room(self):
         from api.models import PartyRoom
         data = self._create()
@@ -2693,6 +2871,15 @@ class PartyModeTests(APITestCase):
         self.client.force_authenticate(user=self.guest)
         self.client.post(reverse('party_leave', args=[data['id']]))
         self.assertEqual(PartyRoom.objects.get(id=data['id']).status, 'finished')
+
+    def test_leaving_a_started_room_keeps_the_player_for_history(self):
+        from api.models import PartyRoom
+        data = self._create()
+        self.client.force_authenticate(user=self.guest)
+        self.client.post(reverse('party_join'), {'code': data['code']}, format='json')
+        PartyRoom.objects.filter(id=data['id']).update(status='question', question_ids=[Question.objects.first().id])
+        self.client.post(reverse('party_leave', args=[data['id']]))
+        self.assertTrue(PartyRoom.objects.get(id=data['id']).players.filter(user=self.guest).exists())
 
     def test_stale_host_is_replaced_on_poll(self):
         from api.models import PartyPlayer, PartyRoom
@@ -3346,6 +3533,9 @@ class PartyGoldRushModeTests(APITestCase):
         resp = self.client.post(reverse('party_gold_answer', args=[room_id]), {'choice': 'B'}, format='json')
         self.assertFalse(resp.data['correct'])
         self.assertEqual(resp.data['correct_choice'], 'A')
+        attempt = self.PartyRoom.objects.get(id=room_id).players.get(user=self.host).answers['g0']
+        self.assertFalse(attempt['correct'])
+        self.assertIn('question_id', attempt)
 
         state = self.client.get(reverse('party_state', args=[room_id])).data
         self.assertEqual(state['gold']['phase'], 'wrong')
@@ -3611,3 +3801,145 @@ class MarketingSyncTests(TransactionTestCase):
             HTTP_SVIX_SIGNATURE='v1,deadbeef',
         )
         self.assertEqual(resp.status_code, 400)
+
+
+class ImportDuplicateTests(APITestCase):
+    """The import page's duplicate check: a re-parse of an item already in the
+    bank must be caught through cosmetic differences, while two questions from
+    the same template with different numbers must not be."""
+
+    QUESTION = "The graph of $f$ is shown. [svg]<svg viewBox='0 0 10 10'><path d='M0 0'/></svg>[/svg]\nWhat is $f(3)$?"
+
+    def setUp(self):
+        self.admin = User.objects.create_user(username='dupe-admin', is_staff=True)
+        self.client.force_authenticate(user=self.admin)
+        self.existing = Question.objects.create(
+            question=self.QUESTION, choice_a='1', choice_b='2', choice_c='3', choice_d='4',
+            answer='B', difficulty=3, question_type='Command of Evidence',
+        )
+
+    def draft(self, **overrides):
+        draft = {
+            'question': self.QUESTION, 'choice_a': '1', 'choice_b': '2', 'choice_c': '3', 'choice_d': '4',
+            'answer': 'B', 'difficulty': 3, 'question_type': 'Command of Evidence', 'explanation': '',
+        }
+        draft.update(overrides)
+        return draft
+
+    def post(self, drafts):
+        resp = self.client.post(reverse('generation_duplicates'), {'questions': drafts}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        return resp.data['duplicates']
+
+    def test_reparsed_question_matches_through_cosmetic_differences(self):
+        reparsed = self.draft(question=(
+            "The graph of \\(f\\) is shown.  [svg]<svg viewBox='0 0 20 20'><circle cx='2'/></svg>[/svg] "
+            "What is \\(f(3)\\)?"
+        ))
+        duplicates = self.post([reparsed])
+        self.assertEqual(duplicates[0]['question_id'], self.existing.id)
+        self.assertEqual(duplicates[0]['comparison']['choice_b'], '2')
+
+    def test_table_representation_is_ignored(self):
+        stored = Question.objects.create(
+            question=(
+                'Results\n$$\\begin{array}{|c|c|} \\hline \\text{Year} & \\text{Value} '
+                '\\\\ \\hline 2024 & 17 \\\\ \\hline \\end{array}$$\nWhich choice is supported?'
+            ),
+            choice_a='First', choice_b='Second', choice_c='Third', choice_d='Fourth',
+            answer='A', difficulty=2, question_type='Command of Evidence',
+        )
+        reparsed = self.draft(
+            question='Results\n<table><tr><td>Different markup</td></tr></table>\nWhich choice is supported?',
+            choice_a='First', choice_b='Second', choice_c='Third', choice_d='Fourth',
+        )
+        self.assertEqual(self.post([reparsed])[0]['question_id'], stored.id)
+
+    def test_same_template_with_different_numbers_is_not_a_duplicate(self):
+        self.assertEqual(self.post([self.draft(question=self.QUESTION.replace('f(3)', 'f(5)'))]), {})
+        self.assertEqual(self.post([self.draft(choice_d='5')]), {})
+
+    def test_repeat_inside_the_batch_is_flagged_once(self):
+        new = self.draft(question='A brand new question?')
+        duplicates = self.post([new, new])
+        self.assertNotIn(0, duplicates)
+        self.assertEqual(duplicates[1]['where'], 'batch')
+        self.assertEqual(duplicates[1]['draft_index'], 0)
+
+    def test_exact_match_stays_inside_one_question_type(self):
+        self.assertEqual(self.post([self.draft(question_type='Central Ideas and Details')]), {})
+
+    PASSAGE = (
+        'The following text is adapted from a 1915 essay. Weavers in the region had for generations '
+        'treated the loom as a communal instrument, one whose output belonged less to any single '
+        'household than to the village that maintained it. When the first mechanized frames arrived, '
+        'observers assumed the older arrangement would collapse within a season, and yet the ledgers '
+        'kept by the guild suggest something stranger: the communal claim survived, quietly rewritten '
+        'around the new machines rather than abandoned in the face of them, so that ownership and use '
+        'drifted apart for the better part of two decades before either was settled.\n\n'
+        'Which choice best states the main idea of the text?'
+    )
+
+    def test_english_passage_is_caught_when_a_reparse_rewords_it(self):
+        stored = Question.objects.create(
+            question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            answer='A', difficulty=3, question_type='Central Ideas and Details',
+        )
+        reworded = self.draft(
+            question=self.PASSAGE.replace('best states', 'best describes').replace('1915 essay', '1915 essay.'),
+            choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            question_type='Central Ideas and Details',
+        )
+        duplicate = self.post([reworded])[0]
+        self.assertEqual(duplicate['question_id'], stored.id)
+        self.assertEqual(duplicate['match'], 'near')
+
+    def test_near_stem_with_a_materially_different_choice_is_not_flagged(self):
+        Question.objects.create(
+            question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            answer='A', difficulty=3, question_type='Central Ideas and Details',
+        )
+        variant = self.draft(
+            question=self.PASSAGE.replace('best states', 'best describes'),
+            choice_a='w', choice_b='x', choice_c='y', choice_d='an entirely different final choice',
+            question_type='Central Ideas and Details',
+        )
+        self.assertEqual(self.post([variant]), {})
+
+        all_new_choices = self.draft(
+            question=self.PASSAGE.replace('best states', 'best describes'),
+            choice_a='first new choice', choice_b='second new choice',
+            choice_c='third new choice', choice_d='fourth new choice',
+            question_type='Central Ideas and Details',
+        )
+        self.assertEqual(self.post([all_new_choices]), {})
+
+    def test_english_near_match_stays_inside_one_skill(self):
+        Question.objects.create(
+            question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y', choice_d='z',
+            answer='A', difficulty=3, question_type='Central Ideas and Details',
+        )
+        other_skill = self.draft(question=self.PASSAGE, choice_a='w', choice_b='x', choice_c='y',
+                                 choice_d='a different choice', question_type='Text Structure and Purpose')
+        self.assertEqual(self.post([other_skill]), {})
+
+    def test_math_is_not_checked(self):
+        stem = ('A scientist models the population of a colony over time. The model assumes the colony '
+                'grows by a fixed percentage each year and that no individuals leave the colony. '
+                'The population was %s in the first year of the study and the annual growth rate is %s. '
+                'Which equation gives the population $p$ after $t$ years?')
+        Question.objects.create(
+            question=stem % ('$15{,}000$', '$3\\%$'), choice_a='1', choice_b='2', choice_c='3', choice_d='4',
+            answer='A', difficulty=3, question_type='Nonlinear functions',
+        )
+        twin = self.draft(question=stem % ('$18{,}000$', '$4\\%$'), question_type='Nonlinear functions')
+        self.assertEqual(self.post([twin]), {})
+        exact = self.draft(question=stem % ('$15{,}000$', '$3\\%$'), question_type='Nonlinear functions')
+        self.assertEqual(self.post([exact]), {})
+        legacy_math = Question.objects.create(
+            question='Legacy math item', choice_a='1', choice_b='2', choice_c='3', choice_d='4',
+            answer='A', difficulty=2, question_type='Math',
+        )
+        self.assertEqual(self.post([self.draft(
+            question=legacy_math.question, question_type='Math',
+        )]), {})

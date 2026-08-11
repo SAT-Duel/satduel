@@ -6,6 +6,7 @@ phase transitions from timestamps, so no worker or websocket is needed.
 import random
 
 from django.db import transaction
+from django.db.models import Prefetch, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
@@ -16,13 +17,14 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from api.models import (
     PARTY_COUNTDOWN_SECONDS,
     PARTY_MAX_TEAMS,
+    PARTY_PRESENCE_TIMEOUT_SECONDS,
     PARTY_WAGER_SECONDS,
     PartyPlayer,
     PartyRoom,
     Question,
+    TestSection,
     party_lives_cap,
 )
-from api.views.views import ENGLISH_QUESTION_TYPES, MATH_QUESTION_TYPES
 
 # Free-tier vs premium ceilings for room settings.
 CAPS = {
@@ -52,11 +54,6 @@ def _roll_reward():
         return {'kind': 'swap'}            # swap totals with a chosen player
     return {'kind': 'lose', 'pct': 30}     # a dud chest
 DIFFICULTY_RANGES = {'easy': (1, 3), 'medium': (2, 4), 'hard': (3, 5)}
-SUBJECT_TYPES = {
-    'math': MATH_QUESTION_TYPES,
-    'english': ENGLISH_QUESTION_TYPES,
-    'mixed': MATH_QUESTION_TYPES + ENGLISH_QUESTION_TYPES,
-}
 JOINABLE = ('lobby', 'countdown', 'question', 'leaderboard')
 
 
@@ -162,20 +159,132 @@ def _team_standings(room, entries):
     return teams
 
 
+def _history_snapshot(room, user_id):
+    """Final standings shared by the compact history list and full review."""
+    roster = list(room.history_players)
+    mine = next((player for player in roster if player.user_id == user_id), None)
+
+    if room.mode == 'teams':
+        team_scores = {
+            index: sum(player.score for player in roster if player.team == index)
+            for index in range(room.num_teams)
+        }
+        best = max(team_scores.values(), default=0)
+        winning_teams = {index for index, score in team_scores.items() if score == best}
+        ranked = sorted(roster, key=lambda player: (-team_scores.get(player.team, 0), -player.score))
+        winners = [room.team_label(index) for index in sorted(winning_teams)]
+        teams = [
+            {'name': room.team_label(index), 'score': score, 'is_winner': index in winning_teams}
+            for index, score in sorted(team_scores.items(), key=lambda item: -item[1])
+        ]
+        is_winner = bool(mine and mine.team in winning_teams)
+    else:
+        key = (lambda player: (player.lives, player.score)) if room.mode == 'survival' else (lambda player: player.score)
+        ranked = sorted(roster, key=key, reverse=True)
+        best = key(ranked[0]) if ranked else None
+        winners = [player.user.username for player in ranked if key(player) == best]
+        teams = []
+        is_winner = bool(mine and key(mine) == best)
+
+    players = []
+    for rank, player in enumerate(ranked, start=1):
+        profile = player.user.profile
+        players.append({
+            'id': player.user_id,
+            'username': player.user.username,
+            'avatar': profile.avatar,
+            'avatar_icon': profile.avatar_icon,
+            'score': player.score,
+            'lives': player.lives,
+            'team': room.team_label(player.team) if player.team is not None else None,
+            'rank': rank,
+            'is_you': player.user_id == user_id,
+            'is_winner': (
+                player.team in winning_teams if room.mode == 'teams' else key(player) == best
+            ),
+        })
+
+    creator_id = room.original_host_id or room.host_id
+    return {
+        'id': room.id,
+        'code': room.code,
+        'mode': room.mode,
+        'created_at': room.created_at,
+        'role': 'hosted' if creator_id == user_id else 'participated',
+        'host_username': (
+            room.original_host.username if room.original_host else room.host.username
+        ),
+        'player_count': len(roster),
+        'your_score': mine.score if mine else None,
+        'winners': winners,
+        'is_winner': is_winner,
+        'players': players,
+        'teams': teams,
+    }
+
+
+def _history_questions(room, player):
+    if not player:
+        return []
+
+    if room.mode == 'goldrush':
+        attempts = sorted(
+            (
+                (int(key[1:]), answer) for key, answer in player.answers.items()
+                if key.startswith('g') and key[1:].isdigit() and answer.get('question_id')
+            ),
+            key=lambda item: item[0],
+        )
+        question_ids = [answer['question_id'] for _, answer in attempts]
+        entries = [
+            (index, answer['question_id'], answer)
+            for index, (_, answer) in enumerate(attempts)
+        ]
+    else:
+        question_ids = room.question_ids
+        entries = [
+            (index, question_id, player.answers.get(str(index), {}))
+            for index, question_id in enumerate(question_ids)
+        ]
+
+    questions = Question.objects.in_bulk(question_ids)
+    review = []
+    for index, question_id, answer in entries:
+        question = questions.get(question_id)
+        if not question:
+            continue
+        review.append({
+            'id': question.id,
+            'number': index + 1,
+            'question': question.question,
+            'choices': [question.choice_a, question.choice_b, question.choice_c, question.choice_d],
+            'correct_choice': question.answer,
+            'correct_text': question.answer_text,
+            'explanation': question.explanation or '',
+            'your_choice': answer.get('choice'),
+            'correct': answer.get('correct') if answer else None,
+            'points': answer.get('points', 0),
+            'skipped': not answer or answer.get('choice') is None,
+        })
+    return review
+
+
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def create_party(request):
     caps = _caps_for(request.user)
     data = request.data
-    subject = data.get('subject') if data.get('subject') in SUBJECT_TYPES else 'mixed'
+    test_prep = request.user.profile.active_test_prep
+    valid_subjects = set(TestSection.objects.filter(
+        test_prep=test_prep, active=True,
+    ).values_list('code', flat=True))
+    subject = data.get('subject') if data.get('subject') in valid_subjects | {'mixed'} else 'mixed'
     difficulty = data.get('difficulty') if data.get('difficulty') in DIFFICULTY_RANGES else 'medium'
     mode = data.get('mode') if data.get('mode') in PartyRoom.MODES else 'classic'
 
     # One live room per host: a new room supersedes any the user abandoned.
     PartyRoom.objects.filter(host=request.user).exclude(status='finished').update(status='finished')
-    # ponytail: opportunistic GC of day-old rooms; a cron only if the table ever matters.
-    PartyRoom.objects.filter(created_at__lt=timezone.now() - timezone.timedelta(days=1)).delete()
 
     num_questions = _clamp(data.get('num_questions'), 2 if mode == 'jeopardy' else 1,
                            caps['num_questions'], 10)
@@ -183,6 +292,8 @@ def create_party(request):
 
     room = PartyRoom.objects.create(
         host=request.user,
+        original_host=request.user,
+        test_prep=test_prep,
         code=_new_code(),
         mode=mode,
         num_teams=_clamp(data.get('num_teams'), 2, PARTY_MAX_TEAMS, 2),
@@ -238,13 +349,14 @@ def start_party(request, room_id):
         )
 
     lo, hi = DIFFICULTY_RANGES[room.difficulty]
-    ids = list(
-        Question.objects.filter(
-            question_type__in=SUBJECT_TYPES[room.subject],
-            difficulty__gte=lo,
-            difficulty__lte=hi,
-        ).values_list('id', flat=True)
+    questions = Question.objects.filter(
+        test_prep=room.test_prep,
+        difficulty__gte=lo,
+        difficulty__lte=hi,
     )
+    if room.subject != 'mixed':
+        questions = questions.filter(subject=room.subject)
+    ids = list(questions.values_list('id', flat=True))
     if not ids:
         return Response({'error': 'No questions available for these settings.'}, status=400)
 
@@ -398,6 +510,16 @@ def gold_rush_answer(request, room_id):
             return Response({'error': 'Invalid choice.'}, status=400)
 
         question = Question.objects.get(id=player.gold_question_id())
+        attempt = 1 + max(
+            (int(key[1:]) for key in player.answers if key.startswith('g') and key[1:].isdigit()),
+            default=-1,
+        )
+        player.answers[f'g{attempt}'] = {
+            'question_id': question.id,
+            'choice': choice,
+            'correct': choice == question.answer,
+            'points': 0,
+        }
         if choice == question.answer:
             player.gq_pending = {'kind': 'chest', 'options': [_roll_reward() for _ in range(3)], 'picked': None}
             player.save()
@@ -518,10 +640,71 @@ def update_party_teams(request, room_id):
 @permission_classes([IsAuthenticated])
 def leave_party(request, room_id):
     room = get_object_or_404(PartyRoom, id=room_id)
-    room.players.filter(user=request.user).delete()
+    player = room.players.filter(user=request.user)
+    if room.status == 'lobby':
+        player.delete()
+    else:
+        # Keep completed answers and scores for history, but make the seat stale
+        # immediately so it never blocks phase changes or host handoff.
+        player.update(
+            last_seen=timezone.now() - timezone.timedelta(seconds=PARTY_PRESENCE_TIMEOUT_SECONDS + 1),
+        )
     # Empty room closes; a departing host hands off to the next player.
     room.sync_presence()
     return Response({'left': True})
+
+
+def _history_queryset():
+    return PartyRoom.objects.select_related('host', 'original_host').prefetch_related(
+        Prefetch(
+            'players',
+            queryset=PartyPlayer.objects.select_related('user__profile'),
+            to_attr='history_players',
+        ),
+    )
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def party_history(request):
+    rooms = (
+        _history_queryset()
+        .filter(status='finished')
+        .exclude(question_ids=[])
+        .filter(Q(original_host=request.user) | Q(players__user=request.user))
+        .distinct()
+        .order_by('-created_at')
+    )
+    return Response([
+        {key: value for key, value in _history_snapshot(room, request.user.id).items()
+         if key not in ('players', 'teams')}
+        for room in rooms
+    ])
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def party_history_detail(request, room_id):
+    room = get_object_or_404(_history_queryset(), id=room_id, status='finished')
+    creator_id = room.original_host_id or room.host_id
+    player = next(
+        (seat for seat in room.history_players if seat.user_id == request.user.id),
+        None,
+    )
+    if creator_id != request.user.id and not player:
+        return Response({'error': 'You did not participate in this party.'}, status=403)
+
+    detail = _history_snapshot(room, request.user.id)
+    detail['questions'] = _history_questions(room, player)
+    detail['settings'] = {
+        'subject': room.subject,
+        'difficulty': room.difficulty,
+        'num_questions': room.num_questions,
+        'seconds_per_question': room.seconds_per_question,
+    }
+    return Response(detail)
 
 
 @api_view(['GET'])
@@ -553,6 +736,7 @@ def party_state(request, room_id):
         'you': request.user.id,
         'is_host': room.host_id == request.user.id,
         'host_username': room.host.username,
+        'test_prep': room.test_prep_id,
         'mode': room.mode,
         'settings': {
             'max_players': room.max_players,

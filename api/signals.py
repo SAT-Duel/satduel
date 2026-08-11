@@ -15,15 +15,42 @@ syncs when the value actually changed.
 import logging
 
 from allauth.account.signals import email_confirmed
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_migrate, post_save, pre_save
 from django.dispatch import receiver
 
 from api.marketing import marketing_sync_enabled, sync_marketing_contact
-from api.models import Profile
+from api.models import Profile, TestPrep, TestSection
 
 logger = logging.getLogger(__name__)
 
 _OLD_OPT_IN_ATTR = '_old_marketing_opt_in'
+
+
+@receiver(post_migrate, dispatch_uid='seed_test_prep_catalog')
+def _seed_test_prep_catalog(sender, **kwargs):
+    """Keep required lookup rows available after flushes and fresh installs."""
+    if sender.name != 'api':
+        return
+    catalog = [
+        ('sat', 'SAT', True), ('act', 'ACT', False),
+        ('ssat', 'SSAT', False), ('gre', 'GRE', False),
+    ]
+    sections = {
+        'sat': [('english', 'Reading and Writing'), ('math', 'Math')],
+        'act': [('english', 'English'), ('math', 'Math'), ('reading', 'Reading'), ('science', 'Science')],
+        'ssat': [('verbal', 'Verbal'), ('quantitative', 'Quantitative'), ('reading', 'Reading'), ('writing', 'Writing Sample')],
+        'gre': [('verbal', 'Verbal Reasoning'), ('quantitative', 'Quantitative Reasoning'), ('analytical-writing', 'Analytical Writing')],
+    }
+    for display_order, (code, name, active) in enumerate(catalog, start=1):
+        TestPrep.objects.get_or_create(
+            code=code,
+            defaults={'name': name, 'active': active, 'display_order': display_order},
+        )
+        for section_order, (section_code, section_name) in enumerate(sections[code], start=1):
+            TestSection.objects.get_or_create(
+                test_prep_id=code, code=section_code,
+                defaults={'name': section_name, 'display_order': section_order},
+            )
 
 
 @receiver(pre_save, sender=Profile, dispatch_uid='marketing_capture_old_opt_in')

@@ -5,6 +5,7 @@ enough first-sitting completions to calibrate items empirically.
 """
 
 import math
+import re
 from fractions import Fraction
 
 
@@ -13,10 +14,13 @@ THETA_GRID = tuple(-4.0 + index * 0.01 for index in range(801))
 PRIOR_SD = 1.5
 ROUTING_THRESHOLD = 0.0
 SCORING_VERSION = 'fixed-irt-v1'
+STUDENT_RESPONSE_PATTERN = re.compile(
+    r'-?(?:(?:0|[1-9]\d*)(?:\.\d*)?|\.\d+|(?:0|[1-9]\d*)/(?:[1-9]\d*))'
+)
 
 
 def _numeric(value):
-    text = str(value or '').strip().replace('−', '-').replace(',', '')
+    text = str(value or '').strip().replace('−', '-')
     if not text:
         return None
     try:
@@ -25,18 +29,59 @@ def _numeric(value):
         return None
 
 
+def student_response_is_valid(value):
+    text = str(value or '').strip().replace('−', '-')
+    limit = 6 if text.startswith('-') else 5
+    return bool(text) and len(text) <= limit and STUDENT_RESPONSE_PATTERN.fullmatch(text) is not None
+
+
+def _uses_repeating_decimal(value):
+    denominator = value.denominator
+    for factor in (2, 5):
+        while denominator % factor == 0:
+            denominator //= factor
+    return denominator != 1
+
+
+def _valid_rounded_entry(expected, submitted_text, submitted_number):
+    if '.' not in submitted_text or not _uses_repeating_decimal(expected):
+        return False
+    limit = 6 if submitted_text.startswith('-') else 5
+    if len(submitted_text) != limit:
+        return False
+    precision = len(submitted_text.rsplit('.', 1)[1])
+    if precision < 1:
+        return False
+
+    scale = 10 ** precision
+    quotient, remainder = divmod(abs(expected.numerator) * scale, expected.denominator)
+    sign = -1 if expected < 0 else 1
+    truncated = Fraction(sign * quotient, scale)
+    rounded = Fraction(sign * (quotient + (2 * remainder >= expected.denominator)), scale)
+    return submitted_number in {truncated, rounded}
+
+
 def answer_is_correct(question, response):
     expected = str(question.get('answer', '')).strip()
     submitted = str(response or '').strip()
     if question.get('response_type') != 'student_produced':
         return bool(submitted) and submitted.upper() == expected.upper()
 
+    if not student_response_is_valid(submitted):
+        return False
     submitted_number = _numeric(submitted)
     if submitted_number is None:
         return False
-    # A semicolon permits future imports to specify equivalent accepted forms.
+    # Semicolons represent mathematically distinct credited answers, not merely alternate notation.
     accepted = [item.strip() for item in expected.split(';') if item.strip()]
-    return any(_numeric(item) == submitted_number for item in accepted)
+    for item in accepted:
+        expected_number = _numeric(item)
+        if expected_number is not None and (
+            expected_number == submitted_number
+            or _valid_rounded_entry(expected_number, submitted, submitted_number)
+        ):
+            return True
+    return False
 
 
 def _probability(theta, question):

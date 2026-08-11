@@ -7,7 +7,7 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 
 from api.models import PracticeTest, PracticeTestAttempt, PracticeTestModule
-from api.practice_test_scoring import estimate_ability, select_second_module
+from api.practice_test_scoring import answer_is_correct, estimate_ability, select_second_module
 from api.views.practice_test_views import _attempt_queryset
 
 
@@ -61,6 +61,31 @@ def create_subject_test(user, subject, suffix):
 
 
 class FixedScoringTests(APITestCase):
+    def test_student_responses_follow_bluebook_entry_rules(self):
+        produced = {**question(), 'response_type': 'student_produced', 'answer': '2/3'}
+        for accepted in ('2/3', '4/6', '.6666', '.6667', '0.666', '0.667'):
+            self.assertTrue(answer_is_correct(produced, accepted), accepted)
+        for rejected in ('.66', '.67', '0.66', '0.67', '66%', '0,667'):
+            self.assertFalse(answer_is_correct(produced, rejected), rejected)
+
+        produced['answer'] = '-1/3'
+        for accepted in ('-1/3', '-.3333', '-0.333'):
+            self.assertTrue(answer_is_correct(produced, accepted), accepted)
+        for rejected in ('-.33', '-0.33'):
+            self.assertFalse(answer_is_correct(produced, rejected), rejected)
+
+        produced['answer'] = '3.5'
+        for accepted in ('3.5', '3.50', '7/2'):
+            self.assertTrue(answer_is_correct(produced, accepted), accepted)
+        for rejected in ('31/2', '3 1/2'):
+            self.assertFalse(answer_is_correct(produced, rejected), rejected)
+
+    def test_student_response_can_have_multiple_distinct_answers(self):
+        produced = {**question(), 'response_type': 'student_produced', 'answer': '2;3'}
+        self.assertTrue(answer_is_correct(produced, '2'))
+        self.assertTrue(answer_is_correct(produced, '3.0'))
+        self.assertFalse(answer_is_correct(produced, '4'))
+
     def test_difficulty_changes_evidence_in_the_expected_direction(self):
         easy = question(difficulty=1)
         hard = question(difficulty=5)
@@ -147,7 +172,12 @@ class PracticeTestAttemptTests(APITestCase):
         attempt_id = start.data['attempt_id']
         first = self.finish(attempt_id, 'A')
         self.assertEqual(first.data['phase'], 'english_c')
-        self.finish(attempt_id, 'A')
+        break_state = self.finish(attempt_id, 'A')
+        self.assertTrue(break_state.data['break'])
+        resumed = self.client.post(
+            reverse('adaptive_test_resume_after_break', args=[attempt_id]), {}, format='json',
+        )
+        self.assertEqual(resumed.data['phase'], 'math_a')
         third = self.finish(attempt_id, 'B')
         self.assertEqual(third.data['phase'], 'math_b')
         final = self.finish(attempt_id, 'A')
@@ -164,20 +194,79 @@ class PracticeTestAttemptTests(APITestCase):
                 'remaining_seconds': 777,
                 'current_question': 2,
                 'review_questions': [1],
+                'annotations': {
+                    '1': {
+                        'marks': [{
+                            'id': 'mark-1', 'field': 'passage', 'start': 0, 'end': 8,
+                            'color': 'yellow', 'underline': 'solid',
+                        }],
+                        'crossed_out': ['B', 'D'],
+                    },
+                },
             },
             format='json',
         )
         self.assertEqual(saved.data['answers'], {'1': 'C'})
         self.assertEqual(saved.data['remaining_seconds'], 777)
+        self.assertEqual(saved.data['annotations']['1']['marks'][0]['underline'], 'solid')
+        self.assertEqual(saved.data['annotations']['1']['crossed_out'], ['B', 'D'])
 
         resumed = self.start()
         self.assertEqual(resumed.data['attempt_id'], attempt_id)
         self.assertEqual(resumed.data['review_questions'], [1])
+        self.assertEqual(resumed.data['annotations'], saved.data['annotations'])
 
         restarted = self.client.post(reverse('adaptive_test_restart', args=[attempt_id]), {}, format='json')
         self.assertNotEqual(restarted.data['attempt_id'], attempt_id)
         self.assertFalse(PracticeTestAttempt.objects.filter(id=attempt_id).exists())
         self.assertEqual(restarted.data['answers'], {})
+        self.assertEqual(restarted.data['annotations'], {})
+
+    def test_annotations_are_validated_before_storage(self):
+        start = self.start()
+        response = self.client.patch(
+            reverse('adaptive_test_progress', args=[start.data['attempt_id']]),
+            {
+                'phase': 'english_a',
+                'annotations': {
+                    '1': {
+                        'marks': [
+                            {'id': 'ok', 'field': 'prompt', 'start': 0, 'end': 4, 'color': 'pink', 'underline': 'dotted'},
+                            {'id': 'bad-color', 'field': 'prompt', 'start': 0, 'end': 4, 'color': 'green'},
+                            {'id': 'bad-range', 'field': 'passage', 'start': 9, 'end': 2, 'color': 'yellow'},
+                        ],
+                        'crossed_out': ['A', 'Z', 3],
+                    },
+                    '99': {'marks': [], 'crossed_out': ['B']},
+                },
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['annotations'], {
+            '1': {
+                'marks': [{'id': 'ok', 'field': 'prompt', 'start': 0, 'end': 4, 'color': 'pink', 'underline': 'dotted'}],
+                'crossed_out': ['A'],
+            },
+        })
+
+    def test_full_test_stops_for_a_persistent_break_between_sections(self):
+        start = self.start()
+        attempt_id = start.data['attempt_id']
+        self.finish(attempt_id)
+        break_state = self.finish(attempt_id)
+
+        self.assertTrue(break_state.data['break'])
+        self.assertLessEqual(break_state.data['break_remaining_seconds'], 600)
+        self.assertTrue(self.start().data['break'])
+
+        resumed = self.client.post(
+            reverse('adaptive_test_resume_after_break', args=[attempt_id]), {}, format='json',
+        )
+        self.assertEqual(resumed.status_code, 200)
+        self.assertEqual(resumed.data['phase'], 'math_a')
+        self.assertEqual(resumed.data['section_number'], 2)
 
     def test_blank_modules_submit_and_count_every_question_as_incorrect(self):
         test = create_subject_test(self.user, 'english', 'blank')

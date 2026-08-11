@@ -3,11 +3,11 @@ import re
 
 from django.contrib.auth.models import User
 from django.db import transaction
-from django.db.models import IntegerField, OuterRef, Q, Subquery
+from django.db.models import F, IntegerField, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.response import Response
-from api.models import DirectMessage, Profile, FriendRequest, PracticeStats
+from api.models import DEFAULT_TEST_PREP, DirectMessage, Profile, FriendRequest, PracticeStats, TestPrepUserStats
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -21,44 +21,66 @@ USERNAME_RULE = re.compile(r'^[a-zA-Z0-9_]{1,15}$')
 
 LEADERBOARD_METRICS = {
     'duel': {
-        'field': 'elo_rating',
-        'ordering': ('-elo_rating', '-english_elo', 'user__username'),
+        'field': 'exam_elo',
+        'ordering': ('-exam_elo', '-english_elo', 'user__username'),
     },
     'practice': {
         'field': 'english_elo',
-        'ordering': ('-english_elo', '-elo_rating', 'user__username'),
+        'ordering': ('-english_elo', '-exam_elo', 'user__username'),
     },
     'practice_math': {
         'field': 'math_elo',
-        'ordering': ('-math_elo', '-elo_rating', 'user__username'),
+        'ordering': ('-math_elo', '-exam_elo', 'user__username'),
     },
     'streak': {
-        'field': 'max_streak',
-        'ordering': ('-max_streak', '-english_elo', '-elo_rating', 'user__username'),
+        'field': 'exam_max_streak',
+        'ordering': ('-exam_max_streak', '-english_elo', '-exam_elo', 'user__username'),
     },
 }
 
 
-def _stats_subquery(field, subject, default):
+def _stats_subquery(field, subject, default, test_prep=DEFAULT_TEST_PREP):
     return Coalesce(
         Subquery(
-            PracticeStats.objects.filter(user=OuterRef('user_id'), subject=subject).values(field)[:1],
+            PracticeStats.objects.filter(
+                user=OuterRef('user_id'), test_prep_id=test_prep, subject=subject,
+            ).values(field)[:1],
             output_field=IntegerField(),
         ),
         default,
     )
 
 
-def _annotated_profiles(include_bots=False):
+def _annotated_profiles(include_bots=False, test_prep=DEFAULT_TEST_PREP):
     """Profiles with per-subject practice stats attached for ranking/display."""
     profiles = Profile.objects.select_related('user')
     if not include_bots:
         profiles = profiles.filter(is_bot=False)
+    if test_prep != DEFAULT_TEST_PREP:
+        profiles = profiles.filter(
+            Q(active_test_prep_id=test_prep) | Q(user__test_prep_stats__test_prep_id=test_prep),
+        ).distinct()
+    if test_prep == DEFAULT_TEST_PREP:
+        exam_elo = F('elo_rating')
+        exam_max_streak = F('max_streak')
+    else:
+        exam_elo = Coalesce(Subquery(
+            TestPrepUserStats.objects.filter(
+                user=OuterRef('user_id'), test_prep_id=test_prep,
+            ).values('duel_elo')[:1], output_field=IntegerField(),
+        ), Value(1500))
+        exam_max_streak = Coalesce(Subquery(
+            TestPrepUserStats.objects.filter(
+                user=OuterRef('user_id'), test_prep_id=test_prep,
+            ).values('max_streak')[:1], output_field=IntegerField(),
+        ), Value(0))
     return profiles.annotate(
-        english_elo=_stats_subquery('elo', 'english', 1200),
-        math_elo=_stats_subquery('elo', 'math', 1200),
-        english_answered_count=_stats_subquery('answered', 'english', 0),
-        math_answered_count=_stats_subquery('answered', 'math', 0),
+        exam_elo=exam_elo,
+        exam_max_streak=exam_max_streak,
+        english_elo=_stats_subquery('elo', 'english', 1200, test_prep),
+        math_elo=_stats_subquery('elo', 'math', 1200, test_prep),
+        english_answered_count=_stats_subquery('answered', 'english', 0, test_prep),
+        math_answered_count=_stats_subquery('answered', 'math', 0, test_prep),
     )
 
 
@@ -111,10 +133,10 @@ def _leaderboard_entry(profile, rank, metric):
         'grade': profile.grade,
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
-        'elo_rating': profile.elo_rating,
+        'elo_rating': profile.exam_elo,
         'sp_elo_rating': profile.english_elo,
         'math_elo_rating': profile.math_elo,
-        'max_streak': profile.max_streak,
+        'max_streak': profile.exam_max_streak,
         'questions_answered': profile.english_answered_count + profile.math_answered_count,
         'english_answered': profile.english_answered_count,
         'math_answered': profile.math_answered_count,
@@ -201,7 +223,10 @@ def leaderboard_view(request):
 
     limit = _leaderboard_limit(request.query_params.get('limit'))
     ordering = LEADERBOARD_METRICS[metric]['ordering']
-    ranked_profiles = list(_annotated_profiles(include_bots=metric == 'duel').order_by(*ordering))
+    test_prep = request.user.profile.active_test_prep_id
+    ranked_profiles = list(_annotated_profiles(
+        include_bots=metric == 'duel', test_prep=test_prep,
+    ).order_by(*ordering))
 
     current_entry = None
     entries = []
@@ -214,6 +239,7 @@ def leaderboard_view(request):
 
     return Response({
         'metric': metric,
+        'test_prep': test_prep,
         'entries': entries,
         'current_user': current_entry,
         'total_users': len(ranked_profiles),

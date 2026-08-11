@@ -1,5 +1,4 @@
 from django.contrib.auth.models import User
-from api import generation
 from api.models import DUEL_EMOJIS, DirectMessage, Question, Profile, Room, TrackedQuestion, FriendRequest, \
     UserStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
@@ -8,23 +7,19 @@ from rest_framework import serializers
 class QuestionSerializer(serializers.ModelSerializer):
     """Public question payload — must never include the correct answer or explanation."""
     choices = serializers.SerializerMethodField()
-    subject = serializers.SerializerMethodField()
     source_display = serializers.CharField(source='get_source_display', read_only=True)
+    test_prep = serializers.CharField(source='test_prep_id', read_only=True)
 
     class Meta:
         model = Question
         fields = [
-            'id', 'question', 'choices', 'difficulty', 'question_type', 'subject',
+            'id', 'question', 'choices', 'difficulty', 'question_type', 'test_prep', 'subject',
             'source', 'source_display', 'source_other',
             'choice_a', 'choice_b', 'choice_c', 'choice_d',
         ]
 
     def get_choices(self, obj):
         return [obj.choice_a, obj.choice_b, obj.choice_c, obj.choice_d]
-
-    def get_subject(self, obj):
-        return generation.subject_of_type(obj.question_type)
-
 
 class QuestionAdminSerializer(QuestionSerializer):
     """Full question payload including answer/explanation — staff only."""
@@ -57,6 +52,7 @@ class DuelUserSerializer(serializers.ModelSerializer):
 
 class ProfileSerializer(serializers.ModelSerializer):
     user = UserSerializer()
+    active_test_prep = serializers.CharField(source='active_test_prep_id', read_only=True)
     is_premium = serializers.SerializerMethodField()
     # Practice ratings live on PracticeStats; keep the old payload keys.
     sp_elo_rating = serializers.SerializerMethodField()
@@ -69,7 +65,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Profile
-        fields = ['id', 'user', 'biography', 'grade', 'country', 'avatar', 'avatar_icon', 'elo_rating', 'sp_elo_rating',
+        fields = ['id', 'user', 'biography', 'grade', 'country', 'active_test_prep', 'avatar', 'avatar_icon', 'elo_rating', 'sp_elo_rating',
                   'math_elo_rating', 'is_premium', 'max_streak', 'duel_emotes']
 
     def get_is_premium(self, obj):
@@ -77,7 +73,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
     def _subject_elo(self, obj, subject):
         for stats in obj.user.practice_stats.all():
-            if stats.subject == subject:
+            if stats.test_prep_id == 'sat' and stats.subject == subject:
                 return stats.elo
         return 1200
 
@@ -129,12 +125,31 @@ class InfiniteQuestionsSerializer(serializers.ModelSerializer):
 
 
 class RoomSerializer(serializers.ModelSerializer):
-    user1 = DuelUserSerializer()
-    user2 = DuelUserSerializer()
+    user1 = serializers.SerializerMethodField()
+    user2 = serializers.SerializerMethodField()
+
+    def _user(self, user, test_prep):
+        if user is None:
+            return None
+        data = dict(DuelUserSerializer(user).data)
+        if test_prep == 'sat':
+            data['elo_rating'] = user.profile.elo_rating
+        else:
+            data['elo_rating'] = next(
+                (row.duel_elo for row in user.test_prep_stats.all() if row.test_prep_id == test_prep),
+                1500,
+            )
+        return data
+
+    def get_user1(self, obj):
+        return self._user(obj.user1, obj.test_prep_id)
+
+    def get_user2(self, obj):
+        return self._user(obj.user2, obj.test_prep_id)
 
     class Meta:
         model = Room
-        fields = ['id', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time',
+        fields = ['id', 'test_prep', 'user1', 'user2', 'created_at', 'status', 'questions', 'winner', 'battle_start_time',
                   'user1_score', 'user2_score', 'user1_elo_before', 'user1_elo_after',
                   'user2_elo_before', 'user2_elo_after']
 

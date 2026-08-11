@@ -1,5 +1,8 @@
 """Admin endpoints for AI-assisted question generation."""
 
+import difflib
+import itertools
+
 from django.db.models import Count
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAdminUser
@@ -8,7 +11,7 @@ from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api import generation
-from api.models import Question
+from api.models import DEFAULT_TEST_PREP, Question
 
 
 @api_view(['GET'])
@@ -79,6 +82,145 @@ def generation_generate(request):
         payload['raw'] = raw
         return Response(payload, status=status.HTTP_502_BAD_GATEWAY)
     return Response(payload)
+
+
+# Near matches are intentionally strict: the text must be almost identical and
+# all four choices must also align. This accepts tiny extraction differences
+# without treating two SAT items built from the same template as duplicates.
+MIN_NEAR_TOKENS = 30
+NEAR_QUESTION_RATIO = 0.97
+NEAR_CHOICE_RATIO = 0.92
+NEAR_AVERAGE_CHOICE_RATIO = 0.97
+QUESTION_FIELDS = (
+    'id', 'question', 'choice_a', 'choice_b', 'choice_c', 'choice_d',
+    'answer', 'difficulty', 'question_type',
+)
+
+
+def _question_payload(question, *, include_id=True):
+    payload = {field: question.get(field) for field in QUESTION_FIELDS if include_id or field != 'id'}
+    return payload
+
+
+def _choice_similarity(draft, existing):
+    """Best order-independent pairing for four answer choices."""
+    draft_choices = [generation.flatten_text(draft.get('choice_' + letter)) for letter in 'abcd']
+    existing_choices = [generation.flatten_text(existing.get('choice_' + letter)) for letter in 'abcd']
+    best = (-1, [])
+    for order in itertools.permutations(existing_choices):
+        ratios = [
+            difflib.SequenceMatcher(None, left, right, autojunk=False).ratio()
+            for left, right in zip(draft_choices, order)
+        ]
+        score = sum(ratios)
+        if score > best[0]:
+            best = (score, ratios)
+    return best[1]
+
+
+def _near_match(draft, candidates):
+    """Return the strongest high-confidence same-type English match."""
+    tokens = generation.tokenize_text(draft.get('question'))
+    if len(tokens) < MIN_NEAR_TOKENS:
+        return None
+
+    best = None
+    for existing in candidates:
+        existing_tokens = existing['_tokens']
+        if min(len(tokens), len(existing_tokens)) / max(len(tokens), len(existing_tokens)) < NEAR_QUESTION_RATIO:
+            continue
+        ratio = difflib.SequenceMatcher(None, tokens, existing_tokens, autojunk=False).ratio()
+        if ratio < NEAR_QUESTION_RATIO:
+            continue
+        choice_ratios = _choice_similarity(draft, existing)
+        if (min(choice_ratios) < NEAR_CHOICE_RATIO
+                or sum(choice_ratios) / len(choice_ratios) < NEAR_AVERAGE_CHOICE_RATIO):
+            continue
+        if best is None or ratio > best[0]:
+            best = (ratio, existing)
+
+    if not best:
+        return None
+    ratio, existing = best
+    return {
+        'question_id': existing['id'],
+        'where': 'bank',
+        'match': 'near',
+        'ratio': round(ratio, 3),
+        'comparison': _question_payload(existing),
+    }
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def generation_duplicates(request):
+    """Flag same-type English duplicates in the bank or current batch."""
+    drafts = request.data.get('questions')
+    if not isinstance(drafts, list):
+        return Response({'error': 'questions must be a list'}, status=status.HTTP_400_BAD_REQUEST)
+
+    english_types = {
+        generation.normalize_question_type(draft.get('question_type'))
+        for draft in drafts
+        if (isinstance(draft, dict)
+            and generation.normalize_question_type(draft.get('question_type')) in generation.ENGLISH_SKILL_NAMES)
+    }
+
+    # ponytail: full-table scan, no stored fingerprint column. ~1s at 10k
+    # questions; add a fingerprint field + unique index if the bank outgrows it.
+    rows = list(Question.objects.filter(
+        test_prep_id=DEFAULT_TEST_PREP,
+        question_type__in=english_types,
+    ).values(*QUESTION_FIELDS))
+    exact, candidates = {}, {question_type: [] for question_type in english_types}
+    for row in rows:
+        key = (row['question_type'], generation.fingerprint(
+            row['question'], [row['choice_' + letter] for letter in 'abcd'],
+        ))
+        exact.setdefault(key, row)
+        row['_tokens'] = generation.tokenize_text(row['question'])
+        candidates[row['question_type']].append(row)
+
+    duplicates, seen = {}, {}
+    for i, draft in enumerate(drafts):
+        if not isinstance(draft, dict):
+            continue
+        question_type = generation.normalize_question_type(draft.get('question_type'))
+        if question_type not in generation.ENGLISH_SKILL_NAMES:
+            continue
+        key = (question_type, generation.draft_fingerprint(draft))
+        if key in exact:
+            existing = exact[key]
+            duplicates[i] = {
+                'question_id': existing['id'],
+                'where': 'bank',
+                'match': 'exact',
+                'comparison': _question_payload(existing),
+            }
+        elif key in seen:
+            original_index = seen[key]
+            duplicates[i] = {
+                'question_id': None,
+                'where': 'batch',
+                'match': 'exact',
+                'draft_index': original_index,
+                'comparison': _question_payload(drafts[original_index], include_id=False),
+            }
+        else:
+            seen[key] = i
+            near = _near_match(draft, candidates.get(question_type, []))
+            if near:
+                duplicates[i] = near
+    return Response({
+        'duplicates': duplicates,
+        'checked_count': sum(
+            isinstance(draft, dict)
+            and generation.normalize_question_type(draft.get('question_type')) in generation.ENGLISH_SKILL_NAMES
+            for draft in drafts
+        ),
+        'bank_size': len(rows),
+    })
 
 
 @api_view(['POST'])

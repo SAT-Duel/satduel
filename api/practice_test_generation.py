@@ -3,6 +3,7 @@
 from collections import Counter
 
 from api import generation
+from api.practice_test_scoring import student_response_is_valid
 
 
 QUESTION_COUNTS = {'english': 27, 'math': 22}
@@ -51,8 +52,40 @@ ROUTE_GUIDANCE = {
     'C': (
         'Module 2 (higher-difficulty route): keep a genuine mix, but shift the '
         'average higher. Target an average from 3.2 through 4.4; most items should '
-        'be difficulty 3-5, while retaining a few accessible items at difficulty '
-        '1-2. Hard means subtle SAT reasoning, never tedious or out of scope.'
+        'be difficulty 3-5. Follow the subject-specific calibration below for '
+        'the exact distribution. Hard means subtle SAT reasoning, never tedious '
+        'or out of scope.'
+    ),
+}
+SUBJECT_ROUTE_CALIBRATION = {
+    ('english', 'A'): (
+        'Reading and Writing calibration: keep the average at or below 3.0. '
+        'This routing module should feel centered rather than punishing: use '
+        'mostly difficulty 2-3 items, a smaller number of difficulty 1 items, '
+        'and only a few carefully chosen difficulty 4-5 items.'
+    ),
+    ('english', 'B'): (
+        'Reading and Writing quantitative-evidence calibration: every Command '
+        'of Evidence item that uses a graph must be difficulty 3, 4, or 5. Do '
+        'not make it a one-step lookup; require the student to connect an exact '
+        'visual trend or comparison to the passage claim while keeping the '
+        'lower-route module average in range.'
+    ),
+    ('english', 'C'): (
+        'Reading and Writing quantitative-evidence calibration: every Command '
+        'of Evidence item that uses a graph must be difficulty 3, 4, or 5. Do '
+        'not make it a one-step lookup; require the student to connect an exact '
+        'visual trend or comparison to the passage claim. Across multiple graph '
+        'items, vary levels 3-5 rather than assigning them all one level. Retain '
+        'a few accessible difficulty 1-2 items elsewhere in the module.'
+    ),
+    ('math', 'C'): (
+        'Math calibration: questions 1-15 must each be difficulty 3 or 4, '
+        'providing a sustained authentic medium-hard baseline. Continue rising '
+        'after question 15 and reserve difficulty 5 for the final four '
+        'positions (19-22), with at least two difficulty-5 questions there. '
+        'The hardest items should require a hidden modeling or algebraic insight, '
+        'not long computation or out-of-scope content.'
     ),
 }
 
@@ -113,6 +146,11 @@ Skill bounds and realistic order:
    roughly 2-3 of each, adjusted to the chosen domain total.
 3. Standard English Conventions next: use 3-4 Boundaries and 3-4 Form,
    Structure, and Sense questions, adjusted to the chosen domain total.
+   Treat the precise convention being tested as the unit of variety: no single
+   grammar point may appear more than twice in the module. For example, do not
+   test the same comma boundary, colon/semicolon distinction, agreement rule,
+   modifier placement, possessive form, or verb-form distinction more than
+   twice, even if the surrounding passages differ.
 4. Expression of Ideas last: use 2-3 Transitions followed by 2-3 Rhetorical
    Synthesis questions, adjusted to the chosen domain total. Every Rhetorical
    Synthesis (student-notes) question MUST come after every Transitions question
@@ -141,7 +179,22 @@ using accessible science, social-science, or real-world settings that require
 no outside knowledge. Arrange the ENTIRE module from easiest to hardest,
 regardless of domain or response format. Calculator use is allowed throughout.
 Stay strictly within SAT scope: difficulty 5 is the hardest authentic SAT item,
-not AMC/AIME material. Never copy or lightly reskin a released item."""
+not AMC/AIME material. Never copy or lightly reskin a released item.
+
+Student-produced response answer rules:
+- The response must be numeric and must fit the Bluebook entry space: at most
+  5 characters for a positive answer or 6 including a negative sign.
+- Use an integer, terminating decimal, or improper fraction as the exact answer.
+  Never use a mixed number, percent sign, comma, currency symbol, or plus sign.
+- If more than one mathematically distinct value is correct, put every credited
+  exact value in "answer", separated by semicolons (example: "2;3"). The
+  student may enter any one of them.
+- Do not enumerate equivalent spellings such as "3.5;3.50;7/2". SAT Duel grades
+  equivalent fractions and decimals automatically. It also accepts a repeating
+  decimal truncated or rounded using every available entry character (for
+  example, 2/3 accepts .6666, .6667, 0.666, or 0.667).
+- Design the problem so at least one exact fraction/decimal or permitted rounded
+  decimal fits the entry space."""
 
     return f"""\
 You are the lead assessment designer for a high-quality original digital SAT
@@ -157,10 +210,11 @@ OFFICIAL STRUCTURE TO MIMIC
 - The first module is a broad difficulty mix. The second module is still mixed,
   but has a lower or higher average based on routing performance.
 - All questions must be original, self-contained, unambiguous, solvable, and
-  have exactly one credited response.
+  have one unambiguous credited answer set.
 
 SELECTED ADAPTIVE ROUTE
 {ROUTE_GUIDANCE[route]}
+{SUBJECT_ROUTE_CALIBRATION.get((subject, route), '')}
 
 DIFFICULTY SCALE FOR THIS PRACTICE TEST
 1 = easy authentic SAT; direct but not trivial.
@@ -179,6 +233,10 @@ RANDOMIZATION WITHOUT DRIFT
   and correct-answer positions.
 - Do not repeat a setup, passage topic, equation template, named researcher, or
   distractor pattern within this module.
+- Design this as one half of a full test whose other module may cover the same
+  broad skills. Use a wide range of precise test points and representations,
+  and avoid stock stem, passage, grammar, equation, and distractor structures
+  that would make two independently generated modules feel repetitive.
 - Balance multiple-choice keys A/B/C/D so the largest and smallest counts differ
   by no more than 2. Never use the same key more than 3 times consecutively.
 
@@ -206,13 +264,13 @@ Every object must contain:
   "response_type": "multiple_choice" or "student_produced",
   "question": "complete rendered stem",
   "choice_a": "...", "choice_b": "...", "choice_c": "...", "choice_d": "...",
-  "answer": "A" | "B" | "C" | "D" for multiple choice, or one canonical numeric answer for student-produced response,
+  "answer": "A" | "B" | "C" | "D" for multiple choice, or exact numeric answer value(s) separated by semicolons for student-produced response,
   "difficulty": 1 | 2 | 3 | 4 | 5,
   "question_type": "one exact skill name from the guide below",
   "explanation": "worked proof of the answer plus why each distractor fails"
 }}
 For student-produced response, set all four choice fields to empty strings and
-put the canonical accepted response in "answer". Reading and Writing may not
+follow every student-response answer rule above. Reading and Writing may not
 use student-produced response. Order values must be consecutive 1 through
 {count}. JSON strings must escape backslashes and may not contain raw newlines.
 
@@ -270,6 +328,13 @@ def validate_module_questions(questions, subject, route):
                 raise ValueError(f'Question {index} needs four choices and an A-D answer')
         elif any(choices):
             raise ValueError(f'Question {index} student-produced response choices must be blank')
+        else:
+            accepted = [item.strip() for item in answer.split(';') if item.strip()]
+            if not accepted or len(accepted) > 10 or any(not student_response_is_valid(item) for item in accepted):
+                raise ValueError(
+                    f'Question {index} student-produced answers must use valid Bluebook numeric entry formats'
+                )
+            answer = ';'.join(accepted)
 
         normalized.append({
             'order': index,
@@ -292,19 +357,29 @@ def validate_module_questions(questions, subject, route):
 
     difficulties = [q['difficulty'] for q in normalized]
     average = sum(difficulties) / expected
-    lower, upper = {'A': (2.5, 3.5), 'B': (1.8, 2.8), 'C': (3.2, 4.4)}[route]
+    if subject == 'english' and route == 'A':
+        lower, upper = (2.5, 3.0)
+    else:
+        lower, upper = {'A': (2.5, 3.5), 'B': (1.8, 2.8), 'C': (3.2, 4.4)}[route]
     if not lower <= average <= upper:
         raise ValueError(f'Module {route} average difficulty must be {lower}-{upper}')
     if route == 'A' and (min(difficulties) > 2 or max(difficulties) < 4):
         raise ValueError('Module A must include both accessible and hard questions')
     if route == 'B' and (min(difficulties) > 2 or max(difficulties) < 3):
         raise ValueError('Module B must remain a mix of lower and medium difficulty questions')
-    if route == 'C' and (min(difficulties) > 2 or max(difficulties) < 4):
+    if route == 'C' and subject == 'english' and (min(difficulties) > 2 or max(difficulties) < 4):
         raise ValueError('Module C must retain accessible questions alongside hard questions')
 
     if subject == 'math':
         if difficulties != sorted(difficulties):
             raise ValueError('Math questions must be ordered from easiest to hardest')
+        if route == 'C':
+            if any(difficulty not in (3, 4) for difficulty in difficulties[:15]):
+                raise ValueError('Math Module C questions 1-15 must be difficulty 3-4')
+            if any(difficulty == 5 for difficulty in difficulties[:18]):
+                raise ValueError('Math Module C must reserve difficulty 5 for questions 19-22')
+            if sum(difficulty == 5 for difficulty in difficulties[18:]) < 2:
+                raise ValueError('Math Module C requires at least two difficulty-5 questions in positions 19-22')
         spr_count = sum(q['response_type'] == 'student_produced' for q in normalized)
         if not 4 <= spr_count <= 6:
             raise ValueError('Math modules require 4-6 student-produced response questions')

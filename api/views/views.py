@@ -10,7 +10,7 @@ from api import generation
 from api.views.serializers import QuestionSerializer, QuestionAdminSerializer
 from django.db import models
 from django.db import transaction
-from ..models import Question, QuestionReport
+from ..models import Announcement, DEFAULT_TEST_PREP, Question, QuestionReport
 from rest_framework import status
 
 ENGLISH_QUESTION_TYPES = [
@@ -40,6 +40,51 @@ MATH_QUESTION_TYPES = [
     'Right triangles and trigonometry',
     'Circles',
 ]
+
+
+def _announcement_payload(announcement):
+    return {
+        'message': announcement.message,
+        'is_active': announcement.is_active,
+        'version': announcement.updated_at.isoformat(),
+    }
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def active_announcement(request):
+    announcement = Announcement.objects.filter(pk=1, is_active=True).exclude(message='').first()
+    return Response(_announcement_payload(announcement) if announcement else None)
+
+
+@api_view(['GET', 'PUT'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAdminUser])
+def manage_announcement(request):
+    announcement, _ = Announcement.objects.get_or_create(pk=1)
+    if request.method == 'GET':
+        return Response(_announcement_payload(announcement))
+
+    message = request.data.get('message')
+    is_active = request.data.get('is_active')
+    if not isinstance(message, str):
+        return Response({'error': 'Message must be text.'}, status=status.HTTP_400_BAD_REQUEST)
+    message = message.strip()
+    if len(message) > 500:
+        return Response({'error': 'Message cannot exceed 500 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(is_active, bool):
+        return Response({'error': 'Active must be true or false.'}, status=status.HTTP_400_BAD_REQUEST)
+    if is_active and not message:
+        return Response({'error': 'Enter a message before activating the banner.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if announcement.message == message and announcement.is_active == is_active:
+        return Response(_announcement_payload(announcement))
+
+    announcement.message = message
+    announcement.is_active = is_active
+    announcement.save()
+    return Response(_announcement_payload(announcement))
 
 
 def question_source_values(data, default):
@@ -77,9 +122,14 @@ def list_questions(request):
 
     # Filter questions based on type and difficulty
     if question_type != 'any':
-        questions = Question.objects.filter(question_type=question_type).order_by('id')
+        questions = Question.objects.filter(
+            test_prep_id=DEFAULT_TEST_PREP, subject=subject, question_type=question_type,
+        ).order_by('id')
     else:
-        questions = Question.objects.filter(question_type__in=default_question_types).order_by('id')
+        questions = Question.objects.filter(
+            test_prep_id=DEFAULT_TEST_PREP, subject=subject,
+            question_type__in=default_question_types,
+        ).order_by('id')
 
     if difficulty != 'any':
         questions = questions.filter(difficulty=int(difficulty)).order_by('id')
@@ -201,6 +251,7 @@ def bulk_update_questions(request):
         if value not in generation.SKILL_INDEX:
             return Response({'error': 'Choose a valid question type.'}, status=status.HTTP_400_BAD_REQUEST)
         updates['question_type'] = value
+        updates['subject'] = generation.subject_of_type(value)
     elif field == 'difficulty':
         try:
             value = int(request.data.get('value'))
@@ -336,9 +387,12 @@ def check_answer(request):
     payload = {'result': 'correct' if correct else 'incorrect', 'status': status.HTTP_200_OK}
 
     if is_practice:
+        if question.test_prep_id != DEFAULT_TEST_PREP:
+            return Response({'error': 'Question does not belong to SAT practice.'}, status=400)
         subject = subject_of(question)
         active_subject_questions = PracticeActiveQuestion.objects.filter(
             user=request.user,
+            test_prep_id=DEFAULT_TEST_PREP,
             question__question_type__in=SUBJECT_TYPES[subject],
         )
         if active_subject_questions.exists() and not active_subject_questions.filter(question=question).exists():
@@ -351,7 +405,9 @@ def check_answer(request):
         # A repeat sighting of an answered question is a review (surfaced by the
         # done-before/result filters): grade it, but never charge the quota,
         # move Elo, touch lifetime stats, or extend the daily streak.
-        is_review = PracticeAttempt.objects.filter(user=request.user, question=question).exists()
+        is_review = PracticeAttempt.objects.filter(
+            user=request.user, test_prep_id=DEFAULT_TEST_PREP, question=question,
+        ).exists()
         if is_review:
             current_elo = get_practice_stats(request.user, subject).elo
             payload['rated'] = False
