@@ -1,5 +1,5 @@
 from django.urls import path
-from api.views import views, user_views, tournaments_views, shop_views, duel_views, profile_views
+from api.views import views, user_views, tournaments_views, duel_views, profile_views
 from api.views import trainer_views as trainer_view
 from api.views import onlineuser_views, auth_views, practice_views, billing_views, generation_views, practice_test_generation_views, practice_test_views
 from api.views import marketing_views
@@ -93,7 +93,6 @@ urlpatterns = [
     path('token/', auth_views.VerifiedTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', auth_views.AccountTokenRefreshView.as_view(), name='api_token_refresh'),
 
-    path('buy_pet/', shop_views.buy_pet, name='buy_pet'),
 
     # Password reset
     path('password_reset/', user_views.PasswordResetRequestView.as_view(), name='password_reset'),

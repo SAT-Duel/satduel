@@ -37,6 +37,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api import generation
 from api.models import (
+    DEFAULT_TEST_PREP,
     PracticeActiveQuestion,
     PracticeAttempt,
     PracticeStats,
@@ -78,14 +79,20 @@ def subject_filter(subject):
 
 def get_practice_stats(user, subject):
     """The user's per-subject stats row (rating, counters, active question)."""
-    stats, _ = PracticeStats.objects.get_or_create(user=user, subject=resolve_subject(subject))
+    stats, _ = PracticeStats.objects.get_or_create(
+        user=user, test_prep_id=DEFAULT_TEST_PREP, subject=resolve_subject(subject),
+    )
     return stats
 
 
 def practice_stats_breakdown(user):
     """Per-subject lifetime counters (includes legacy pre-PracticeAttempt
     progress, which the migration folded into the English row)."""
-    rows = {row.subject: row for row in PracticeStats.objects.filter(user=user)}
+    rows = {
+        row.subject: row for row in PracticeStats.objects.filter(
+            user=user, test_prep_id=DEFAULT_TEST_PREP,
+        )
+    }
     payload = {}
     for subject in SUBJECTS:
         row = rows.get(subject)
@@ -111,9 +118,11 @@ practice_attempt_breakdown = practice_stats_breakdown
 
 def record_practice_answer(user, question, correct, subject, selected_choice):
     """Log the attempt and bump the subject's lifetime counters atomically."""
-    first_attempt = not PracticeAttempt.objects.filter(user=user, question=question).exists()
+    first_attempt = not PracticeAttempt.objects.filter(
+        user=user, test_prep_id=DEFAULT_TEST_PREP, question=question,
+    ).exists()
     PracticeAttempt.objects.create(
-        user=user, question=question, correct=correct, subject=subject,
+        user=user, test_prep_id=DEFAULT_TEST_PREP, question=question, correct=correct, subject=subject,
         selected_choice=selected_choice,
     )
     stats = get_practice_stats(user, subject)
@@ -126,7 +135,8 @@ def record_practice_answer(user, question, correct, subject, selected_choice):
     # attempt at a question moves the per-type counters (same rule as Elo).
     if first_attempt and question.question_type:
         type_stats, _ = PracticeTypeStats.objects.get_or_create(
-            user=user, question_type=question.question_type,
+            user=user, test_prep_id=DEFAULT_TEST_PREP, subject=subject,
+            question_type=question.question_type,
         )
         type_stats.solved = F('solved') + 1
         fields = ['solved']
@@ -147,12 +157,14 @@ def practice_type_progress(user, subjects=None):
     types = [t for s in subjects for t in SUBJECT_TYPES[s]]
     totals = {
         row['question_type']: row['total']
-        for row in Question.objects.filter(question_type__in=types)
+        for row in Question.objects.filter(test_prep_id=DEFAULT_TEST_PREP, question_type__in=types)
         .values('question_type').annotate(total=Count('id'))
     }
     stats = {
         row.question_type: row
-        for row in PracticeTypeStats.objects.filter(user=user, question_type__in=types)
+        for row in PracticeTypeStats.objects.filter(
+            user=user, test_prep_id=DEFAULT_TEST_PREP, question_type__in=types,
+        )
     }
     payload = {}
     for subject in subjects:
@@ -174,7 +186,9 @@ def practice_type_progress(user, subjects=None):
 
 def practice_current_streak(user):
     streak = 0
-    for correct in PracticeAttempt.objects.filter(user=user).order_by('-created_at', '-id').values_list('correct', flat=True):
+    for correct in PracticeAttempt.objects.filter(
+        user=user, test_prep_id=DEFAULT_TEST_PREP,
+    ).order_by('-created_at', '-id').values_list('correct', flat=True):
         if not correct:
             break
         streak += 1
@@ -198,7 +212,7 @@ def get_quota(user):
     has_premium = bool(profile and profile.has_premium)
     start, end = _local_day_bounds_utc(profile, _local_today(profile))
     used = PracticeAttempt.objects.filter(
-        user=user, created_at__gte=start, created_at__lt=end,
+        user=user, test_prep_id=DEFAULT_TEST_PREP, created_at__gte=start, created_at__lt=end,
     ).count()
     limit = None if has_premium else settings.FREE_DAILY_LIMIT
     return used, limit, has_premium
@@ -238,14 +252,18 @@ def apply_practice_elo(user, question, correct):
     stats = get_practice_stats(user, subject)
     previous_rating = stats.elo
 
-    already_attempted = PracticeAttempt.objects.filter(user=user, question=question).exists()
+    already_attempted = PracticeAttempt.objects.filter(
+        user=user, test_prep_id=DEFAULT_TEST_PREP, question=question,
+    ).exists()
     if already_attempted:
         return {
             'rated': False, 'subject': subject,
             'previous_rating': previous_rating, 'new_rating': previous_rating, 'delta': 0,
         }
 
-    total_attempts = PracticeAttempt.objects.filter(user=user).filter(subject_filter(subject)).count()
+    total_attempts = PracticeAttempt.objects.filter(
+        user=user, test_prep_id=DEFAULT_TEST_PREP,
+    ).filter(subject_filter(subject)).count()
     user_k = USER_K_PROVISIONAL if total_attempts < PROVISIONAL_ATTEMPTS else USER_K_STABLE
 
     expected = _expected_score(previous_rating, question.sp_elo_rating)
@@ -346,7 +364,7 @@ def latest_attempt_correct_ids(user, correct):
     """
     latest = {}
     for question_id, was_correct in (
-        PracticeAttempt.objects.filter(user=user)
+        PracticeAttempt.objects.filter(user=user, test_prep_id=DEFAULT_TEST_PREP)
         .order_by('created_at', 'id')
         .values_list('question_id', 'correct')
     ):
@@ -361,14 +379,19 @@ def pick_filtered_question(user, subject, filters):
     fresh-only picker. The done-before/result filters instead draw from a
     review pool of already-answered questions.
     """
-    base = Question.objects.filter(question_type__in=SUBJECT_TYPES[subject])
+    base = Question.objects.filter(
+        test_prep_id=DEFAULT_TEST_PREP, subject=subject,
+        question_type__in=SUBJECT_TYPES[subject],
+    )
     if filters['types']:
         base = base.filter(question_type__in=filters['types'])
     if filters['levels']:
         base = base.filter(difficulty__in=filters['levels'])
 
     if filters['saved'] != 'all':
-        saved_ids = SavedQuestion.objects.filter(user=user).values_list('question_id', flat=True)
+        saved_ids = SavedQuestion.objects.filter(
+            user=user, test_prep_id=DEFAULT_TEST_PREP,
+        ).values_list('question_id', flat=True)
         if filters['saved'] == 'only':
             base = base.filter(id__in=saved_ids)
         else:  # 'exclude'
@@ -378,7 +401,9 @@ def pick_filtered_question(user, subject, filters):
         return None, 'no_questions'
 
     attempted_ids = set(
-        PracticeAttempt.objects.filter(user=user).values_list('question_id', flat=True)
+        PracticeAttempt.objects.filter(
+            user=user, test_prep_id=DEFAULT_TEST_PREP,
+        ).values_list('question_id', flat=True)
     )
 
     if filters_want_review(filters):
@@ -425,7 +450,7 @@ def pick_practice_question(user, subject, question_type=None):
     types = SUBJECT_TYPES[subject]
     user_rating = get_practice_stats(user, subject).elo
 
-    base = Question.objects.all()
+    base = Question.objects.filter(test_prep_id=DEFAULT_TEST_PREP, subject=subject)
     if question_type and question_type != 'any' and question_type in types:
         base = base.filter(question_type=question_type)
     else:
@@ -435,7 +460,9 @@ def pick_practice_question(user, subject, question_type=None):
         return None, 'no_questions'
 
     attempted_ids = set(
-        PracticeAttempt.objects.filter(user=user).values_list('question_id', flat=True)
+        PracticeAttempt.objects.filter(
+            user=user, test_prep_id=DEFAULT_TEST_PREP,
+        ).values_list('question_id', flat=True)
     )
     fresh = base.exclude(id__in=attempted_ids)
     if not fresh.exists():
@@ -486,7 +513,9 @@ def next_question(request):
         )
 
     lane = f'{subject}:{filters_lane_signature(filters)}'
-    active = PracticeActiveQuestion.objects.filter(user=request.user, lane=lane).first()
+    active = PracticeActiveQuestion.objects.filter(
+        user=request.user, test_prep_id=DEFAULT_TEST_PREP, lane=lane,
+    ).first()
     if active:
         return Response({
             'question': QuestionSerializer(active.question).data,
@@ -510,6 +539,7 @@ def next_question(request):
 
     active, _ = PracticeActiveQuestion.objects.get_or_create(
         user=request.user,
+        test_prep_id=DEFAULT_TEST_PREP,
         lane=lane,
         defaults={'question': question},
     )
@@ -597,7 +627,7 @@ def practice_history(request):
         limit = 20
 
     attempts = exclude_live_questions(
-        PracticeAttempt.objects.filter(user=request.user), request.user,
+        PracticeAttempt.objects.filter(user=request.user, test_prep_id=DEFAULT_TEST_PREP), request.user,
     )
     if subject:
         attempts = attempts.filter(subject=subject)
@@ -649,7 +679,7 @@ def saved_questions(request):
     """GET the user's saved questions (newest first); POST to save one."""
     if request.method == 'POST':
         question_id = request.data.get('question_id')
-        question = Question.objects.filter(id=question_id).first()
+        question = Question.objects.filter(id=question_id, test_prep_id=DEFAULT_TEST_PREP).first()
         if question is None:
             return Response({'error': 'not_found', 'detail': 'That question does not exist.'},
                             status=status.HTTP_404_NOT_FOUND)
@@ -657,6 +687,7 @@ def saved_questions(request):
         # than an error, so a double click can't fail the button.
         SavedQuestion.objects.get_or_create(
             user=request.user,
+            test_prep_id=DEFAULT_TEST_PREP,
             question=question,
             defaults={'subject': resolve_subject(subject_of(question))},
         )
@@ -678,7 +709,7 @@ def saved_questions(request):
         limit = 20
 
     saved = exclude_live_questions(
-        SavedQuestion.objects.filter(user=request.user), request.user,
+        SavedQuestion.objects.filter(user=request.user, test_prep_id=DEFAULT_TEST_PREP), request.user,
     )
     if subject:
         saved = saved.filter(subject=subject)
@@ -717,7 +748,9 @@ def saved_questions(request):
 @permission_classes([IsAuthenticated])
 def unsave_question(request, question_id):
     """Remove a question from the user's saved list."""
-    SavedQuestion.objects.filter(user=request.user, question_id=question_id).delete()
+    SavedQuestion.objects.filter(
+        user=request.user, test_prep_id=DEFAULT_TEST_PREP, question_id=question_id,
+    ).delete()
     return Response({'saved': False, 'question_id': question_id})
 
 
@@ -731,7 +764,9 @@ def saved_question_status(request):
     except (TypeError, ValueError):
         return Response({'error': 'question_id is required.'}, status=status.HTTP_400_BAD_REQUEST)
     return Response({
-        'saved': SavedQuestion.objects.filter(user=request.user, question_id=question_id).exists(),
+        'saved': SavedQuestion.objects.filter(
+            user=request.user, test_prep_id=DEFAULT_TEST_PREP, question_id=question_id,
+        ).exists(),
         'question_id': question_id,
     })
 
@@ -772,7 +807,7 @@ def _local_day_bounds_utc(profile, local_date):
 def _attempts_on(user, profile, local_date):
     start, end = _local_day_bounds_utc(profile, local_date)
     return PracticeAttempt.objects.filter(
-        user=user, created_at__gte=start, created_at__lt=end,
+        user=user, test_prep_id=DEFAULT_TEST_PREP, created_at__gte=start, created_at__lt=end,
     ).count()
 
 
@@ -838,7 +873,7 @@ def week_strip(user, profile):
     tz = _user_tz(profile)
     counts = {}
     stamps = PracticeAttempt.objects.filter(
-        user=user, created_at__gte=start_utc,
+        user=user, test_prep_id=DEFAULT_TEST_PREP, created_at__gte=start_utc,
     ).values_list('created_at', flat=True)
     for stamp in stamps:
         local_date = stamp.astimezone(tz).date()
@@ -867,7 +902,8 @@ def practice_activity(user, days=365):
     tz = _user_tz(profile)
     counts = {}
     attempts = PracticeAttempt.objects.filter(
-        user=user, created_at__gte=start_utc, created_at__lt=end_utc,
+        user=user, test_prep_id=DEFAULT_TEST_PREP,
+        created_at__gte=start_utc, created_at__lt=end_utc,
     ).values_list('created_at', 'subject')
     for stamp, subject in attempts:
         local_date = stamp.astimezone(tz).date()
@@ -949,12 +985,13 @@ def save_test_result(request):
     except (KeyError, TypeError, ValueError):
         time_used = None
 
-    previous = PracticeTestResult.objects.filter(user=request.user)
+    previous = PracticeTestResult.objects.filter(user=request.user, test_prep_id=DEFAULT_TEST_PREP)
     previous_best = previous.aggregate(best=Max('score'))['best']
     previous_last = previous.values_list('score', flat=True).first()
 
     result = PracticeTestResult.objects.create(
         user=request.user,
+        test_prep_id=DEFAULT_TEST_PREP,
         test_id=int(data.get('test_id') or 1),
         test_name=str(data.get('test_name') or 'Practice Test')[:100],
         score=score,
@@ -984,7 +1021,9 @@ def test_history(request):
     """All of the user's saved practice tests, newest first, plus summary stats."""
     # ponytail: returns every row (tests are ~1/sitting); paginate if users
     # ever accumulate hundreds.
-    rows = list(PracticeTestResult.objects.filter(user=request.user))
+    rows = list(PracticeTestResult.objects.filter(
+        user=request.user, test_prep_id=DEFAULT_TEST_PREP,
+    ))
     scores = [row.score for row in rows]
     return Response({
         'results': [_test_result_payload(row) for row in rows],

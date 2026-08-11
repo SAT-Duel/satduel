@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
 from api.bot_duels import advance_bot, available_bot_user
-from api.models import DUEL_EMOJIS, DuelEmote, Room, TrackedQuestion
+from api.models import DUEL_EMOJIS, DuelEmote, Room, TestPrepUserStats, TrackedQuestion
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -20,14 +20,14 @@ def _room_for_user(room_id, user):
     return get_object_or_404(Room, Q(user1=user) | Q(user2=user), id=room_id)
 
 
-def _player_payload(user):
+def _player_payload(user, test_prep):
     profile = user.profile
     return {
         'id': user.id,
         'username': user.username,
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
-        'elo_rating': profile.elo_rating,
+        'elo_rating': TestPrepUserStats.for_user(user, test_prep).duel_elo,
         'duel_emotes': profile.duel_emotes,
         'is_premium': profile.has_premium,
     }
@@ -52,18 +52,19 @@ def _schedule_bot_emotes(room, bot, now, count):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def match(request):
+    test_prep = request.user.profile.active_test_prep_id
     with transaction.atomic():
         user_in_room = Room.objects.filter(
             Q(user1=request.user, status__in=['Searching', 'Battling']) |
             Q(user2=request.user, status__in=['Searching', 'Battling'])
-        ).first()
+        ).filter(test_prep_id=test_prep).first()
 
         if user_in_room:
             return Response({'error': 'You are already matching or in a room'}, status=400)
 
         room = (
             Room.objects.select_for_update()
-            .filter(user2__isnull=True, status='Searching')
+            .filter(user2__isnull=True, status='Searching', test_prep_id=test_prep)
             .exclude(user1=request.user)
             .first()
         )
@@ -73,7 +74,7 @@ def match(request):
             room.status = 'Battling'
             room.save()
             return Response({'id': room.id, 'full': 'true'}, status=200)
-        room = Room.objects.create(user1=request.user, status='Searching')
+        room = Room.objects.create(user1=request.user, status='Searching', test_prep_id=test_prep)
 
     serializer = RoomSerializer(room)
     return Response(serializer.data, status=200)
@@ -179,11 +180,14 @@ def get_opponent_progres(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def rejoin_match(request):
+    test_prep = request.user.profile.active_test_prep_id
     battling_room = Room.objects.filter(
         Q(user1=request.user, status='Battling') | Q(user2=request.user, status='Battling'),
+        test_prep_id=test_prep,
     ).first()
     searching_room = Room.objects.filter(
         Q(user1=request.user, status='Searching'),
+        test_prep_id=test_prep,
     ).first()
     if battling_room:
         return Response({'battle_room_id': battling_room.id, 'searching_room_id': None})
@@ -255,7 +259,7 @@ def get_results(request):
         before = getattr(room, f'{prefix}_elo_before')
         after = getattr(room, f'{prefix}_elo_after')
         return {
-            **_player_payload(user),
+            **_player_payload(user, room.test_prep_id),
             'score': score,
             'elo_before': before,
             'elo_after': after,
@@ -315,8 +319,13 @@ def get_match_history(request, user_id=None):
 
     rooms = (
         Room.objects
-        .filter(Q(user1=user) | Q(user2=user), status='Ended')
+        .filter(
+            Q(user1=user) | Q(user2=user),
+            status='Ended',
+            test_prep_id=request.user.profile.active_test_prep_id,
+        )
         .select_related('user1__profile', 'user2__profile', 'winner')
+        .prefetch_related('user1__test_prep_stats', 'user2__test_prep_stats')
         .order_by('-created_at')[:limit]
     )
     serializer = RoomSerializer(rooms, many=True)
@@ -336,7 +345,10 @@ def get_match_info(request):
     else:
         opponent = room.user1
         user = room.user2
-    return Response({'opponent': _player_payload(opponent), 'currentUser': _player_payload(user)})
+    return Response({
+        'opponent': _player_payload(opponent, room.test_prep_id),
+        'currentUser': _player_payload(user, room.test_prep_id),
+    })
 
 
 @api_view(['GET', 'POST'])
@@ -383,5 +395,3 @@ def duel_emotes(request):
         .values('id', 'sender_id', 'emoji', 'visible_at')[:20]
     )
     return Response({'emotes': list(reversed(emotes))})
-
-
