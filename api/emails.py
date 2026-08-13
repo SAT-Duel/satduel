@@ -59,6 +59,30 @@ def send_password_link_email(user):
     )
 
 
+def send_welcome_email(user):
+    """One-time onboarding email, sent when the user verifies their address.
+
+    Never raises: a send failure must not break email confirmation, which is
+    what actually activates the account.
+    """
+    site = settings.FRONTEND_URL.rstrip('/')
+    try:
+        return send_branded_email(
+            user.email,
+            'Welcome to SAT Duel',
+            'welcome',
+            {
+                'first_name': user.first_name,
+                'practice_url': f'{site}/infinite_questions',
+                'party_url': f'{site}/party',
+                'discord_url': settings.DISCORD_INVITE_URL,
+            },
+        )
+    except Exception:
+        logger.exception('Could not send the welcome email to user %s', user.pk)
+        return 0
+
+
 def send_password_changed_email(user):
     try:
         return send_branded_email(

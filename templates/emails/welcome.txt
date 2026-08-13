@@ -1,0 +1,23 @@
+{% if first_name %}You're in, {{ first_name }}.{% else %}You're in.{% endif %}
+
+Your SAT Duel account is ready. Two good ways to start:
+
+1. Answer one real question
+   A few questions is all it takes to set your starting rating in Math or
+   Reading & Writing.
+   {{ practice_url }}
+
+2. Start a party with friends
+   Host a live room, share the code, and race your friends through SAT
+   questions together.
+   {{ party_url }}
+
+Get a free month of Premium
+Join the SAT Duel Discord to find duel partners, ask for help on questions,
+and claim the promotion code posted in the community.
+{{ discord_url }}
+
+Stuck on anything? Just reply to this email - it reaches a real person.
+
+You're getting this because you just created a SAT Duel account.
+Need help? {{ support_email }}

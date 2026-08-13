@@ -1,0 +1,39 @@
+{% extends "emails/base.html" %}
+{% block title %}Welcome to SAT Duel{% endblock %}
+{% block preheader %}Your account is ready. Here are two good ways to start.{% endblock %}
+{% block content %}
+<p style="margin:0 0 8px;font-size:12px;line-height:18px;font-weight:800;letter-spacing:.8px;text-transform:uppercase;color:#5b4bdb;">Account verified</p>
+<h1 style="margin:0 0 16px;font-size:28px;line-height:35px;color:#0f172a;letter-spacing:-.5px;">{% if first_name %}You're in, {{ first_name }}.{% else %}You're in.{% endif %}</h1>
+<p style="margin:0 0 26px;font-size:16px;line-height:26px;color:#475569;">Your SAT Duel account is ready. Two good ways to start:</p>
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+    <tr>
+        <td style="padding:16px 18px;border:1px solid #e4e0ff;border-radius:12px;background:#faf9ff;">
+            <p style="margin:0 0 6px;font-size:15px;line-height:22px;font-weight:800;color:#0f172a;">Answer one real question</p>
+            <p style="margin:0 0 12px;font-size:14px;line-height:22px;color:#64748b;">A few questions is all it takes to set your starting rating in Math or Reading &amp; Writing.</p>
+            <a href="{{ practice_url }}" style="font-size:14px;line-height:20px;color:#5b4bdb;text-decoration:none;font-weight:800;">Start practicing &rarr;</a>
+        </td>
+    </tr>
+    <tr><td style="height:12px;line-height:12px;font-size:0;">&nbsp;</td></tr>
+    <tr>
+        <td style="padding:16px 18px;border:1px solid #e4e0ff;border-radius:12px;background:#faf9ff;">
+            <p style="margin:0 0 6px;font-size:15px;line-height:22px;font-weight:800;color:#0f172a;">Start a party with friends</p>
+            <p style="margin:0 0 12px;font-size:14px;line-height:22px;color:#64748b;">Host a live room, share the code, and race your friends through SAT questions together.</p>
+            <a href="{{ party_url }}" style="font-size:14px;line-height:20px;color:#5b4bdb;text-decoration:none;font-weight:800;">Create a room &rarr;</a>
+        </td>
+    </tr>
+</table>
+
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:26px;">
+    <tr>
+        <td style="padding:18px;border-radius:12px;background:#5865f2;">
+            <p style="margin:0 0 6px;font-size:15px;line-height:22px;font-weight:800;color:#ffffff;">Get a free month of Premium</p>
+            <p style="margin:0 0 12px;font-size:14px;line-height:22px;color:#dcdffb;">Join the SAT Duel Discord to find duel partners, ask for help on questions, and claim the promotion code posted in the community.</p>
+            <a href="{{ discord_url }}" style="display:inline-block;padding:11px 18px;border-radius:10px;background:#ffffff;color:#4752c4;text-decoration:none;font-size:14px;line-height:18px;font-weight:800;">Join the Discord</a>
+        </td>
+    </tr>
+</table>
+
+<p style="margin:26px 0 0;font-size:13px;line-height:21px;color:#64748b;">Stuck on anything? Just reply to this email — it reaches a real person.</p>
+{% endblock %}
+{% block footer_note %}You're getting this because you just created a SAT Duel account.{% endblock %}
