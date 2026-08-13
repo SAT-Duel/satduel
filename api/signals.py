@@ -1,6 +1,9 @@
-"""Keep the Resend marketing audience in sync with local state.
+"""Side effects that hang off account lifecycle events.
 
-Two triggers matter for a contact's subscription status:
+Email confirmation fans out to two independent receivers: the welcome email
+(everyone) and the Resend audience sync (opted-in users only).
+
+For the marketing sync, two triggers matter for a contact's subscription status:
 
 * ``Profile.marketing_opt_in`` changing (onboarding, admin edits, signup).
 * The user's email becoming verified (an opted-in user only counts as a
@@ -18,6 +21,7 @@ from allauth.account.signals import email_confirmed
 from django.db.models.signals import post_migrate, post_save, pre_save
 from django.dispatch import receiver
 
+from api.emails import send_welcome_email
 from api.marketing import marketing_sync_enabled, sync_marketing_contact
 from api.models import Profile, TestPrep, TestSection
 
@@ -92,3 +96,20 @@ def _sync_on_email_confirmed(request, email_address, **kwargs):
     user = getattr(email_address, 'user', None)
     if user is not None:
         sync_marketing_contact(user)
+
+
+@receiver(email_confirmed, dispatch_uid='welcome_email_on_email_confirmed')
+def _welcome_on_email_confirmed(request, email_address, **kwargs):
+    """Verification is the moment the account becomes real — greet the user.
+
+    Sent to everyone regardless of ``marketing_opt_in``: this is a one-time
+    onboarding email about the account they just created, not a campaign.
+    Recurring/promotional sends belong in Resend, which honours the opt-in.
+
+    ponytail: no "already welcomed" flag, so changing your email address and
+    re-verifying sends a second welcome. Add a Profile boolean if that ever
+    shows up in support mail.
+    """
+    user = getattr(email_address, 'user', None)
+    if user is not None and user.email:
+        send_welcome_email(user)
