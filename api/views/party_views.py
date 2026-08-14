@@ -344,29 +344,52 @@ def send_party_emote(request, room_id):
     if not room.players.filter(user=request.user).exists():
         return Response({'error': 'You are not in this room.'}, status=403)
 
-    emoji = request.data.get('emoji')
-    if emoji not in usable_duel_emotes(request.user.profile):
-        return Response({'error': 'Invalid emote.'}, status=400)
+    raw_reactions = request.data.get('reactions')
+    if raw_reactions is None:
+        raw_reactions = [{'emoji': request.data.get('emoji'), 'count': 1}]
+    if not isinstance(raw_reactions, list) or not raw_reactions:
+        return Response({'error': 'Choose at least one reaction.'}, status=400)
+
+    allowed = usable_duel_emotes(request.user.profile)
+    emojis = []
+    for item in raw_reactions:
+        if not isinstance(item, dict) or item.get('emoji') not in allowed:
+            return Response({'error': 'Invalid emote.'}, status=400)
+        try:
+            count = int(item.get('count', 1))
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid reaction count.'}, status=400)
+        if count < 1 or count > 12:
+            return Response({'error': 'Send between 1 and 12 of each reaction.'}, status=400)
+        emojis.extend([item['emoji']] * count)
+
+    if len(emojis) > 20:
+        return Response({'error': 'Send at most 20 reactions at once.'}, status=400)
 
     now = timezone.now()
-    last_sent = DuelEmote.objects.filter(
-        party_room=room, sender=request.user,
-    ).order_by('-created_at').first()
-    if last_sent and last_sent.created_at > now - timezone.timedelta(seconds=1):
+    recent_count = DuelEmote.objects.filter(
+        party_room=room,
+        sender=request.user,
+        created_at__gt=now - timezone.timedelta(seconds=1),
+    ).count()
+    if recent_count + len(emojis) > 24:
         return Response({'error': 'Slow down.'}, status=429)
 
-    emote = DuelEmote.objects.create(
-        party_room=room, sender=request.user, emoji=emoji, visible_at=now,
-    )
-    return Response({
-        'reaction': {
+    emotes = DuelEmote.objects.bulk_create([
+        DuelEmote(party_room=room, sender=request.user, emoji=emoji, visible_at=now)
+        for emoji in emojis
+    ])
+    reactions = [
+        {
             'id': emote.id,
             'sender_id': request.user.id,
             'sender_username': request.user.username,
-            'emoji': emoji,
+            'emoji': emote.emoji,
             'visible_at': now.isoformat(),
-        },
-    })
+        }
+        for emote in emotes
+    ]
+    return Response({'reaction': reactions[0], 'reactions': reactions})
 
 
 @api_view(['POST'])

@@ -2709,14 +2709,20 @@ class PartyModeTests(APITestCase):
 
     def test_party_reactions_use_the_duel_reaction_table_and_premium_loadout(self):
         data = self._create()
-        sent = self.client.post(reverse('party_emote', args=[data['id']]), {'emoji': '👍'}, format='json')
+        sent = self.client.post(
+            reverse('party_emote', args=[data['id']]),
+            {'reactions': [{'emoji': '👍', 'count': 3}]},
+            format='json',
+        )
         self.assertEqual(sent.status_code, 200)
+        self.assertEqual(len(sent.data['reactions']), 3)
 
         reaction = DuelEmote.objects.get(id=sent.data['reaction']['id'])
         self.assertIsNone(reaction.room_id)
         self.assertEqual(reaction.party_room_id, data['id'])
         state = self.client.get(reverse('party_state', args=[data['id']])).data
         self.assertEqual(state['reactions'][0]['sender_username'], 'host')
+        self.assertEqual(len(state['reactions']), 3)
         self.assertEqual(len(state['your_emotes']), 4)
 
         self.host.profile.duel_emotes = ['🤡', '👍', '🔥', '😂']
@@ -2726,9 +2732,16 @@ class PartyModeTests(APITestCase):
 
         self.host.profile.is_premium = True
         self.host.profile.save(update_fields=['is_premium'])
-        DuelEmote.objects.filter(id=reaction.id).update(created_at=timezone.now() - timedelta(seconds=2))
+        DuelEmote.objects.filter(party_room_id=data['id']).update(created_at=timezone.now() - timedelta(seconds=2))
         allowed = self.client.post(reverse('party_emote', args=[data['id']]), {'emoji': '🤡'}, format='json')
         self.assertEqual(allowed.status_code, 200)
+
+        too_many = self.client.post(
+            reverse('party_emote', args=[data['id']]),
+            {'reactions': [{'emoji': '👍', 'count': 12}, {'emoji': '🔥', 'count': 12}]},
+            format='json',
+        )
+        self.assertEqual(too_many.status_code, 400)
 
         self.client.force_authenticate(user=self.guest)
         outsider = self.client.post(reverse('party_emote', args=[data['id']]), {'emoji': '👍'}, format='json')
