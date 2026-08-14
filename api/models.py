@@ -8,15 +8,31 @@ import uuid
 import pytz
 
 
-DUEL_EMOJIS = (
+FREE_DUEL_EMOJIS = (
     '👍', '🔥', '😂', '😮', '🎉', '💀', '👀', '🧠', '💪', '😎',
     '🤔', '😭', '🫡', '🚀', '⚡', '🎯', '🏆', '🤝', '😅', '🙃',
     '😤', '🥳', '🤯', '👏', '✨', '😈', '🐐', '✅', '❌', '🫠',
 )
+PREMIUM_DUEL_EMOJIS = ('🤡', '👎', '🗑️', '💩', '🤓', '🥱', '😏', '🤬', '🥶', '🥴')
+DUEL_EMOJIS = FREE_DUEL_EMOJIS + PREMIUM_DUEL_EMOJIS
 
 
 def default_duel_emotes():
-    return list(DUEL_EMOJIS[:4])
+    return list(FREE_DUEL_EMOJIS[:4])
+
+
+def usable_duel_emotes(profile):
+    """Return a four-emote loadout, excluding Premium choices after expiry."""
+    allowed = set(FREE_DUEL_EMOJIS)
+    if profile.has_premium:
+        allowed.update(PREMIUM_DUEL_EMOJIS)
+    loadout = [emoji for emoji in profile.duel_emotes if emoji in allowed]
+    for emoji in default_duel_emotes():
+        if len(loadout) == 4:
+            break
+        if emoji not in loadout:
+            loadout.append(emoji)
+    return loadout[:4]
 
 
 # =========================================================
@@ -727,8 +743,11 @@ class TrackedQuestion(models.Model):
 
 
 class DuelEmote(models.Model):
-    """A lightweight in-duel reaction, including delayed bot reactions."""
-    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='emotes')
+    """A lightweight live reaction targeting either a duel or party room."""
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='emotes', null=True, blank=True)
+    party_room = models.ForeignKey(
+        'PartyRoom', on_delete=models.CASCADE, related_name='emotes', null=True, blank=True,
+    )
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='duel_emotes')
     emoji = models.CharField(max_length=8)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -736,9 +755,19 @@ class DuelEmote(models.Model):
 
     class Meta:
         ordering = ['visible_at', 'id']
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(room__isnull=False, party_room__isnull=True)
+                    | models.Q(room__isnull=True, party_room__isnull=False)
+                ),
+                name='reaction_targets_exactly_one_room',
+            ),
+        ]
 
     def __str__(self):
-        return f"{self.sender.username} {self.emoji} in room {self.room_id}"
+        target = f'duel {self.room_id}' if self.room_id else f'party {self.party_room_id}'
+        return f"{self.sender.username} {self.emoji} in {target}"
 
 
 class FriendRequest(models.Model):
@@ -925,6 +954,7 @@ class PracticeTest(models.Model):
         TestPrep, on_delete=models.PROTECT, related_name='adaptive_tests', default=DEFAULT_TEST_PREP,
     )
     test_type = models.CharField(max_length=10, choices=TYPE_CHOICES, default=TYPE_FULL, db_index=True)
+    premium_only = models.BooleanField(default=False, db_index=True)
     english_a = models.OneToOneField(
         PracticeTestModule, on_delete=models.PROTECT, related_name='practice_test_english_a',
         null=True, blank=True,

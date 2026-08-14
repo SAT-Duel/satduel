@@ -6,7 +6,7 @@ from django.db import connection, transaction
 from django.urls import reverse
 from rest_framework.test import APITestCase
 
-from api.models import PracticeTest, PracticeTestAttempt, PracticeTestModule
+from api.models import PracticeTest, PracticeTestAttempt, PracticeTestModule, Profile
 from api.practice_test_scoring import answer_is_correct, estimate_ability, select_second_module
 from api.views.practice_test_views import _attempt_queryset
 
@@ -150,10 +150,23 @@ class PracticeTestCreatorTests(APITestCase):
         self.assertEqual(response.data['test']['maximum_score'], 800)
         self.assertEqual(response.data['test']['question_count'], 2)
 
+    def test_admin_can_publish_a_premium_only_test(self):
+        modules = create_modules(self.admin, suffix='premium')
+        response = self.client.post(reverse('admin_practice_tests'), {
+            'name': 'Premium Form',
+            'premium_only': True,
+            **{field: module.id for field, module in modules.items()},
+        }, format='json')
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(response.data['test']['premium_only'])
+        self.assertTrue(PracticeTest.objects.get(name='Premium Form').premium_only)
+
 
 class PracticeTestAttemptTests(APITestCase):
     def setUp(self):
         self.user = User.objects.create_user('student', password='password')
+        Profile.objects.create(user=self.user)
         self.test = create_test(self.user)
         self.client.force_authenticate(self.user)
 
@@ -221,6 +234,26 @@ class PracticeTestAttemptTests(APITestCase):
         self.assertFalse(PracticeTestAttempt.objects.filter(id=attempt_id).exists())
         self.assertEqual(restarted.data['answers'], {})
         self.assertEqual(restarted.data['annotations'], {})
+
+    def test_premium_only_test_is_listed_but_only_premium_can_start_it(self):
+        self.test.premium_only = True
+        self.test.save(update_fields=['premium_only'])
+
+        listing = self.client.get(reverse('adaptive_practice_tests'))
+        summary = next(test for test in listing.data['tests'] if test['id'] == self.test.id)
+        denied = self.start()
+
+        self.assertTrue(summary['premium_only'])
+        self.assertTrue(summary['locked'])
+        self.assertEqual(denied.status_code, 403)
+        self.assertEqual(denied.data['error'], 'premium_required')
+
+        self.user.profile.is_premium = True
+        self.user.profile.save(update_fields=['is_premium'])
+        allowed_listing = self.client.get(reverse('adaptive_practice_tests'))
+        allowed_summary = next(test for test in allowed_listing.data['tests'] if test['id'] == self.test.id)
+        self.assertFalse(allowed_summary['locked'])
+        self.assertEqual(self.start().status_code, 200)
 
     def test_annotations_are_validated_before_storage(self):
         start = self.start()

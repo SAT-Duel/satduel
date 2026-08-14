@@ -1537,9 +1537,16 @@ class BotDuelTests(APITestCase):
     def test_profile_requires_four_unique_duel_emotes(self):
         invalid = self.client.patch('/api/profile/', {'duel_emotes': ['👍', '👍', '🔥', '😂']}, format='json')
         valid = self.client.patch('/api/profile/', {'duel_emotes': ['🎉', '💀', '👀', '🧠']}, format='json')
+        premium_denied = self.client.patch('/api/profile/', {'duel_emotes': ['🤡', '👍', '🔥', '😂']}, format='json')
         self.assertEqual(invalid.status_code, 400)
         self.assertEqual(valid.status_code, 200)
+        self.assertEqual(premium_denied.status_code, 400)
         self.assertEqual(valid.data['duel_emotes'], ['🎉', '💀', '👀', '🧠'])
+
+        self.user.profile.is_premium = True
+        self.user.profile.save(update_fields=['is_premium'])
+        premium_allowed = self.client.patch('/api/profile/', {'duel_emotes': ['🤡', '👎', '🔥', '😂']}, format='json')
+        self.assertEqual(premium_allowed.status_code, 200)
 
     def test_online_list_includes_self_and_hides_bot_metadata(self):
         response = self.client.get('/api/online_users/')
@@ -2699,6 +2706,33 @@ class PartyModeTests(APITestCase):
         room = PartyRoom.objects.get(id=data['id'])
         self.assertEqual(room.max_players, 30)
         self.assertEqual(room.num_questions, 40)
+
+    def test_party_reactions_use_the_duel_reaction_table_and_premium_loadout(self):
+        data = self._create()
+        sent = self.client.post(reverse('party_emote', args=[data['id']]), {'emoji': '👍'}, format='json')
+        self.assertEqual(sent.status_code, 200)
+
+        reaction = DuelEmote.objects.get(id=sent.data['reaction']['id'])
+        self.assertIsNone(reaction.room_id)
+        self.assertEqual(reaction.party_room_id, data['id'])
+        state = self.client.get(reverse('party_state', args=[data['id']])).data
+        self.assertEqual(state['reactions'][0]['sender_username'], 'host')
+        self.assertEqual(len(state['your_emotes']), 4)
+
+        self.host.profile.duel_emotes = ['🤡', '👍', '🔥', '😂']
+        self.host.profile.save(update_fields=['duel_emotes'])
+        denied = self.client.post(reverse('party_emote', args=[data['id']]), {'emoji': '🤡'}, format='json')
+        self.assertEqual(denied.status_code, 400)
+
+        self.host.profile.is_premium = True
+        self.host.profile.save(update_fields=['is_premium'])
+        DuelEmote.objects.filter(id=reaction.id).update(created_at=timezone.now() - timedelta(seconds=2))
+        allowed = self.client.post(reverse('party_emote', args=[data['id']]), {'emoji': '🤡'}, format='json')
+        self.assertEqual(allowed.status_code, 200)
+
+        self.client.force_authenticate(user=self.guest)
+        outsider = self.client.post(reverse('party_emote', args=[data['id']]), {'emoji': '👍'}, format='json')
+        self.assertEqual(outsider.status_code, 403)
 
     def test_full_game_flow(self):
         from api.models import PartyRoom

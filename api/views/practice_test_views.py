@@ -166,13 +166,15 @@ def _attempt_state(attempt):
     }
 
 
-def _test_summary(test):
+def _test_summary(test, has_premium):
     active_attempt = next((attempt for attempt in test._user_attempts if attempt.status == 'active'), None)
     completed = [attempt for attempt in test._user_attempts if attempt.status == 'completed']
     return {
         'id': test.id,
         'name': test.name,
         'test_type': test.test_type,
+        'premium_only': test.premium_only,
+        'locked': test.premium_only and not has_premium,
         'question_count': test.delivered_question_count,
         'duration_minutes': test.duration_minutes,
         'maximum_score': test.maximum_score,
@@ -227,7 +229,7 @@ def practice_tests(request):
 
     history = [_history_summary(attempt) for attempt in attempts if attempt.status == 'completed']
     return Response({
-        'tests': [_test_summary(test) for test in tests],
+        'tests': [_test_summary(test, request.user.profile.has_premium) for test in tests],
         'history': {
             'results': history,
             'tests_taken': len(history),
@@ -242,6 +244,11 @@ def start_test(request, test_id):
     test = PracticeTest.objects.filter(id=test_id, active=True).first()
     if not test:
         return Response({'error': 'Practice test not found'}, status=status.HTTP_404_NOT_FOUND)
+    if test.premium_only and not request.user.profile.has_premium:
+        return Response(
+            {'error': 'premium_required', 'detail': 'Premium is required for this practice test.'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     with transaction.atomic():
         attempt, _ = PracticeTestAttempt.objects.get_or_create(
             user=request.user, practice_test=test, status='active',

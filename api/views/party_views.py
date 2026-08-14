@@ -15,6 +15,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from api.models import (
+    DuelEmote,
     PARTY_COUNTDOWN_SECONDS,
     PARTY_MAX_TEAMS,
     PARTY_PRESENCE_TIMEOUT_SECONDS,
@@ -24,6 +25,7 @@ from api.models import (
     Question,
     TestSection,
     party_lives_cap,
+    usable_duel_emotes,
 )
 
 # Free-tier vs premium ceilings for room settings.
@@ -332,6 +334,39 @@ def join_party(request):
 
     PartyPlayer.objects.get_or_create(room=room, user=request.user)
     return Response({'id': room.id})
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
+def send_party_emote(request, room_id):
+    room = get_object_or_404(PartyRoom, id=room_id)
+    if not room.players.filter(user=request.user).exists():
+        return Response({'error': 'You are not in this room.'}, status=403)
+
+    emoji = request.data.get('emoji')
+    if emoji not in usable_duel_emotes(request.user.profile):
+        return Response({'error': 'Invalid emote.'}, status=400)
+
+    now = timezone.now()
+    last_sent = DuelEmote.objects.filter(
+        party_room=room, sender=request.user,
+    ).order_by('-created_at').first()
+    if last_sent and last_sent.created_at > now - timezone.timedelta(seconds=1):
+        return Response({'error': 'Slow down.'}, status=429)
+
+    emote = DuelEmote.objects.create(
+        party_room=room, sender=request.user, emoji=emoji, visible_at=now,
+    )
+    return Response({
+        'reaction': {
+            'id': emote.id,
+            'sender_id': request.user.id,
+            'sender_username': request.user.username,
+            'emoji': emoji,
+            'visible_at': now.isoformat(),
+        },
+    })
 
 
 @api_view(['POST'])
@@ -750,6 +785,21 @@ def party_state(request, room_id):
             'last_standing': room.last_standing,
         },
         'players': players,
+        'your_emotes': usable_duel_emotes(request.user.profile),
+        'reactions': list(reversed([
+            {
+                'id': reaction.id,
+                'sender_id': reaction.sender_id,
+                'sender_username': reaction.sender.username,
+                'emoji': reaction.emoji,
+                'visible_at': reaction.visible_at.isoformat(),
+            }
+            for reaction in DuelEmote.objects.filter(
+                party_room=room,
+                visible_at__lte=now,
+                visible_at__gte=now - timezone.timedelta(seconds=7),
+            ).select_related('sender').order_by('-visible_at', '-id')[:30]
+        ])),
         'question_number': room.current_index + 1,
         'total_questions': room.num_questions if room.question_ids else room.num_questions,
     }

@@ -7,7 +7,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
 from api.bot_duels import advance_bot, available_bot_user
-from api.models import DUEL_EMOJIS, DuelEmote, Room, TestPrepUserStats, TrackedQuestion
+from api.models import DuelEmote, Room, TestPrepUserStats, TrackedQuestion, usable_duel_emotes
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -28,7 +28,7 @@ def _player_payload(user, test_prep):
         'avatar': profile.avatar,
         'avatar_icon': profile.avatar_icon,
         'elo_rating': TestPrepUserStats.for_user(user, test_prep).duel_elo,
-        'duel_emotes': profile.duel_emotes,
+        'duel_emotes': usable_duel_emotes(profile),
         'is_premium': profile.has_premium,
     }
 
@@ -38,7 +38,7 @@ def _bot_emote_mode(bot):
 
 
 def _schedule_bot_emotes(room, bot, now, count):
-    loadout = bot.profile.duel_emotes or list(DUEL_EMOJIS[:4])
+    loadout = usable_duel_emotes(bot.profile)
     for index in range(count):
         DuelEmote.objects.create(
             room=room,
@@ -364,7 +364,7 @@ def duel_emotes(request):
         if room.status != 'Battling':
             return Response({'error': 'This duel has ended.'}, status=409)
         emoji = request.data.get('emoji')
-        if emoji not in request.user.profile.duel_emotes:
+        if emoji not in usable_duel_emotes(request.user.profile):
             return Response({'error': 'Invalid emote.'}, status=400)
         last_sent = DuelEmote.objects.filter(room=room, sender=request.user).order_by('-created_at').first()
         if last_sent and last_sent.created_at > now - timezone.timedelta(seconds=1):

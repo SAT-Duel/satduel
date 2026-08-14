@@ -104,6 +104,7 @@ def _test_summary(test):
         'id': test.id,
         'name': test.name,
         'test_type': test.test_type,
+        'premium_only': test.premium_only,
         'question_count': test.delivered_question_count,
         'duration_minutes': test.duration_minutes,
         'maximum_score': test.maximum_score,
@@ -172,7 +173,11 @@ def practice_tests(request):
                     raise ValueError(f'{field.replace("_", " ").title()} has the wrong subject or route')
                 values[field] = module
             test = PracticeTest.objects.create(
-                name=name, test_type=test_type, created_by=request.user, **values,
+                name=name,
+                test_type=test_type,
+                premium_only=request.data.get('premium_only') in (True, 1, '1', 'true'),
+                created_by=request.user,
+                **values,
             )
     except (ValueError, ValidationError) as exc:
         message = exc.messages[0] if isinstance(exc, ValidationError) else str(exc)
