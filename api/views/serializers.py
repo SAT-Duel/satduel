@@ -1,5 +1,5 @@
 from django.contrib.auth.models import User
-from api.models import DUEL_EMOJIS, DirectMessage, Question, Profile, Room, TrackedQuestion, FriendRequest, \
+from api.models import DUEL_EMOJIS, PREMIUM_DUEL_EMOJIS, DirectMessage, Question, Profile, Room, TrackedQuestion, FriendRequest, \
     UserStatistics, Tournament, TournamentParticipation, TournamentQuestion
 from rest_framework import serializers
 
@@ -86,6 +86,8 @@ class ProfileSerializer(serializers.ModelSerializer):
     def validate_duel_emotes(self, value):
         if len(set(value)) != 4:
             raise serializers.ValidationError('Choose four different duel emotes.')
+        if any(emoji in PREMIUM_DUEL_EMOJIS for emoji in value) and not self.instance.has_premium:
+            raise serializers.ValidationError('Premium is required for those emotes.')
         return value
 
     def update(self, instance, validated_data):

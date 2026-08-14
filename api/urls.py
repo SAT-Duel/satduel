@@ -156,6 +156,7 @@ urlpatterns = [
     path('party/history/', party_views.party_history, name='party_history'),
     path('party/history/<int:room_id>/', party_views.party_history_detail, name='party_history_detail'),
     path('party/<int:room_id>/state/', party_views.party_state, name='party_state'),
+    path('party/<int:room_id>/emotes/', party_views.send_party_emote, name='party_emote'),
     path('party/<int:room_id>/start/', party_views.start_party, name='party_start'),
     path('party/<int:room_id>/answer/', party_views.answer_party_question, name='party_answer'),
     path('party/<int:room_id>/next/', party_views.next_party_question, name='party_next'),
