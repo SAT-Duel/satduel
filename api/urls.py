@@ -132,6 +132,7 @@ urlpatterns = [
     path('billing/create_checkout_session/', billing_views.create_checkout_session, name='billing_create_checkout_session'),
     path('billing/create_portal_session/', billing_views.create_portal_session, name='billing_create_portal_session'),
     path('billing/webhook/', billing_views.stripe_webhook, name='stripe_webhook'),
+    path('billing/claim_free_week/', billing_views.claim_free_week, name='billing_claim_free_week'),
 
     path('marketing/resend_webhook/', marketing_views.resend_webhook, name='resend_webhook'),
 

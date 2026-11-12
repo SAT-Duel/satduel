@@ -236,6 +236,12 @@ def current_school_year():
     return today.year if today.month >= 9 else today.year - 1
 
 
+# The free week of Premium an account can claim once at /free-week. No card and
+# no Stripe involvement: it is just is_premium + premium_until, so it expires on
+# its own through Profile.has_premium.
+FREE_WEEK_LENGTH = timezone.timedelta(days=7)
+
+
 class Profile(models.Model):
     """Extended user profile with additional attributes and game statistics."""
     AVATAR_CHOICES = [
@@ -306,6 +312,9 @@ class Profile(models.Model):
     # "until manually revoked" (e.g. lifetime or admin-granted).
     is_premium = models.BooleanField(default=False)
     premium_until = models.DateTimeField(null=True, blank=True)
+    # When this account claimed its free week (see FREE_WEEK_LENGTH). Never
+    # cleared, which is what limits the offer to one week per account.
+    free_week_claimed_at = models.DateTimeField(null=True, blank=True)
     stripe_customer_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     stripe_subscription_id = models.CharField(max_length=255, blank=True, null=True, db_index=True)
     stripe_price_id = models.CharField(max_length=255, blank=True, null=True)
@@ -333,6 +342,24 @@ class Profile(models.Model):
         if not self.is_premium:
             return False
         return self.premium_until is None or self.premium_until > timezone.now()
+
+    @property
+    def free_week_available(self):
+        return self.free_week_claimed_at is None and not self.has_premium
+
+    @property
+    def on_free_week(self):
+        """Premium currently comes from the free week, not a Stripe subscription.
+
+        Subscribing during the week moves premium_until to the billing period
+        end, past the week's end, so this flips to False and Stripe owns it.
+        """
+        return (
+            self.free_week_claimed_at is not None
+            and self.has_premium
+            and self.premium_until is not None
+            and self.premium_until <= self.free_week_claimed_at + FREE_WEEK_LENGTH
+        )
 
     @property
     def onboarding_required(self):

@@ -115,6 +115,11 @@ def _current_profile_payload(profile):
         'marketing_opt_in': profile.marketing_opt_in,
         'terms_accepted': profile.terms_accepted_at is not None,
     }
+    data['premium'] = {
+        'until': profile.premium_until.isoformat() if profile.has_premium and profile.premium_until else None,
+        'on_free_week': profile.on_free_week,
+        'free_week_available': profile.free_week_available,
+    }
     return data
 
 
