@@ -4184,3 +4184,161 @@ class TournamentReviewTests(APITestCase):
 
         own = self.client.get(url).data
         self.assertEqual(len(own[0]['tournament_questions']), 1)
+
+
+STRIPE_WEBHOOK_SETTINGS = dict(
+    STRIPE_SECRET_KEY='stripe_secret_mock',
+    STRIPE_WEBHOOK_SECRET='webhook_secret_mock',
+    STRIPE_API_VERSION='2026-06-24.dahlia',
+)
+
+
+class FreeWeekTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='weekclaimer', email='week@example.com')
+        self.profile = Profile.objects.create(user=self.user)
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse('billing_claim_free_week')
+
+    def _claim(self):
+        return self.client.post(self.url, {}, format='json')
+
+    def _webhook(self, mock_construct_event, event_type, obj):
+        mock_construct_event.return_value = {'type': event_type, 'data': {'object': obj}}
+        return self.client.post(
+            reverse('stripe_webhook'),
+            data='{}',
+            content_type='application/json',
+            HTTP_STRIPE_SIGNATURE='sig_mock',
+        )
+
+    def _claim_with_stripe_customer(self):
+        self.assertEqual(self._claim().status_code, 200)
+        self.profile.refresh_from_db()
+        self.profile.stripe_customer_id = 'cus_mock'
+        self.profile.save(update_fields=['stripe_customer_id'])
+        return self.profile.premium_until
+
+    def test_claim_grants_seven_days_of_premium(self):
+        resp = self._claim()
+
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.has_premium)
+        self.assertTrue(self.profile.on_free_week)
+        self.assertEqual(
+            self.profile.premium_until,
+            self.profile.free_week_claimed_at + timedelta(days=7),
+        )
+        self.assertEqual(resp.data['premium_until'], self.profile.premium_until.isoformat())
+
+    def test_free_week_runs_out_on_its_own(self):
+        self._claim()
+        self.profile.refresh_from_db()
+        self.profile.premium_until = timezone.now() - timedelta(seconds=1)
+        self.profile.save(update_fields=['premium_until'])
+
+        self.assertFalse(self.profile.has_premium)
+        self.assertFalse(self.profile.on_free_week)
+        self.assertFalse(self.profile.free_week_available)
+
+    def test_cannot_claim_twice_even_after_it_ends(self):
+        self._claim()
+        Profile.objects.filter(pk=self.profile.pk).update(premium_until=timezone.now() - timedelta(minutes=1))
+
+        resp = self._claim()
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.data['error'], 'already_claimed')
+
+    def test_current_subscribers_cannot_claim(self):
+        period_end = timezone.now() + timedelta(days=20)
+        self.profile.is_premium = True
+        self.profile.premium_until = period_end
+        self.profile.stripe_subscription_id = 'sub_mock'
+        self.profile.save()
+
+        resp = self._claim()
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.data['error'], 'already_premium')
+        self.profile.refresh_from_db()
+        self.assertIsNone(self.profile.free_week_claimed_at)
+        self.assertEqual(self.profile.premium_until, period_end)
+
+    def test_lapsed_subscribers_can_claim(self):
+        self.profile.is_premium = False
+        self.profile.premium_until = timezone.now() - timedelta(days=3)
+        self.profile.stripe_subscription_id = 'sub_old'
+        self.profile.save()
+
+        self.assertEqual(self._claim().status_code, 200)
+
+    def test_claim_requires_login(self):
+        self.client.force_authenticate(user=None)
+
+        self.assertIn(self._claim().status_code, (401, 403))
+        self.profile.refresh_from_db()
+        self.assertIsNone(self.profile.free_week_claimed_at)
+
+    def test_profile_payload_reports_free_week_state(self):
+        before = self.client.get(reverse('profile')).data['premium']
+        self.assertEqual(before, {'until': None, 'on_free_week': False, 'free_week_available': True})
+
+        self._claim()
+        resp = self.client.get(reverse('profile'))
+
+        self.assertTrue(resp.data['is_premium'])
+        self.assertTrue(resp.data['premium']['on_free_week'])
+        self.assertFalse(resp.data['premium']['free_week_available'])
+        self.assertIsNotNone(resp.data['premium']['until'])
+
+    @override_settings(**STRIPE_WEBHOOK_SETTINGS)
+    @patch('api.views.billing_views.stripe.Webhook.construct_event')
+    def test_failed_subscription_event_keeps_free_week(self, mock_construct_event):
+        week_end = self._claim_with_stripe_customer()
+
+        resp = self._webhook(mock_construct_event, 'customer.subscription.updated', {
+            'id': 'sub_new', 'customer': 'cus_mock', 'status': 'incomplete_expired', 'items': {'data': []},
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.has_premium)
+        self.assertEqual(self.profile.premium_until, week_end)
+
+    @override_settings(**STRIPE_WEBHOOK_SETTINGS)
+    @patch('api.views.billing_views.stripe.Webhook.construct_event')
+    def test_old_subscription_deleted_keeps_free_week(self, mock_construct_event):
+        week_end = self._claim_with_stripe_customer()
+
+        resp = self._webhook(mock_construct_event, 'customer.subscription.deleted', {
+            'id': 'sub_old', 'customer': 'cus_mock',
+        })
+
+        self.assertEqual(resp.status_code, 200)
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.has_premium)
+        self.assertEqual(self.profile.premium_until, week_end)
+
+    @override_settings(**STRIPE_WEBHOOK_SETTINGS)
+    @patch('api.views.billing_views.stripe.Webhook.construct_event')
+    def test_subscribing_during_free_week_hands_premium_to_stripe(self, mock_construct_event):
+        self._claim_with_stripe_customer()
+        period_end = timezone.now() + timedelta(days=30)
+
+        self._webhook(mock_construct_event, 'customer.subscription.updated', {
+            'id': 'sub_new', 'customer': 'cus_mock', 'status': 'active',
+            'current_period_end': int(period_end.timestamp()),
+            'items': {'data': [{'price': {'id': 'price_mock'}}]},
+        })
+        self.profile.refresh_from_db()
+        self.assertTrue(self.profile.has_premium)
+        self.assertFalse(self.profile.on_free_week)
+
+        # Once Stripe owns it, cancelling the subscription ends Premium as usual.
+        self._webhook(mock_construct_event, 'customer.subscription.deleted', {
+            'id': 'sub_new', 'customer': 'cus_mock',
+        })
+        self.profile.refresh_from_db()
+        self.assertFalse(self.profile.has_premium)

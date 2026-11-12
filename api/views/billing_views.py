@@ -11,7 +11,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from api.models import Profile
+from api.models import FREE_WEEK_LENGTH, Profile
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +65,23 @@ def _is_portal_configuration_missing_error(exc):
     )
 
 
+def _end_subscription_premium(profile):
+    """Turn off subscription Premium without cutting short an active free week.
+
+    The free week is Premium with no subscription behind it, so a Stripe event
+    about some other (failed, expired or old) subscription must not end it.
+    """
+    if profile.on_free_week:
+        return
+    profile.is_premium = False
+    profile.premium_until = timezone.now()
+
+
 def _clear_billing_state(profile):
     profile.stripe_customer_id = None
     profile.stripe_subscription_id = None
     profile.stripe_price_id = None
-    profile.is_premium = False
-    profile.premium_until = timezone.now()
+    _end_subscription_premium(profile)
     profile.save(update_fields=[
         'stripe_customer_id',
         'stripe_subscription_id',
@@ -140,8 +151,11 @@ def _apply_subscription(profile, subscription):
     if price_id:
         profile.stripe_price_id = price_id
 
-    profile.is_premium = is_active
-    profile.premium_until = period_end if is_active else timezone.now()
+    if is_active:
+        profile.is_premium = True
+        profile.premium_until = period_end
+    else:
+        _end_subscription_premium(profile)
     profile.save(update_fields=[
         'stripe_customer_id',
         'stripe_subscription_id',
@@ -261,6 +275,38 @@ def create_checkout_session(request):
 @api_view(['POST'])
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
+def claim_free_week(request):
+    """Give this account its one free week of Premium. No card, no Stripe."""
+    profile = request.user.profile
+    already_claimed = Response(
+        {'error': 'already_claimed', 'detail': "You've already used your free week of Premium."},
+        status=status.HTTP_409_CONFLICT,
+    )
+    if profile.free_week_claimed_at is not None:
+        return already_claimed
+    if profile.has_premium:
+        return Response(
+            {'error': 'already_premium', 'detail': 'You already have Premium.'},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    now = timezone.now()
+    # Conditional update so a double-click or a second tab can't claim twice.
+    claimed = Profile.objects.filter(pk=profile.pk, free_week_claimed_at__isnull=True).update(
+        is_premium=True,
+        premium_until=now + FREE_WEEK_LENGTH,
+        free_week_claimed_at=now,
+    )
+    if not claimed:
+        return already_claimed
+
+    profile.refresh_from_db()
+    return Response({'is_premium': True, 'premium_until': profile.premium_until.isoformat()})
+
+
+@api_view(['POST'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([IsAuthenticated])
 def create_portal_session(request):
     missing = _stripe_ready()
     if missing:
@@ -362,8 +408,7 @@ def stripe_webhook(request):
         elif event_type == 'customer.subscription.deleted':
             profile = _profile_for_subscription(event_object)
             if profile:
-                profile.is_premium = False
-                profile.premium_until = timezone.now()
+                _end_subscription_premium(profile)
                 profile.save(update_fields=['is_premium', 'premium_until'])
         elif event_type == 'invoice.paid':
             subscription_id = _get(event_object, 'subscription')
