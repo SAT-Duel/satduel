@@ -1594,6 +1594,65 @@ class BotDuelTests(APITestCase):
         self.assertEqual(response.status_code, 200)
         self.assertGreater(sum(row['status'] != 'Blank' for row in response.data), 0)
 
+    def test_bot_stays_on_pace_while_the_human_is_still_answering(self):
+        # 40 seconds in, a bot pacing at 16-25s a question has answered one or two.
+        room = self._room(started_seconds_ago=40)
+        response = self.client.post('/api/match/get_opponent_progress/', {'room_id': room.id}, format='json')
+        answered = sum(row['status'] != 'Blank' for row in response.data)
+        self.assertGreater(answered, 0)
+        self.assertLess(answered, 10)
+
+    def test_bot_finishes_as_soon_as_the_human_has_answered_everything(self):
+        room = self._room(started_seconds_ago=40)
+        TrackedQuestion.objects.filter(room=room, user=self.user).update(status='Correct')
+
+        response = self.client.post('/api/match/get_opponent_progress/', {'room_id': room.id}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 10)
+        self.assertTrue(all(row['status'] != 'Blank' for row in response.data))
+
+    def test_end_match_does_not_wait_for_the_bot_clock(self):
+        # Nothing has polled progress yet: end_match alone must settle the bot,
+        # so a finished student is never told the duel is still in progress.
+        room = self._room(started_seconds_ago=20)
+        TrackedQuestion.objects.filter(room=room, user=self.user).update(status='Correct')
+
+        response = self.client.post('/api/match/end_match/', {'room_id': room.id}, format='json')
+
+        room.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(room.status, 'Ended')
+        self.assertEqual(room.user1_score, 10)
+        self.assertFalse(TrackedQuestion.objects.filter(room=room, status='Blank').exists())
+
+    def test_end_match_still_refuses_while_the_human_has_blanks(self):
+        room = self._room(started_seconds_ago=20)
+
+        response = self.client.post('/api/match/end_match/', {'room_id': room.id}, format='json')
+
+        room.refresh_from_db()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(room.status, 'Battling')
+
+    def test_finishing_early_keeps_the_bot_accuracy(self):
+        from api.bot_duels import bot_accuracy, finish_bot
+        room = self._room(started_seconds_ago=5)
+        bot = room.user2
+        bot.profile.elo_rating = 1500
+        bot.profile.save(update_fields=['elo_rating'])
+        accuracy = bot_accuracy(1500)
+
+        # randrange just under the accuracy is a hit, at it is a miss.
+        with patch('api.bot_duels.random.randrange', return_value=accuracy - 1):
+            finish_bot(room, bot)
+        self.assertEqual(TrackedQuestion.objects.filter(room=room, user=bot, status='Correct').count(), 10)
+
+        TrackedQuestion.objects.filter(room=room, user=bot).update(status='Blank')
+        with patch('api.bot_duels.random.randrange', return_value=accuracy):
+            finish_bot(room, bot)
+        self.assertEqual(TrackedQuestion.objects.filter(room=room, user=bot, status='Incorrect').count(), 10)
+
     def test_bot_accuracy_uses_current_elo_and_rng(self):
         from api.bot_duels import advance_bot, bot_accuracy
         room = self._room(started_seconds_ago=100)
