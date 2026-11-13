@@ -4,6 +4,7 @@ from django.db import models
 from django.utils import timezone
 import math
 import random
+import secrets
 import uuid
 import pytz
 
@@ -826,6 +827,119 @@ class DuelEmote(models.Model):
     def __str__(self):
         target = f'duel {self.room_id}' if self.room_id else f'party {self.party_room_id}'
         return f"{self.sender.username} {self.emoji} in {target}"
+
+
+# Challenge codes go in links people read aloud and retype, so the alphabet
+# leaves out the look-alikes (0/O, 1/I/L).
+CHALLENGE_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+CHALLENGE_CODE_LENGTH = 8
+CHALLENGE_LIFETIME = timezone.timedelta(days=7)
+
+
+def generate_challenge_code():
+    while True:
+        code = ''.join(secrets.choice(CHALLENGE_CODE_ALPHABET) for _ in range(CHALLENGE_CODE_LENGTH))
+        if not DuelChallenge.objects.filter(code=code).exists():
+            return code
+
+
+def default_challenge_expiry():
+    return timezone.now() + CHALLENGE_LIFETIME
+
+
+class DuelChallenge(models.Model):
+    """A finished duel's question set, sent to friends as a link.
+
+    A live duel needs both players online at once. A challenge does not: the
+    creator has already played these questions, so their score is frozen here
+    and anyone with the link plays the same set whenever they like, against
+    that score. Challenges never move Elo: the two sides did not play under
+    the same conditions, and a link can be replayed by a second account.
+    """
+    code = models.CharField(max_length=12, unique=True, default=generate_challenge_code)
+    creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name='duel_challenges')
+    test_prep = models.ForeignKey(
+        TestPrep, on_delete=models.PROTECT, related_name='duel_challenges', default=DEFAULT_TEST_PREP,
+    )
+    source_room = models.ForeignKey(
+        Room, on_delete=models.SET_NULL, related_name='challenges', null=True, blank=True,
+    )
+    # Question ids in the order the creator saw them, with the creator's result
+    # for each at the same index. Snapshotted so the challenge still makes sense
+    # after the duel room is cleaned up.
+    question_ids = models.JSONField(default=list)
+    creator_results = models.JSONField(default=list)
+    creator_score = models.PositiveSmallIntegerField(default=0)
+    duration_seconds = models.PositiveIntegerField(default=300)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(default=default_challenge_expiry)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            # One link per player per duel, so "Challenge a friend" is safe to tap twice.
+            models.UniqueConstraint(
+                fields=['creator', 'source_room'], name='one_challenge_per_player_per_duel',
+            ),
+        ]
+
+    @property
+    def is_expired(self):
+        return timezone.now() >= self.expires_at
+
+    def __str__(self):
+        return f"Challenge {self.code} by {self.creator.username}"
+
+
+class DuelChallengeAttempt(models.Model):
+    """One friend's run at a challenge. A player gets a single attempt."""
+    challenge = models.ForeignKey(DuelChallenge, on_delete=models.CASCADE, related_name='attempts')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='duel_challenge_attempts')
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    # {"<question id>": {"choice": "<text picked>", "correct": true}}
+    answers = models.JSONField(default=dict)
+    score = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        ordering = ['-score', 'finished_at']
+        constraints = [
+            models.UniqueConstraint(fields=['challenge', 'user'], name='one_attempt_per_player_per_challenge'),
+        ]
+
+    @property
+    def deadline(self):
+        return self.started_at + timezone.timedelta(seconds=self.challenge.duration_seconds)
+
+    @property
+    def is_finished(self):
+        return self.finished_at is not None
+
+    def result_for(self, question_id):
+        answer = self.answers.get(str(question_id))
+        if answer is None:
+            return 'Blank'
+        return 'Correct' if answer.get('correct') else 'Incorrect'
+
+    def close_if_done(self, now=None):
+        """Finish the run once every question is answered or the clock is out.
+
+        Nothing guarantees a browser is open when the clock ends, so the state
+        is settled lazily by whichever request looks at the attempt next.
+        """
+        if self.is_finished:
+            return self
+        now = now or timezone.now()
+        answered_all = len(self.answers) >= len(self.challenge.question_ids)
+        if answered_all or now >= self.deadline:
+            # Out of time: stamp the deadline, not whenever someone next looked.
+            self.finished_at = now if answered_all else self.deadline
+            self.score = sum(1 for answer in self.answers.values() if answer.get('correct'))
+            self.save(update_fields=['finished_at', 'score'])
+        return self
+
+    def __str__(self):
+        return f"{self.user.username} on {self.challenge.code}"
 
 
 class FriendRequest(models.Model):

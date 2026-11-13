@@ -6,7 +6,7 @@ from allauth.account.models import EmailAddress
 from allauth.socialaccount.models import SocialAccount
 
 from api.account_deletion import delete_user_account
-from api.models import Announcement, PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
+from api.models import Announcement, DuelChallenge, DuelChallengeAttempt, PendingRegistration, Question, QuestionReport, Profile, SATExamDate, Room, TrackedQuestion, DuelEmote, FriendRequest, UserStatistics, \
     SurvivalStatistics, Tournament, TournamentParticipation, TournamentQuestion, \
     PracticeActiveQuestion, PracticeAttempt, PracticeStats, PracticeTest, PracticeTestAttempt, PracticeTestModule, PracticeTypeStats, \
     TestPrep, TestPrepUserStats, TestSection, \
@@ -204,6 +204,27 @@ class PracticeActiveQuestionAdmin(admin.ModelAdmin):
 admin.site.register(Room)
 admin.site.register(TrackedQuestion)
 admin.site.register(DuelEmote)
+
+
+@admin.register(DuelChallenge)
+class DuelChallengeAdmin(admin.ModelAdmin):
+    list_display = ['code', 'creator', 'creator_score', 'attempt_count', 'created_at', 'expires_at']
+    search_fields = ['code', 'creator__username']
+    raw_id_fields = ['creator', 'source_room']
+    readonly_fields = ['code', 'created_at']
+
+    @admin.display(description='Attempts')
+    def attempt_count(self, obj):
+        return obj.attempts.count()
+
+
+@admin.register(DuelChallengeAttempt)
+class DuelChallengeAttemptAdmin(admin.ModelAdmin):
+    list_display = ['challenge', 'user', 'score', 'started_at', 'finished_at']
+    search_fields = ['challenge__code', 'user__username']
+    raw_id_fields = ['challenge', 'user']
+
+
 admin.site.register(FriendRequest)
 admin.site.register(UserStatistics)
 admin.site.register(SurvivalStatistics)

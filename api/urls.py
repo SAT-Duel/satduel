@@ -5,6 +5,7 @@ from api.views import onlineuser_views, auth_views, practice_views, billing_view
 from api.views import marketing_views
 from api.views import messaging_views
 from api.views import party_views
+from api.views import challenge_views
 
 urlpatterns = [
     path('questions/', views.get_random_questions, name='get_random_questions'),
@@ -70,6 +71,13 @@ urlpatterns = [
     path('match/get_match_history/<int:user_id>/', duel_views.get_match_history, name='get_match_history_with_user_id'),
     path('match/info/', duel_views.get_match_info, name='get_match_info'),
     path('match/emotes/', duel_views.duel_emotes, name='duel_emotes'),
+    # Fixed paths before <code> so "create" and "mine" are never read as a code.
+    path('challenges/create/', challenge_views.create_challenge, name='challenge_create'),
+    path('challenges/mine/', challenge_views.my_challenges, name='challenge_mine'),
+    path('challenges/<str:code>/', challenge_views.challenge_detail, name='challenge_detail'),
+    path('challenges/<str:code>/start/', challenge_views.start_challenge, name='challenge_start'),
+    path('challenges/<str:code>/answer/', challenge_views.answer_challenge, name='challenge_answer'),
+    path('challenges/<str:code>/finish/', challenge_views.finish_challenge, name='challenge_finish'),
 
     path('trainer/infinite_question_stats/', trainer_view.get_infinite_question_stats,
          name='get_infinite_question_stats'),

@@ -486,7 +486,7 @@ def get_answer(request):
     except Question.DoesNotExist:
         return Response({'error': 'Question does not exist'}, status=404)
 
-    from api.models import TournamentParticipation, Room, TrackedQuestion
+    from api.models import DuelChallengeAttempt, TournamentParticipation, Room, TrackedQuestion
     # live_for() excludes runs whose clock has expired. Without that, abandoning
     # one round left its questions unrevealable forever — including in the review
     # of a tournament the user had already finished.
@@ -503,7 +503,21 @@ def get_answer(request):
         room__status='Battling',
         status='Blank',
     ).exists()
-    if in_active_tournament or unanswered_duel_question:
+    # Same rule for a friend's challenge: a run in progress hides the answers to
+    # the questions it has not reached yet. close_if_done() settles a run whose
+    # clock already ran out, so an abandoned challenge cannot lock a question.
+    unanswered_challenge_question = False
+    open_attempts = DuelChallengeAttempt.objects.filter(
+        user=request.user, finished_at__isnull=True,
+    ).select_related('challenge')
+    for attempt in open_attempts:
+        attempt.close_if_done()
+        if (not attempt.is_finished
+                and question.id in attempt.challenge.question_ids
+                and str(question.id) not in attempt.answers):
+            unanswered_challenge_question = True
+            break
+    if in_active_tournament or unanswered_duel_question or unanswered_challenge_question:
         return Response(
             {'error': 'Answers are hidden while you are competing on this question.'},
             status=status.HTTP_403_FORBIDDEN,
