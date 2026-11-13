@@ -6,7 +6,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.response import Response
-from api.bot_duels import advance_bot, available_bot_user
+from api.bot_duels import available_bot_user, settle_bot
 from api.models import DuelEmote, Room, TestPrepUserStats, TrackedQuestion, usable_duel_emotes
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -170,7 +170,9 @@ def get_opponent_progres(request):
     opponent = room.user1 if user != room.user1 else room.user2
     if opponent and opponent.profile.is_bot:
         # ponytail: polling advances bots; add a worker only when realtime scale needs one.
-        advance_bot(room, opponent)
+        # settle_bot also finishes the bot outright once this player has answered
+        # everything, which is what lets the client move on to the result.
+        settle_bot(room, opponent)
     opponent_tracked_questions = TrackedQuestion.objects.filter(user=opponent, room=room).order_by('id')
     serializer = TrackedQuestionSerializer(opponent_tracked_questions, many=True)
     return Response(serializer.data)
@@ -224,7 +226,7 @@ def end_match(request):
         return Response({'status': 'success'})
     for player in (room.user1, room.user2):
         if player.profile.is_bot:
-            advance_bot(room, player)
+            settle_bot(room, player)
     both_finished = not TrackedQuestion.objects.filter(room=room, status='Blank').exists()
     if not both_finished and not room.is_battle_ended():
         return Response({'error': 'The duel is still in progress.'}, status=409)
